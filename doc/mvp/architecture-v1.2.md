@@ -7,7 +7,7 @@
 
 Workbench 面向单用户、本地优先场景。默认只监听 `127.0.0.1`，以一个 Go 可执行文件和一个 SQLite 文件运行；前端构建产物通过 `go:embed` 内嵌。
 
-前端构建产物由构建流程复制到 `internal/webui/dist`，再由该 Go package 执行嵌入，避免使用 Go 不允许的跨目录 embed pattern。
+前端构建产物由 Vite 清理并输出到 `internal/webui/dist`，再由该 Go package 执行嵌入，避免使用 Go 不允许的跨目录 embed pattern。
 
 后端统一使用 Go。Rust 仅在未来出现经过测量的独立高性能需求时，以子进程或 IPC 组件引入，不作为当前后端技术栈。
 
@@ -86,6 +86,8 @@ HTTP 路由器采用 chi。业务模块的公开契约只使用 `net/http`，不
 
 使用 Go 1.27.x、`modernc.org/sqlite v1.58.x`、`database/sql + sqlc` 和 Goose migration。
 
+固定 SQL 必须放入 `query/*.sql` 并由 sqlc 生成；只有动态游标条件、可变长度 `IN`、事件 topic 列表和 SQLite PRAGMA/`VACUUM INTO` 保持显式 SQL。
+
 默认约束：
 
 - 一个数据库文件代表一个工作空间，不设置 `owner_id`。
@@ -131,6 +133,8 @@ Scheduler 使用 `go-co-op/gocron/v2`，统一承载 cron、固定间隔和一�
 
 密码使用 Argon2id 哈希；Session 使用 SCS 语义并实现 modernc SQLite Store，不使用 JWT。所有修改状态的请求执行 CSRF、Origin 和 Host 校验；Cookie 使用 `HttpOnly`、合适的 `SameSite`，HTTPS 下启用 `Secure`。
 
+通配地址监听时必须通过 `-allowed-host` 或 `WORKBENCH_ALLOWED_HOSTS` 明确列出浏览器 Host，不把 `0.0.0.0` 自动解释成允许任意 Host。
+
 不得以“用户通常只在局域网使用”为由关闭上述校验。
 
 ## 5. 通用能力
@@ -143,13 +147,14 @@ AI 层采用 Provider 架构，MVP 只实现 OpenAI 官方 Go SDK 和 Responses 
 
 AITool 要求：
 
+- 声明正整数 `schemaVersion`；破坏参数兼容性的变更必须提升版本。
 - 使用严格 JSON Schema，并进行服务端二次校验。
 - 声明只读、低风险写入或高风险写入等级。
 - 写操作需要幂等键；高风险操作必须要求用户确认。
 - 记录调用、确认、结果和错误审计，但不默认保存秘密或完整敏感 prompt。
 - Provider 返回的工具名不能绕过当前 enabled module gate。
 
-站内对话记录保存在本地 SQLite。流式响应使用 POST 后返回的 SSE 流，避免把用户输入放入 URL。未来外部 IM 只新增 Channel Adapter，不改对话核心。
+站内对话记录保存在本地 SQLite。流式响应使用 POST 后返回的 SSE 流，避免把用户输入放入 URL；服务端只把 OpenAI `response.output_text.delta` 映射为 `chat.delta`，并以 `response.completed` 的完整结果持久化和收口。Provider 请求有两分钟默认上限，客户端断开会取消上游流。未来外部 IM 只新增 Channel Adapter，不改对话核心。
 
 ### 5.2 通知中心
 
@@ -167,7 +172,7 @@ MVP 不实现通用规则 DSL。重复规则在两个以上模块中稳定出现
 
 ### 5.3 Dashboard
 
-`GET /api/dashboard` 根据 enabled module 的 Widget 描述汇总布局和数据端点。后端不返回任意可执行前端组件，而只返回稳定的 `widgetKind`、props 和 data source 描述。
+`GET /api/dashboard` 根据 enabled module 的 Widget 描述汇总布局和数据端点。Widget 描述包含正整数 `schemaVersion`；后端不返回任意可执行前端组件，而只返回稳定的 `widgetKind`、props 和 data source 描述。
 
 每日简报是可选的异步产物；AI 不可用时不阻塞普通 Dashboard。
 
@@ -212,10 +217,9 @@ MVP 后先使用 mock Provider，再选择真实行情/券商 API。真实交易
 ```text
 workbench                 Go 可执行文件（含前端资源）
 ~/.workbench/data.db      SQLite 主文件
-~/.workbench/config.toml  非秘密配置
 ```
 
-API Key 优先从环境变量或操作系统秘密存储读取，不写入普通配置文件或日志。Docker 是未来部署适配器，不是本地 MVP 的依赖。
+MVP 使用命令行参数和环境变量，不宣称读取尚未实现的配置文件。API Key 从环境变量读取，不写入数据库或日志。Docker 是未来部署适配器，不是本地 MVP 的依赖。
 
 ## 10. 迭代路线
 

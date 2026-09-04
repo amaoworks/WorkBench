@@ -1,6 +1,6 @@
 # Workbench MVP 文档集
 
-状态：**核心架构决策已确认，可以进入接口与 migration 实现阶段**。
+状态：**MVP 已实现，并于 2026-09-04 通过最终验收**。
 
 本文档集是原 v1.1 草案经逐项评审后的 v1.2 基线。若本文档与旧草案冲突，以这里及 ADR 为准。
 
@@ -10,8 +10,10 @@
 2. [核心 Go 契约](contracts/core-contracts.md)
 3. [数据库设计](database/schema.md)
 4. [项目目录与依赖边界](project-layout.md)
-5. [实施与验收清单](implementation-checklist.md)
-6. [ADR 索引](adr/README.md)
+5. [配置与运行](configuration.md)
+6. [实施与验收清单](implementation-checklist.md)
+7. [安全威胁模型](security-threat-model.md)
+8. [ADR 索引](adr/README.md)
 
 ## MVP 边界
 

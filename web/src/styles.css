@@ -1,0 +1,36 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  color: #172033;
+  background: #f7f8fc;
+  font-size: 14px;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --brand: #6366f1;
+  --surface: #ffffff;
+  --border: #e7e9f2;
+  --muted: #667085;
+}
+
+.dark {
+  color: #e5e7eb;
+  background: #0f172a;
+  --surface: #151e32;
+  --border: #263249;
+  --muted: #94a3b8;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; min-height: 100vh; background: inherit; }
+button, input, textarea { font: inherit; }
+button { cursor: pointer; }
+::selection { background: rgb(99 102 241 / 25%); }
+
+.focus-ring:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+

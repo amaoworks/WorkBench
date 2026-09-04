@@ -1,18 +1,4 @@
-# MVP 数据库设计
-
-这里给出逻辑 schema 基线。正式实现必须通过 Goose migration 落地，并由 sqlc 查询和集成测试校验；不要在运行时用 `CREATE TABLE IF NOT EXISTS` 代替版本化 migration。
-
-## 通用约定
-
-- ID 使用应用生成的 128-bit、32 位小写十六进制、按毫秒近似可排序的文本值；其外部语义保持 opaque。
-- 时间存储为 Unix 毫秒 UTC，列名以 `_at` 结尾。
-- JSON 列以 `_json` 结尾，并在应用边界执行 schema 校验。
-- 一个数据库文件就是一个用户工作空间，不设置 `owner_id`。
-- 模块表以 `<module>_` 为前缀。
-
-## Foundation 表
-
-```sql
+-- +goose Up
 CREATE TABLE modules (
     id               TEXT PRIMARY KEY,
     name             TEXT NOT NULL,
@@ -23,7 +9,8 @@ CREATE TABLE modules (
     updated_at       INTEGER NOT NULL
 );
 
--- migration 同时写入始终启用的 `core` 模块行，供核心 Job 外键引用。
+INSERT INTO modules(id, name, version, contract_version, enabled, installed_at, updated_at)
+VALUES ('core', 'Workbench Core', '0.1.0', 1, 1, unixepoch('subsec') * 1000, unixepoch('subsec') * 1000);
 
 CREATE TABLE events_log (
     id               TEXT PRIMARY KEY,
@@ -37,11 +24,8 @@ CREATE TABLE events_log (
     created_at       INTEGER NOT NULL
 );
 
-CREATE INDEX idx_events_dispatch
-ON events_log(available_at, created_at);
-
-CREATE INDEX idx_events_topic_time
-ON events_log(topic, occurred_at DESC);
+CREATE INDEX idx_events_dispatch ON events_log(available_at, created_at);
+CREATE INDEX idx_events_topic_time ON events_log(topic, occurred_at DESC);
 
 CREATE TABLE event_deliveries (
     event_id          TEXT NOT NULL REFERENCES events_log(id) ON DELETE CASCADE,
@@ -61,15 +45,7 @@ CREATE TABLE event_deliveries (
 
 CREATE INDEX idx_event_deliveries_claim
 ON event_deliveries(status, next_attempt_at, locked_until);
-```
 
-事件保留策略必须在实现前确定。清理事件时应同时清理由外键关联的 delivery；dead delivery 在人工处理前不得自动删除。
-
-## 鉴权表
-
-SCS SQLite Store 的最终列名以适配器测试为准，逻辑结构如下：
-
-```sql
 CREATE TABLE sessions (
     token  TEXT PRIMARY KEY,
     data   BLOB NOT NULL,
@@ -83,13 +59,7 @@ CREATE TABLE auth_credentials (
     password_hash TEXT NOT NULL,
     updated_at    INTEGER NOT NULL
 );
-```
 
-不得保存明文密码。切换到 `password` 模式但尚未设置凭据时，服务不得对非 loopback 提供业务接口。
-
-## Scheduler 表
-
-```sql
 CREATE TABLE scheduled_jobs (
     id                  TEXT PRIMARY KEY,
     module              TEXT NOT NULL REFERENCES modules(id),
@@ -125,13 +95,7 @@ CREATE TABLE scheduled_job_runs (
 
 CREATE INDEX idx_job_runs_job_time
 ON scheduled_job_runs(job_id, scheduled_at DESC);
-```
 
-`definition_hash` 用于识别编译期 Job 定义变化。数据库中不存在的 Handler 不得执行。
-
-## Notifications 表
-
-```sql
 CREATE TABLE notifications (
     id                TEXT PRIMARY KEY,
     source_module     TEXT NOT NULL,
@@ -157,15 +121,7 @@ WHERE read_at IS NULL AND archived_at IS NULL;
 CREATE INDEX idx_notifications_active
 ON notifications(created_at DESC)
 WHERE archived_at IS NULL;
-```
 
-`action_route` 必须在写入前验证为允许的站内相对路径。已读或归档通知默认保留 90 天，未读通知不自动清理。
-
-## AI 与对话表
-
-这组表属于 AI capability，而不是 Foundation：
-
-```sql
 CREATE TABLE ai_conversations (
     id          TEXT PRIMARY KEY,
     title       TEXT NOT NULL,
@@ -186,9 +142,6 @@ CREATE TABLE ai_messages (
 
 CREATE INDEX idx_ai_messages_conversation
 ON ai_messages(conversation_id, created_at);
-
-CREATE INDEX idx_ai_conversations_updated
-ON ai_conversations(updated_at DESC, id DESC);
 
 CREATE TABLE ai_tool_calls (
     id                TEXT PRIMARY KEY,
@@ -211,43 +164,15 @@ CREATE UNIQUE INDEX idx_ai_tool_calls_idempotency
 ON ai_tool_calls(tool_name, idempotency_key)
 WHERE idempotency_key IS NOT NULL;
 
-CREATE INDEX idx_ai_tool_calls_status
-ON ai_tool_calls(status, created_at DESC);
-```
-
-敏感 Tool 参数的审计策略需允许字段级脱敏，不能无条件把 API Key、密码或完整隐私内容写入 `arguments_json`。
-
-## 模块 migration
-
-Todo MVP migration：
-
-```sql
-CREATE TABLE todo_tasks (
-    id           TEXT PRIMARY KEY,
-    title        TEXT NOT NULL,
-    description  TEXT NOT NULL DEFAULT '',
-    due_at       INTEGER,
-    completed_at INTEGER,
-    created_at   INTEGER NOT NULL,
-    updated_at   INTEGER NOT NULL
-);
-
-CREATE INDEX idx_todo_tasks_due
-ON todo_tasks(due_at)
-WHERE completed_at IS NULL AND due_at IS NOT NULL;
-
-CREATE INDEX idx_todo_tasks_updated
-ON todo_tasks(updated_at DESC);
-```
-
-各 scope 使用独立 Goose 版本表：Foundation 为 `goose_core_version`，Todo 为 `goose_module_todo_version`。
-
-建议编号空间：
-
-```text
-internal/foundation/database/migrations/ 应用级 Foundation migration
-internal/modules/todo/migrations/         todo 模块 migration
-internal/modules/investment/migrations/   investment 模块 migration
-```
-
-模块 migration 必须是单向兼容启停的：禁用模块不回滚表，重新启用后继续执行缺失 migration。发布前必须使用旧版本数据库副本验证升级路径。
+-- +goose Down
+DROP TABLE ai_tool_calls;
+DROP TABLE ai_messages;
+DROP TABLE ai_conversations;
+DROP TABLE notifications;
+DROP TABLE scheduled_job_runs;
+DROP TABLE scheduled_jobs;
+DROP TABLE auth_credentials;
+DROP TABLE sessions;
+DROP TABLE event_deliveries;
+DROP TABLE events_log;
+DROP TABLE modules;

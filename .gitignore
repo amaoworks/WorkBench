@@ -1,0 +1,14 @@
+.tools/
+.workbench/
+data/
+*.db
+*.db-shm
+*.db-wal
+*.lock
+
+web/node_modules/
+web/dist/
+
+coverage.out
+/workbench
+web/node_modules/.tmp/

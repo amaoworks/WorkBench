@@ -89,6 +89,8 @@ type EventConsumer struct {
 
 Topic 使用 `<module>.<entity>.<action>`。Consumer ID 发布后必须稳定。Handler 按至少一次交付设计，成功返回前必须完成幂等写入。
 
+模块、资源与前端键统一使用稳定命名：Module ID 为小写 snake_case；Consumer ID、Job ID、AITool 名、Widget ID、`pageKey` 和 `widgetKind` 均以 `<module>.` 开头；模块 HTTP API 位于 `/api/modules/<module>/`。事件 topic 的首段必须与 `SourceModule` 一致。
+
 ## Scheduler
 
 ```go
@@ -140,6 +142,7 @@ type AIProvider interface {
 type AITool struct {
     Name             string
     Module           ModuleID
+    SchemaVersion    int
     Description      string
     ParametersSchema json.RawMessage
     Risk             ToolRisk
@@ -162,13 +165,14 @@ type ToolCall struct {
 
 ```go
 type WidgetDefinition struct {
-    ID         string
-    Module     ModuleID
-    Title      string
-    WidgetKind string
-    DataRoute  string
-    Size       WidgetSize
-    Order      int
+    ID            string
+    Module        ModuleID
+    SchemaVersion int
+    Title         string
+    WidgetKind    string
+    DataRoute     string
+    Size          WidgetSize
+    Order         int
 }
 ```
 
@@ -224,3 +228,11 @@ type APIError struct {
 
 错误码是客户端判断依据；`message` 用于展示，不作为程序分支条件。
 
+## HTTP 数据约定
+
+- API 路径统一位于 `/api`；业务模块路径位于 `/api/modules/<module>`。
+- 成功响应和错误响应使用 JSON；错误结构固定为 `APIError`，`code` 是稳定的机器可读 snake_case 字符串，`requestId` 可选。
+- 列表分页使用 `limit + cursor`。`limit` 默认 50、最大 100；`cursor` 是服务端生成的 opaque Base64URL 字符串，客户端不得解析或构造。
+- HTTP JSON 时间统一输出 UTC RFC3339/RFC3339Nano；SQLite 内部时间统一存 UTC Unix 毫秒。
+- 应用生成的实体、事件、消息和运行 ID 是 32 位小写十六进制、128-bit、按毫秒近似可排序的 opaque 字符串；客户端不得依赖其内部布局。
+- 修改状态的请求使用 JSON body，并经过 Host、Origin 和 CSRF 校验；不通过 query string 传递秘密或对话正文。

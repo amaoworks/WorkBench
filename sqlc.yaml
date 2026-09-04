@@ -1,0 +1,23 @@
+version: "2"
+sql:
+  - engine: "sqlite"
+    schema: "internal/foundation/database/migrations"
+    queries: "internal/foundation/database/query"
+    gen:
+      go:
+        package: "dbsqlc"
+        out: "internal/foundation/database/sqlc"
+        emit_json_tags: true
+        emit_empty_slices: true
+  - engine: "sqlite"
+    schema:
+      - "internal/foundation/database/migrations"
+      - "internal/modules/todo/migrations"
+    queries: "internal/modules/todo/query"
+    gen:
+      go:
+        package: "todosqlc"
+        out: "internal/modules/todo/sqlc"
+        emit_json_tags: true
+        emit_empty_slices: true
+

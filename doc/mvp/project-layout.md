@@ -1,6 +1,6 @@
 # 项目目录与依赖边界
 
-当前只创建目录和职责说明，不放置占位实现。空的最终代码目录使用 `.gitkeep` 保留。
+该目录树对应当前 MVP 实现；生成目录也纳入版本控制，以保证单次检出即可编译。
 
 ```text
 .
@@ -12,7 +12,9 @@
 │   ├── foundation/
 │   │   ├── auth/                  # 鉴权、Session、请求安全
 │   │   ├── database/
-│   │   │   └── migrations/        # 可被本包 go:embed 的应用 migration
+│   │   │   ├── migrations/        # 可被本包 go:embed 的应用 migration
+│   │   │   ├── query/             # sqlc 输入 SQL
+│   │   │   └── sqlc/              # sqlc 生成的类型安全查询
 │   │   ├── events/                # Outbox dispatcher
 │   │   └── modules/               # Registry 与 enabled gate
 │   ├── capabilities/
@@ -23,20 +25,23 @@
 │   │   └── scheduler/             # Job 调度与恢复
 │   ├── modules/
 │   │   ├── todo/
-│   │   │   └── migrations/
+│   │   │   ├── migrations/
+│   │   │   ├── query/
+│   │   │   └── sqlc/
 │   │   └── investment/
 │   │       └── migrations/
 │   └── webui/
-│       └── dist/                  # 构建复制后由本包 go:embed
+│       └── dist/                  # Vite 构建后由本包 go:embed
 ├── web/
 │   └── src/
-│       ├── app/                   # React 应用装配
+│       ├── app/                   # React 应用装配、pageKey/route 注册与 Shell
 │       ├── components/ui/         # 基础 UI
 │       ├── features/              # Dashboard、通知等通用功能
-│       ├── modules/               # 编译期业务页面和 Widget
-│       ├── routes/                # pageKey/route 注册
+│       ├── modules/               # 编译期业务页面
+│       ├── routes/                # 后续独立路由声明的保留边界
 │       └── shared/                # API、Zod schema、共享类型
-├── scripts/                       # 可复现的构建、备份和恢复脚本
+├── sqlc.yaml                      # Foundation 与模块查询生成配置
+├── scripts/                       # 可复现的测试和构建脚本
 └── doc/mvp/                       # 架构、契约、schema、ADR 与清单
 ```
 
@@ -49,7 +54,7 @@ cmd/workbench → internal/app
 internal/app → contracts + foundation + capabilities + modules + webui
 foundation/* → contracts
 capabilities/* → contracts + foundation 的窄接口
-modules/* → contracts
+modules/* → contracts + 自身 sqlc package + foundation 的窄 HTTP/ID 工具
 webui → Go 标准库
 ```
 
@@ -70,6 +75,6 @@ contracts → 任意实现包
 
 - Foundation migration 放在 `internal/foundation/database/migrations/`。
 - 模块 migration 放在模块自己的 `migrations/`，由该模块 package 嵌入。
-- `web/` 只保存前端源码；生产构建产物复制到 `internal/webui/dist/` 后执行 `go build`。
+- `web/` 保存前端源码；Vite 清理并直接输出到 `internal/webui/dist/`，随后执行 `go build`。
 - 构建脚本必须先清理旧 dist，再复制新产物，防止删除过的前端资源残留在二进制中。
-
+- Foundation 与 Todo 的固定 SQL 由 `sqlc.yaml` 生成；动态游标筛选、可变长度 `IN` 和 SQLite PRAGMA 保持显式 SQL。`scripts/test.sh` 会重新生成并检查已跟踪产物是否漂移。
