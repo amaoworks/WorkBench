@@ -13,14 +13,41 @@ import (
 	workbenchdb "workbench/internal/foundation/database"
 )
 
-const testPassword = "correct horse battery staple"
+const testPassword = "Correct horse battery staple1"
 
-func TestPasswordMinimumCountsUnicodeCharacters(t *testing.T) {
-	if _, err := hashPassword("四个汉字"); err == nil {
-		t.Fatal("four Unicode characters passed the twelve-character minimum")
+func TestPasswordPolicy(t *testing.T) {
+	tests := []struct {
+		name     string
+		password string
+		valid    bool
+	}{
+		{"empty", "", false},
+		{"seven characters with all categories", "Abcde1!", false},
+		{"eight characters with all categories", "Abcdef1!", true},
+		{"eight characters with three categories", "Abcdefg1", true},
+		{"uppercase lowercase digits", "Abcdefgh1", true},
+		{"uppercase lowercase symbols", "Abcdefgh!", true},
+		{"uppercase digits symbols", "ABCDEFG1!", true},
+		{"lowercase digits symbols", "abcdefg1!", true},
+		{"all categories", "Abcdefg1!", true},
+		{"one category", "abcdefghijk", false},
+		{"two categories", "Abcdefghijk", false},
+		{"spaces are not symbols", "Abcdefgh ", false},
+		{"control characters are not symbols", "Abcdefgh\t", false},
+		{"uncased letters are not symbols", "Abcdefgh中", false},
+		{"Unicode length below minimum", "中文测Ab1!", false},
+		{"Unicode length at minimum", "中文测试密Ab1", true},
+		{"Unicode categories", "Äbcdefgh１", true},
+		{"Unicode punctuation", "abcdefgh。1", true},
+		{"Unicode symbol", "abcdefgh€1", true},
 	}
-	if _, err := hashPassword("十二字符密码安全测试甲乙丙"); err != nil {
-		t.Fatalf("long Unicode password was rejected: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := hashPassword(tt.password)
+			if (err == nil) != tt.valid {
+				t.Fatalf("hashPassword validity = %v, want %v; error = %v", err == nil, tt.valid, err)
+			}
+		})
 	}
 }
 

@@ -133,3 +133,8 @@ type Session struct {
 	Data   []byte `json:"data"`
 	Expiry int64  `json:"expiry"`
 }
+
+type WorkspaceSetting struct {
+	Section string `json:"section"`
+	Value   string `json:"value"`
+}

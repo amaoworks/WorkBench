@@ -3,14 +3,14 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "../../shared/cn";
 
 const variants = cva(
-  "focus-ring inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 font-medium transition disabled:pointer-events-none disabled:opacity-50",
+  "ui-button focus-ring disabled:pointer-events-none disabled:opacity-50",
   {
     variants: {
       variant: {
-        primary: "bg-indigo-500 text-white shadow-sm hover:bg-indigo-600",
-        secondary: "border border-[var(--border)] bg-[var(--surface)] hover:bg-slate-100 dark:hover:bg-slate-800",
-        ghost: "hover:bg-slate-100 dark:hover:bg-slate-800",
-        danger: "bg-red-500 text-white hover:bg-red-600"
+        primary: "bg-[var(--brand)] text-[var(--on-brand)] hover:opacity-85",
+        secondary: "border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--soft)]",
+        ghost: "hover:bg-[var(--soft)]",
+        danger: "bg-[var(--danger-soft)] text-[var(--danger)] hover:opacity-85"
       },
       size: { sm: "px-2.5 py-1.5 text-xs", md: "", icon: "size-9 p-0" }
     },
@@ -21,7 +21,6 @@ const variants = cva(
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof variants> {}
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(({ className, variant, size, ...props }, ref) => (
-  <button ref={ref} className={cn(variants({ variant, size }), className)} {...props} />
+  <button ref={ref} data-size={size ?? "md"} className={cn(variants({ variant, size }), className)} {...props} />
 ));
 Button.displayName = "Button";
-

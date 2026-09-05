@@ -4,6 +4,8 @@ import { Bot, Send, X } from "lucide-react";
 import { api, apiResponse } from "../../shared/api";
 import { Button } from "../../components/ui/Button";
 import { cn } from "../../shared/cn";
+import { Link } from "react-router-dom";
+import * as Dialog from "@radix-ui/react-dialog";
 
 type Message = { role: "user" | "assistant"; text: string };
 type ChatResponse = { conversationId: string; messageId: string; text: string };
@@ -93,27 +95,22 @@ export function AIPanel({ open, onClose }: { open: boolean; onClose: () => void 
     chat.mutate(message);
   }
   return (
-    <div
-      className={cn("fixed inset-y-0 right-0 z-30 flex w-[min(420px,100vw)] flex-col border-l border-[var(--border)] bg-[var(--surface)] shadow-2xl transition-transform", open ? "translate-x-0" : "translate-x-full")}
-      aria-hidden={!open}
-      inert={!open}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Workbench AI"
-    >
+    <Dialog.Root open={open} onOpenChange={(value) => { if (!value) onClose(); }}><Dialog.Portal><Dialog.Overlay className="ai-overlay z-30" /><Dialog.Content className="ai-panel z-40">
       <div className="flex h-16 items-center justify-between border-b border-[var(--border)] px-4">
-        <div className="flex items-center gap-2 font-semibold"><Bot size={19} className="text-indigo-500" />Workbench AI</div>
-        <Button variant="ghost" size="icon" onClick={onClose} aria-label="关闭 AI 面板"><X size={18} /></Button>
+        <Dialog.Title className="flex items-center gap-2 font-semibold"><Bot size={19} className="text-brand" />Workbench AI</Dialog.Title>
+        <Dialog.Description className="sr-only">与 AI 对话，协助安排工作和处理待办。</Dialog.Description>
+        <Dialog.Close asChild><Button variant="ghost" size="icon" aria-label="关闭 AI 面板"><X size={18} /></Button></Dialog.Close>
       </div>
       <div className="flex-1 space-y-4 overflow-y-auto p-4" role="log" aria-live="polite" aria-relevant="additions text">
-        {status.data && !status.data.available && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">未配置 `OPENAI_API_KEY`。其他 Workbench 功能不受影响。</div>}
-        {messages.length === 0 && <div className="mt-16 text-center text-[var(--muted)]"><div className="mx-auto mb-4 grid size-12 place-items-center rounded-xl bg-indigo-50 text-indigo-500 dark:bg-indigo-500/10"><Bot size={22} /></div><p className="font-medium text-inherit">可以从一句话开始</p><p className="mt-1 text-sm">例如：“帮我创建明天下午完成报告的待办”</p></div>}
-        {messages.map((message, index) => <div key={index} className={cn("max-w-[88%] whitespace-pre-wrap rounded-xl px-3.5 py-2.5 text-sm leading-relaxed", message.role === "user" ? "ml-auto bg-indigo-500 text-white" : "bg-slate-100 dark:bg-slate-800")}>{message.text}</div>)}
+        {status.isError && <p className="text-sm text-danger" role="alert">无法获取 AI 状态，请稍后重试。</p>}
+        {status.data && !status.data.available && <div className="rounded-lg border border-[var(--border)] bg-[var(--soft)] p-3 text-sm text-[var(--muted)]">AI 尚未启用。<Link to="/settings?tab=ai" onClick={onClose} className="text-link ml-1">前往设置连接服务</Link></div>}
+        {messages.length === 0 && <div className="empty-state"><div className="icon-tile"><Bot size={22} /></div><h3>从一句话开始</h3><p>例如：“帮我创建明天下午完成报告的待办”</p></div>}
+        {messages.map((message, index) => <div key={index} className={cn("ai-message", message.role === "user" && "user")}>{message.text}</div>)}
       </div>
       <form onSubmit={submit} className="flex gap-2 border-t border-[var(--border)] p-4">
-        <textarea aria-label="发送给 Workbench AI 的消息" rows={2} value={input} onChange={(event) => setInput(event.target.value)} placeholder="输入消息…" className="focus-ring min-h-11 flex-1 resize-none rounded-lg border border-[var(--border)] bg-transparent px-3 py-2" />
+        <textarea aria-label="发送给 Workbench AI 的消息" rows={2} value={input} onChange={(event) => setInput(event.target.value)} placeholder="输入消息…" className="ui-input min-h-11 flex-1 resize-none" />
         <Button size="icon" aria-label="发送消息" disabled={!input.trim() || chat.isPending || status.data?.available === false}><Send size={17} /></Button>
       </form>
-    </div>
+    </Dialog.Content></Dialog.Portal></Dialog.Root>
   );
 }

@@ -44,6 +44,10 @@ type App struct {
 	closeOnce     sync.Once
 	schedulerOnce sync.Once
 	schedulerErr  error
+	settingsMu    sync.Mutex
+	aiSettings    AISettings
+	appearance    Appearance
+	gateway       *ai.Gateway
 }
 
 func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
@@ -111,19 +115,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 		_ = scheduled.Shutdown(context.Background())
 		return fail(err)
 	}
-	var aiProvider contracts.AIProvider
-	if cfg.OpenAIAPIKey != "" {
-		provider, providerErr := ai.NewOpenAIProvider(ai.OpenAIConfig{
-			APIKey: cfg.OpenAIAPIKey, BaseURL: cfg.OpenAIBaseURL,
-			Profiles: map[string]ai.Profile{"default": {Model: cfg.OpenAIModel, MaxOutputTokens: 2048}},
-		})
-		if providerErr != nil {
-			_ = scheduled.Shutdown(context.Background())
-			return fail(providerErr)
-		}
-		aiProvider = provider
-	}
-	gateway, err := ai.NewGateway(aiProvider, toolRuntime)
+	gateway, err := ai.NewGateway(nil, toolRuntime)
 	if err != nil {
 		_ = scheduled.Shutdown(context.Background())
 		return fail(err)
@@ -138,6 +130,11 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	application := &App{
 		config: cfg, logger: logger, database: database, registry: registry,
 		dispatcher: dispatcher, scheduler: scheduled, auth: authService,
+	}
+	application.gateway = gateway
+	if err := application.loadSettings(ctx); err != nil {
+		_ = scheduled.Shutdown(context.Background())
+		return fail(err)
 	}
 	application.handler = application.routes(dashboardService, notificationHTTP, conversationHTTP, ui)
 	application.server = &http.Server{
@@ -191,6 +188,11 @@ func (a *App) routes(
 		protected.Post("/api/chat", conversationHTTP.Chat)
 		protected.Post("/api/chat/stream", conversationHTTP.Stream)
 		protected.Post("/api/system/backup", a.backup)
+		protected.Get("/api/settings", a.getSettings)
+		protected.Put("/api/settings/ai", a.saveAISettings)
+		protected.Post("/api/settings/ai/test", a.testAISettings)
+		protected.Put("/api/settings/appearance", a.saveAppearance)
+		protected.Put("/api/settings/password", a.auth.ChangePasswordHandler)
 		for _, route := range a.registry.Catalog().Routes {
 			protected.Method(route.Method, route.Pattern, a.registry.Gate(route.Module, route.Handler))
 		}

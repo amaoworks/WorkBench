@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
@@ -27,8 +28,30 @@ var defaultArgonParams = argonParams{
 }
 
 func hashPassword(password string) (string, error) {
-	if utf8.RuneCountInString(password) < 12 {
-		return "", errors.New("password must contain at least 12 characters")
+	if utf8.RuneCountInString(password) < 8 {
+		return "", errors.New("password must contain at least 8 characters")
+	}
+	var categories [4]bool
+	for _, char := range password {
+		switch {
+		case unicode.IsUpper(char):
+			categories[0] = true
+		case unicode.IsLower(char):
+			categories[1] = true
+		case unicode.IsDigit(char):
+			categories[2] = true
+		case unicode.IsPunct(char) || unicode.IsSymbol(char):
+			categories[3] = true
+		}
+	}
+	count := 0
+	for _, present := range categories {
+		if present {
+			count++
+		}
+	}
+	if count < 3 {
+		return "", errors.New("password must contain at least 3 of: uppercase letters, lowercase letters, digits, special symbols")
 	}
 	params := defaultArgonParams
 	if runtime.NumCPU() < int(params.parallelism) {

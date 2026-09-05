@@ -11,6 +11,7 @@ import (
 )
 
 type Gateway struct {
+	mu       sync.RWMutex
 	provider contracts.AIProvider
 	runtime  *ToolRuntime
 }
@@ -22,15 +23,28 @@ func NewGateway(provider contracts.AIProvider, runtime *ToolRuntime) (*Gateway, 
 	return &Gateway{provider: provider, runtime: runtime}, nil
 }
 
-func (g *Gateway) Available() bool { return g.provider != nil }
+func (g *Gateway) SetProvider(provider contracts.AIProvider) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.provider = provider
+}
+
+func (g *Gateway) snapshot() contracts.AIProvider {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.provider
+}
+
+func (g *Gateway) Available() bool { return g.snapshot() != nil }
 
 func (g *Gateway) Generate(ctx context.Context, request contracts.GenerateRequest) (contracts.GenerateResult, error) {
-	if g.provider == nil {
+	provider := g.snapshot()
+	if provider == nil {
 		return contracts.GenerateResult{}, ErrUnavailable
 	}
 	request.Tools = g.runtime.AvailableTools()
 	for round := 0; round < 4; round++ {
-		result, err := g.provider.Generate(ctx, request)
+		result, err := provider.Generate(ctx, request)
 		if err != nil {
 			return contracts.GenerateResult{}, err
 		}
@@ -60,20 +74,21 @@ func (g *Gateway) Generate(ctx context.Context, request contracts.GenerateReques
 }
 
 func (g *Gateway) Stream(ctx context.Context, request contracts.GenerateRequest) (contracts.AIStream, error) {
-	if g.provider == nil {
+	provider := g.snapshot()
+	if provider == nil {
 		return nil, ErrUnavailable
 	}
 	streamCtx, cancel := context.WithCancel(ctx)
 	stream := &gatewayStream{events: make(chan contracts.AIStreamEvent, 32), cancel: cancel}
-	go g.runStream(streamCtx, request, stream.events)
+	go g.runStream(streamCtx, provider, request, stream.events)
 	return stream, nil
 }
 
-func (g *Gateway) runStream(ctx context.Context, request contracts.GenerateRequest, events chan<- contracts.AIStreamEvent) {
+func (g *Gateway) runStream(ctx context.Context, provider contracts.AIProvider, request contracts.GenerateRequest, events chan<- contracts.AIStreamEvent) {
 	defer close(events)
 	request.Tools = g.runtime.AvailableTools()
 	for round := 0; round < 4; round++ {
-		upstream, err := g.provider.Stream(ctx, request)
+		upstream, err := provider.Stream(ctx, request)
 		if err != nil {
 			sendStreamError(ctx, events, err)
 			return

@@ -34,6 +34,7 @@ type Config struct {
 }
 
 type Service struct {
+	db           *sql.DB
 	queries      *dbsqlc.Queries
 	mode         Mode
 	sessions     *scs.SessionManager
@@ -80,6 +81,7 @@ func New(ctx context.Context, db *sql.DB, cfg Config) (*Service, error) {
 	sessions.Cookie.Persist = true
 
 	service := &Service{
+		db:      db,
 		queries: dbsqlc.New(db), mode: cfg.Mode, sessions: sessions, sessionStore: store,
 		allowedHosts: make(map[string]struct{}), publicHTTPS: cfg.PublicHTTPS,
 	}
@@ -148,7 +150,13 @@ func (s *Service) Require(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.sessions.GetBool(r.Context(), "authenticated") {
+		var version int64
+		err := s.db.QueryRowContext(r.Context(), "SELECT updated_at FROM auth_credentials WHERE id = 1").Scan(&version)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"code": "authentication_failed", "message": "authentication failed"})
+			return
+		}
+		if !s.sessions.GetBool(r.Context(), "authenticated") || s.sessions.GetInt64(r.Context(), "credentialVersion") != version {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"code": "authentication_required", "message": "login required"})
 			return
 		}
@@ -170,7 +178,16 @@ func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"code": "invalid_request", "message": "invalid login request"})
 		return
 	}
-	ok, err := s.Authenticate(r.Context(), request.Password)
+	// Read the hash and version together so a concurrent password change cannot
+	// turn a login with the old password into a session for the new credential.
+	var hash string
+	var version int64
+	err := s.db.QueryRowContext(r.Context(), "SELECT password_hash, updated_at FROM auth_credentials WHERE id = 1").Scan(&hash, &version)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"code": "authentication_failed", "message": "authentication failed"})
+		return
+	}
+	ok, err := verifyPassword(request.Password, hash)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"code": "authentication_failed", "message": "authentication failed"})
 		return
@@ -184,6 +201,7 @@ func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.sessions.Put(r.Context(), "authenticated", true)
+	s.sessions.Put(r.Context(), "credentialVersion", version)
 	writeJSON(w, http.StatusOK, map[string]bool{"authenticated": true})
 }
 
@@ -197,6 +215,11 @@ func (s *Service) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) StatusHandler(w http.ResponseWriter, r *http.Request) {
 	authenticated := s.mode == ModeLocal || s.sessions.GetBool(r.Context(), "authenticated")
+	if s.mode == ModePassword && authenticated {
+		var version int64
+		err := s.db.QueryRowContext(r.Context(), "SELECT updated_at FROM auth_credentials WHERE id = 1").Scan(&version)
+		authenticated = err == nil && s.sessions.GetInt64(r.Context(), "credentialVersion") == version
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"authenticated": authenticated, "mode": s.mode})
 }
 
