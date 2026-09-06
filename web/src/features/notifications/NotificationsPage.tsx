@@ -1,9 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, Bell, CheckCheck } from "lucide-react";
-import { Link } from "react-router-dom";
 import { api } from "../../shared/api";
 import { notificationsPageSchema, type Notification } from "../../shared/schema";
-import { Button } from "../../components/ui/Button";
+import { Button, ButtonLink } from "../../components/ui/Button";
 import { Card, CardHeader } from "../../components/ui/Card";
 import { EmptyState, Skeleton } from "../../components/ui/States";
 import { cn } from "../../shared/cn";
@@ -33,7 +32,7 @@ function NotificationRow({ item, onRead, onArchive }: { item: Notification; onRe
   return <div className={cn("notification-row flex gap-3 px-5 py-4", !item.readAt && "notification-unread")}>
     <div className={cn("icon-tile mt-0.5", severityClass[item.severity])}><Bell size={17} /></div>
     <div className="min-w-0 flex-1"><div className="notification-heading"><div><p className="font-medium break-words">{item.title}</p><p className="mt-1 text-sm text-[var(--muted)] break-words">{item.content}</p></div><time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleString()}</time></div>
-      <div className="mt-3 flex flex-wrap gap-4">{item.actionRoute && <Link to={item.actionRoute} onClick={onRead} className="text-xs font-medium text-link">{item.actionLabel ?? "查看"}</Link>}{!item.readAt && <button onClick={onRead} className="text-xs text-link">标为已读</button>}<button onClick={onArchive} className="flex items-center gap-1 text-xs text-[var(--muted)] hover:text-[var(--ink)]"><Archive size={13} />归档</button></div>
+      <div className="notification-actions mt-3 flex flex-wrap gap-2">{item.actionRoute && <ButtonLink to={item.actionRoute} onClick={onRead} variant="ghost" size="sm">{item.actionLabel ?? "查看"}</ButtonLink>}{!item.readAt && <Button onClick={onRead} variant="ghost" size="sm">标为已读</Button>}<Button onClick={onArchive} variant="ghost" size="sm"><Archive size={13} />归档</Button></div>
     </div>
   </div>;
 }

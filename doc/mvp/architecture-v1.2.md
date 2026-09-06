@@ -174,7 +174,7 @@ MVP 不实现通用规则 DSL。重复规则在两个以上模块中稳定出现
 
 `GET /api/dashboard` 根据 enabled module 的 Widget 描述汇总布局和数据端点。Widget 描述包含正整数 `schemaVersion`；后端不返回任意可执行前端组件，而只返回稳定的 `widgetKind`、props 和 data source 描述。
 
-每日简报是可选的异步产物；AI 不可用时不阻塞普通 Dashboard。
+总览按工作空间保存各卡片显隐、顺序和尺寸；隐藏卡片不禁用业务。`GET /api/dashboard/widgets` 提供全部可配置卡片，`PUT/DELETE /api/dashboard/layout` 保存/重置偏好。页面已移除固定每日简报占位，摘要由需要它的业务提供；AI 不可用时不阻塞普通 Dashboard。
 
 ## 6. 前端架构
 
@@ -199,11 +199,11 @@ MVP 不实现通用规则 DSL。重复规则在两个以上模块中稳定出现
 
 Todo 用于验证完整扩展链路：模块 migration、CRUD Route、Widget、到期扫描 Job、事件、通知和一个低风险 AITool。它不是为了在 MVP 阶段做成完整任务管理平台。
 
-### 7.2 Investment（MVP 后）
+### 7.2 Investment（MVP 后，模拟 Provider 已落地）
 
 投资模块拥有 `investment_*` 表。行情 Provider 由 Job 定期同步，业务数据与 `investment.price.updated` 事件同事务提交；事件消费者判断提醒阈值并通过 NotificationService 幂等创建通知。
 
-MVP 后先使用 mock Provider，再选择真实行情/券商 API。真实交易下单属于高风险能力，不因已有 Function Calling 而自动开放。
+当前已实现固定三品种 mock Provider、五分钟同步 Job、事务事件、幂等通知、独立页面与 Widget，以及业务主动调用共享 AI 的摘要。后续再选择真实行情/券商 API。真实交易下单属于高风险能力，不因已有 Function Calling 而自动开放。
 
 ## 8. 可观测性与生命周期
 
@@ -229,3 +229,7 @@ workbench                 Go 可执行文件（含前端资源）
 4. Todo：端到端验证和故障场景测试。
 5. Investment：mock 数据源。
 6. 真实数据 Provider、外部通知 Channel 和远程部署强化。
+
+## 11. 业务开发入口
+
+当前业务通过 contracts 与构造函数注入使用通用能力。主动 AI 文本生成使用 `TextGenerator`，AI 执行业务使用 `AITool`，两者分开装配。前端通过 `modules/*/*.module.ts` 自声明页面与 Widget，由统一注册表自动收集。操作步骤、测试与边界见 [业务开发指南](../business-development.md)，本轮验收见 [扩展记录](../module-platform.md)。

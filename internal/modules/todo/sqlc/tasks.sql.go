@@ -103,14 +103,34 @@ func (q *Queries) ListDueTasks(ctx context.Context, dueAt sql.NullInt64) ([]List
 	return items, nil
 }
 
-const listTasks = `-- name: ListTasks :many
+const listTasksPage = `-- name: ListTasksPage :many
 SELECT id, title, description, due_at, completed_at, created_at, updated_at
 FROM todo_tasks
-ORDER BY completed_at IS NOT NULL, COALESCE(due_at, 9223372036854775807), created_at DESC
+WHERE CAST(?1 AS INTEGER) = 0 OR
+  (completed_at IS NOT NULL, COALESCE(due_at, 9223372036854775807), -created_at, id) >
+  (CAST(?2 AS INTEGER), CAST(?3 AS INTEGER), -CAST(?4 AS INTEGER), CAST(?5 AS TEXT))
+ORDER BY completed_at IS NOT NULL, COALESCE(due_at, 9223372036854775807), created_at DESC, id
+LIMIT ?6
 `
 
-func (q *Queries) ListTasks(ctx context.Context) ([]TodoTask, error) {
-	rows, err := q.db.QueryContext(ctx, listTasks)
+type ListTasksPageParams struct {
+	HasCursor int64  `json:"has_cursor"`
+	Done      int64  `json:"done"`
+	Due       int64  `json:"due"`
+	Created   int64  `json:"created"`
+	CursorID  string `json:"cursor_id"`
+	PageLimit int64  `json:"page_limit"`
+}
+
+func (q *Queries) ListTasksPage(ctx context.Context, arg ListTasksPageParams) ([]TodoTask, error) {
+	rows, err := q.db.QueryContext(ctx, listTasksPage,
+		arg.HasCursor,
+		arg.Done,
+		arg.Due,
+		arg.Created,
+		arg.CursorID,
+		arg.PageLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

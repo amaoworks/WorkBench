@@ -251,3 +251,14 @@ internal/modules/investment/migrations/   investment 模块 migration
 ```
 
 模块 migration 必须是单向兼容启停的：禁用模块不回滚表，重新启用后继续执行缺失 migration。发布前必须使用旧版本数据库副本验证升级路径。
+
+## 总览配置与第二业务（2026-09-05）
+
+总览布局保存在 `workspace_settings` 的 `section = 'dashboard'`，value 是 `[{id, visible, size, order}]` JSON 数组。配置读写通过 `query/dashboard.sql` 生成，不另增 core migration；缺失 section 表示使用注册默认值。
+
+Investment 使用独立 Goose 表 `goose_module_investment_version`，migration 为 `internal/modules/investment/migrations/00001_investment.sql`：
+
+- `investment_quotes(symbol PK, name, price_cents, change_bps, as_of)`：模拟行情；金额为整数分、百分比为整数基点、时间为 UTC Unix 毫秒。只接受比已有记录更新的快照，避免重复发布事件。
+- `investment_summary(id PK CHECK id = 1, content, created_at)`：最近一次主动生成的 AI 摘要，生成失败不覆盖旧值。
+
+首次升级会为已知 Investment 模块执行 migration，保留已有 Todo 数据、模块状态和总览偏好。备份包含这些表和 workspace_settings。模块停用只控制入口，不删除上述数据。

@@ -127,19 +127,6 @@ func (m *Module) Create(ctx context.Context, input CreateTask) (Task, error) {
 	return Task{ID: id, Title: input.Title, Description: input.Description, DueAt: input.DueAt, CreatedAt: now, UpdatedAt: now}, nil
 }
 
-func (m *Module) listTasks(w http.ResponseWriter, r *http.Request) {
-	rows, err := m.queries.ListTasks(r.Context())
-	if err != nil {
-		httpapi.Error(w, http.StatusInternalServerError, "todo_list_failed", "could not list tasks")
-		return
-	}
-	tasks := make([]Task, 0, len(rows))
-	for _, row := range rows {
-		tasks = append(tasks, taskFromRow(row))
-	}
-	httpapi.Write(w, http.StatusOK, map[string]any{"items": tasks})
-}
-
 func (m *Module) createTask(w http.ResponseWriter, r *http.Request) {
 	var input CreateTask
 	if err := httpapi.Decode(w, r, &input, 16*1024); err != nil {

@@ -1,6 +1,6 @@
 # MVP 核心 Go 契约
 
-本文定义接口形状和语义，包名仅为建议。实现时允许按 Go 编译边界拆包，但不得改变 ADR 中的行为保证。
+本文定义接口形状和语义，实际稳定类型位于 `internal/contracts`。业务接入步骤见 [业务开发指南](../../business-development.md)。
 
 ## 基础类型
 
@@ -80,9 +80,10 @@ type EventPublisher interface {
 
 type EventConsumer struct {
     ID       ConsumerID
+    Module   ModuleID
     Topics   []string
     Timeout  time.Duration
-    Attempts int
+    MaxAttempts int
     Handler  func(context.Context, Event) error
 }
 ```
@@ -232,7 +233,32 @@ type APIError struct {
 
 - API 路径统一位于 `/api`；业务模块路径位于 `/api/modules/<module>`。
 - 成功响应和错误响应使用 JSON；错误结构固定为 `APIError`，`code` 是稳定的机器可读 snake_case 字符串，`requestId` 可选。
-- 列表分页使用 `limit + cursor`。`limit` 默认 50、最大 100；`cursor` 是服务端生成的 opaque Base64URL 字符串，客户端不得解析或构造。
+- 无界业务列表分页使用 `limit + cursor`；模块/Widget 目录及固定三品种模拟行情为有界配置或聚合响应。`limit` 默认 50、最大 100；`cursor` 是服务端生成的 opaque Base64URL 字符串，客户端不得解析或构造。
 - HTTP JSON 时间统一输出 UTC RFC3339/RFC3339Nano；SQLite 内部时间统一存 UTC Unix 毫秒。
 - 应用生成的实体、事件、消息和运行 ID 是 32 位小写十六进制、128-bit、按毫秒近似可排序的 opaque 字符串；客户端不得依赖其内部布局。
 - 修改状态的请求使用 JSON body，并经过 Host、Origin 和 CSRF 校验；不通过 query string 传递秘密或对话正文。
+
+## 业务主动调用 AI
+
+```go
+type TextRequest struct {
+    Profile string
+    Instruction string
+    Input string
+}
+type TextGenerator interface {
+    GenerateText(context.Context, TextRequest) (string, error)
+}
+```
+
+通过应用装配的 TextService 注入业务，使用当前共享 AI 设置；未配置返回 `contracts.ErrAIUnavailable`。该入口不传递也不执行 AITool，供应商错误被脱敏。已有请求使用旧配置完成，保存后的新请求使用新配置。业务自行定义期限、读取数据、持久化生成结果，不在数据库事务中等待 AI。
+
+## 总览布局 HTTP 契约
+
+- `GET /api/dashboard` 返回 `{widgets: [...]}`，只含 enabled 业务中 visible 的卡片。
+- `GET /api/dashboard/widgets` 返回全部编译期卡片，在 Widget 描述上增加 `visible`、`enabled`。`size/order` 已应用工作空间偏好。
+- `PUT /api/dashboard/layout` 请求 `{items: [{id, visible, size, order}]}`，必须完整包含当前每张卡片一次；ID 不得未知或重复，visible 必填，size 为 small/medium/large，order 为 0～100000。无效请求返回 `400 invalid_layout`，不覆盖原配置。
+- `DELETE /api/dashboard/layout` 恢复业务声明的默认值；写请求经过相同鉴权与 CSRF 校验。
+- 保存与重置成功返回完整卡片目录。排序先按 order，再按 ID 保证稳定；相同 order 合法。
+- 新卡片默认 visible，size/order 使用注册值。业务停用时保留偏好；不再编译的卡片不进入目录，下次保存完整布局会去掉其旧偏好。
+- 总览标题、容器和错误边界由平台提供，数据与组件实现由业务提供。

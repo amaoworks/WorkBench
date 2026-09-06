@@ -5,9 +5,11 @@ import { Save, AudioLines, Check, CircleHelp, Database, Fingerprint, KeyRound, L
 import { toast } from "sonner";
 import { api } from "../../shared/api";
 import { useAppearance, useSettings, type AISettings, type Settings } from "./queries";
+import { ModulesPanel } from "./ModulesPanel";
 import { PageHeader } from "../../components/ui/PageHeader";
 
 const sections = [
+  { id: "modules", title: "业务模块", icon: Database },
   { id: "ai", title: "AI 配置", icon: Bot },
   { id: "security", title: "账户安全", icon: Fingerprint },
   { id: "appearance", title: "外观", icon: Paintbrush },
@@ -38,6 +40,7 @@ export default function SettingsPage() {
       const nextSection = sections[next];
       if (nextSection) { selectTab(nextSection.id); document.getElementById(`tab-${nextSection.id}`)?.focus(); }
     }}><Icon size={17} /><span>{title}</span></button>)}</div>
+    <div className="settings-panel" role="tabpanel" id="panel-modules" aria-labelledby="tab-modules" hidden={active !== "modules"}><ModulesPanel /></div>
     <div className="settings-panel" role="tabpanel" id="panel-ai" aria-labelledby="tab-ai" hidden={active !== "ai"}><AIForm key={JSON.stringify(data.ai)} value={data.ai} /></div>
     <div className="settings-panel" role="tabpanel" id="panel-security" aria-labelledby="tab-security" hidden={active !== "security"}><PasswordForm mode={data.deployment.authMode} /></div>
     <div className="settings-panel" role="tabpanel" id="panel-appearance" aria-labelledby="tab-appearance" hidden={active !== "appearance"}><AppearanceForm value={data} /></div>

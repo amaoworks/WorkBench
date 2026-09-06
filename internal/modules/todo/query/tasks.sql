@@ -6,10 +6,14 @@ VALUES (?, ?, ?, ?, ?, ?);
 SELECT id, title, description, due_at, completed_at, created_at, updated_at
 FROM todo_tasks WHERE id = ?;
 
--- name: ListTasks :many
+-- name: ListTasksPage :many
 SELECT id, title, description, due_at, completed_at, created_at, updated_at
 FROM todo_tasks
-ORDER BY completed_at IS NOT NULL, COALESCE(due_at, 9223372036854775807), created_at DESC;
+WHERE CAST(sqlc.arg(has_cursor) AS INTEGER) = 0 OR
+  (completed_at IS NOT NULL, COALESCE(due_at, 9223372036854775807), -created_at, id) >
+  (CAST(sqlc.arg(done) AS INTEGER), CAST(sqlc.arg(due) AS INTEGER), -CAST(sqlc.arg(created) AS INTEGER), CAST(sqlc.arg(cursor_id) AS TEXT))
+ORDER BY completed_at IS NOT NULL, COALESCE(due_at, 9223372036854775807), created_at DESC, id
+LIMIT sqlc.arg(page_limit);
 
 -- name: UpdateTask :exec
 UPDATE todo_tasks

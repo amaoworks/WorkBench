@@ -27,6 +27,7 @@ import (
 	"workbench/internal/foundation/events"
 	"workbench/internal/foundation/httpapi"
 	"workbench/internal/foundation/modules"
+	"workbench/internal/modules/investment"
 	"workbench/internal/modules/todo"
 	"workbench/internal/webui"
 )
@@ -48,6 +49,7 @@ type App struct {
 	aiSettings    AISettings
 	appearance    Appearance
 	gateway       *ai.Gateway
+	textAI        *ai.TextService
 }
 
 func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
@@ -78,7 +80,12 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	if err != nil {
 		return fail(err)
 	}
-	registry, err := modules.Initialize(ctx, database, []contracts.Module{todoModule})
+	textAI := ai.NewTextService()
+	investmentModule, err := investment.New(investment.Dependencies{DB: database.SQL(), Events: eventStore, Notifications: notificationService, AI: textAI, Quotes: investment.MockProvider{}})
+	if err != nil {
+		return fail(err)
+	}
+	registry, err := modules.Initialize(ctx, database, []contracts.Module{todoModule, investmentModule})
 	if err != nil {
 		return fail(err)
 	}
@@ -108,7 +115,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 		_ = scheduled.Shutdown(context.Background())
 		return fail(err)
 	}
-	dashboardService := dashboard.New(registry.Catalog().Widgets, registry.IsEnabled)
+	dashboardService := dashboard.New(database.SQL(), registry.Catalog().Widgets, registry.IsEnabled)
 	notificationHTTP := notifications.NewHTTPHandler(notificationService, hub)
 	toolRuntime, err := ai.NewToolRuntime(database.SQL(), registry.Catalog().Tools, registry.IsEnabled)
 	if err != nil {
@@ -132,6 +139,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 		dispatcher: dispatcher, scheduler: scheduled, auth: authService,
 	}
 	application.gateway = gateway
+	application.textAI = textAI
 	if err := application.loadSettings(ctx); err != nil {
 		_ = scheduled.Shutdown(context.Background())
 		return fail(err)
@@ -178,6 +186,9 @@ func (a *App) routes(
 		protected.Get("/api/modules", a.listModules)
 		protected.Put("/api/modules/{id}/enabled", a.setModuleEnabled)
 		protected.Get("/api/dashboard", dashboardService.ServeHTTP)
+		protected.Get("/api/dashboard/widgets", dashboardService.Catalog)
+		protected.Put("/api/dashboard/layout", dashboardService.Save)
+		protected.Delete("/api/dashboard/layout", dashboardService.Reset)
 		protected.Get("/api/notifications", notificationHTTP.List)
 		protected.Get("/api/notifications/unread-count", notificationHTTP.UnreadCount)
 		protected.Put("/api/notifications/read", notificationHTTP.MarkRead)

@@ -15,14 +15,9 @@ import { toast } from "sonner";
 
 const DashboardPage = lazy(() => import("../features/dashboard/DashboardPage"));
 const NotificationsPage = lazy(() => import("../features/notifications/NotificationsPage"));
-const TodoPage = lazy(() => import("../modules/todo/TodoPage"));
 const SettingsPage = lazy(() => import("../features/settings/SettingsPage"));
 
-const pageRegistry: Record<string, React.LazyExoticComponent<React.ComponentType>> = {
-  "todo.list": TodoPage
-};
-
-const iconRegistry = { "check-square": CheckSquare2 } as const;
+import { pageRegistry, iconRegistry } from "../modules/registry";
 
 export function Layout() {
   const modules = useModules();
@@ -63,7 +58,7 @@ export function Layout() {
         <div className="workspace-logo flex h-20 items-center gap-3 px-4"><div className="brand-mark"><Aperture size={23} strokeWidth={1.5} /></div>{!collapsed && <span className="sidebar-label font-semibold tracking-tight">Workbench<span className="brand-period">.</span></span>}</div>
         <nav className="flex-1 space-y-1 p-2" aria-label="主导航">
           <SideLink to="/" icon={LayoutDashboard} label="总览" collapsed={collapsed} />
-          {navigation.map((item) => { const Icon = iconRegistry[item.icon as keyof typeof iconRegistry] ?? CheckSquare2; return <SideLink key={item.pageKey} to={item.route} icon={Icon} label={item.label} collapsed={collapsed} />; })}
+          {navigation.map((item) => { const Icon = iconRegistry[item.icon] ?? CheckSquare2; return <SideLink key={item.pageKey} to={item.route} icon={Icon} label={item.label} collapsed={collapsed} />; })}
           <SideLink to="/notifications" icon={Bell} label="通知" collapsed={collapsed} badge={unread.data?.count} />
           <SideLink to="/settings" icon={Settings2} label="设置" collapsed={collapsed} />
         </nav>

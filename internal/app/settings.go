@@ -55,6 +55,7 @@ func (a *App) loadSettings(ctx context.Context) error {
 		return err
 	}
 	a.gateway.SetProvider(provider)
+	a.textAI.SetProvider(provider)
 	return nil
 }
 
@@ -152,6 +153,7 @@ func (a *App) saveAISettings(w http.ResponseWriter, r *http.Request) {
 	}
 	a.aiSettings = value
 	a.gateway.SetProvider(provider)
+	a.textAI.SetProvider(provider)
 	httpapi.Write(w, 200, map[string]bool{"saved": true})
 }
 

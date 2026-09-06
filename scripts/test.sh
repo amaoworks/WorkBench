@@ -12,9 +12,21 @@ else
 fi
 
 cd "$repo_root"
+generated_check=$(mktemp -d)
+trap 'rm -rf "$generated_check"' EXIT HUP INT TERM
+snapshot_generated() {
+    destination=$1
+    for generated in internal/foundation/database/sqlc internal/modules/*/sqlc; do
+        [ -d "$generated" ] || continue
+        mkdir -p "$destination/$(dirname "$generated")"
+        cp -R "$generated" "$destination/$generated"
+    done
+}
+snapshot_generated "$generated_check/before"
 "$sqlc_bin" generate
-if ! git diff --exit-code -- internal/foundation/database/sqlc internal/modules/todo/sqlc; then
-    echo "sqlc generated files are stale; run: $sqlc_bin generate" >&2
+snapshot_generated "$generated_check/after"
+if ! diff -ru "$generated_check/before" "$generated_check/after"; then
+    echo "sqlc generated files were stale; review regenerated files and run tests again" >&2
     exit 1
 fi
 "$go_bin" test ./...

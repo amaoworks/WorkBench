@@ -34,10 +34,10 @@
 │       └── dist/                  # Vite 构建后由本包 go:embed
 ├── web/
 │   └── src/
-│       ├── app/                   # React 应用装配、pageKey/route 注册与 Shell
+│       ├── app/                   # React 应用装配与 Shell
 │       ├── components/ui/         # 基础 UI
 │       ├── features/              # Dashboard、通知等通用功能
-│       ├── modules/               # 编译期业务页面
+│       ├── modules/               # 业务页面、Widget、*.module.ts 与统一注册表
 │       ├── routes/                # 后续独立路由声明的保留边界
 │       └── shared/                # API、Zod schema、共享类型
 ├── sqlc.yaml                      # Foundation 与模块查询生成配置
@@ -77,4 +77,4 @@ contracts → 任意实现包
 - 模块 migration 放在模块自己的 `migrations/`，由该模块 package 嵌入。
 - `web/` 保存前端源码；Vite 清理并直接输出到 `internal/webui/dist/`，随后执行 `go build`。
 - 构建脚本必须先清理旧 dist，再复制新产物，防止删除过的前端资源残留在二进制中。
-- Foundation 与 Todo 的固定 SQL 由 `sqlc.yaml` 生成；动态游标筛选、可变长度 `IN` 和 SQLite PRAGMA 保持显式 SQL。`scripts/test.sh` 会重新生成并检查已跟踪产物是否漂移。
+- Foundation 与各业务的固定 SQL 由 `sqlc.yaml` 生成；动态游标筛选、可变长度 `IN` 和 SQLite PRAGMA 保持显式 SQL。`scripts/test.sh` 会重新生成并比较所有生成目录在再生成前后的内容是否漂移。

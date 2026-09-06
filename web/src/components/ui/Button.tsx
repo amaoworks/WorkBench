@@ -1,4 +1,5 @@
 import { forwardRef, type ButtonHTMLAttributes } from "react";
+import { Link, type LinkProps } from "react-router-dom";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "../../shared/cn";
 
@@ -24,3 +25,11 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(({ className, v
   <button ref={ref} data-size={size ?? "md"} className={cn(variants({ variant, size }), className)} {...props} />
 ));
 Button.displayName = "Button";
+
+// Navigation actions share the exact sizing and variants of buttons while retaining link semantics.
+export interface ButtonLinkProps extends LinkProps, VariantProps<typeof variants> {}
+
+export const ButtonLink = forwardRef<HTMLAnchorElement, ButtonLinkProps>(({ className, variant, size, ...props }, ref) => (
+  <Link ref={ref} data-size={size ?? "md"} className={cn(variants({ variant, size }), className)} {...props} />
+));
+ButtonLink.displayName = "ButtonLink";

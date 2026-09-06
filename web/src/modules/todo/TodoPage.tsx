@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, Check, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../../shared/api";
@@ -14,7 +14,8 @@ export default function TodoPage() {
   const queryClient = useQueryClient();
   const [title, setTitle] = useState("");
   const [dueAt, setDueAt] = useState("");
-  const tasks = useQuery({ queryKey: ["todo", "tasks"], queryFn: async () => tasksResponseSchema.parse(await api<unknown>("/api/modules/todo/tasks")) });
+  const tasks = useInfiniteQuery({ queryKey: ["todo", "tasks"], initialPageParam: "", queryFn: async ({ pageParam }) => tasksResponseSchema.parse(await api<unknown>(`/api/modules/todo/tasks?limit=50${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`)), getNextPageParam: (page) => page.nextCursor });
+  const items = tasks.data?.pages.flatMap((page) => page.items) ?? [];
   const refresh = () => { void queryClient.invalidateQueries({ queryKey: ["todo"] }); void queryClient.invalidateQueries({ queryKey: ["dashboard"] }); void queryClient.invalidateQueries({ queryKey: ["widget"] }); };
   const create = useMutation({
     mutationFn: () => api<Task>("/api/modules/todo/tasks", { method: "POST", body: JSON.stringify({ title, dueAt: dueAt ? new Date(dueAt).toISOString() : null }) }),
@@ -39,12 +40,12 @@ export default function TodoPage() {
         </form>
       </Card>
       <Card>
-        <CardHeader title="任务清单" description={tasks.data ? `${tasks.data.items.filter((task) => !task.completedAt).length} 项未完成` : "正在同步"} />
+        <CardHeader title="任务清单" description={tasks.data ? `已加载 ${items.length} 项 · ${items.filter((task) => !task.completedAt).length} 项未完成` : "正在同步"} />
         {tasks.isLoading && <div className="space-y-3 p-4"><Skeleton className="h-14" /><Skeleton className="h-14" /><Skeleton className="h-14" /></div>}
         {tasks.isError && <p className="p-5 text-danger">{tasks.error.message}</p>}
-        {tasks.data?.items.length === 0 && <EmptyState title="清单还是空的" description="写下一个清晰、可以立即行动的任务。" />}
+        {tasks.data && items.length === 0 && <EmptyState title="清单还是空的" description="写下一个清晰、可以立即行动的任务。" />}
         <div className="divide-y divide-[var(--border)]">
-          {tasks.data?.items.map((task) => (
+          {items.map((task) => (
             <TaskRow
               key={task.id}
               task={task}
@@ -53,6 +54,7 @@ export default function TodoPage() {
             />
           ))}
         </div>
+        {tasks.hasNextPage && <div className="p-4"><Button variant="secondary" disabled={tasks.isFetchingNextPage} onClick={() => tasks.fetchNextPage()}>{tasks.isFetchingNextPage ? "加载中…" : "加载更多"}</Button></div>}
       </Card>
     </div>
   );
