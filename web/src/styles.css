@@ -287,7 +287,14 @@ html[data-motion="reduced"] *, html[data-motion="reduced"] *::before, html[data-
 .widget-large { grid-column: span 3; }
 .dashboard-widget .dashboard-stats { grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); }
 .layout-row, .module-row { display: flex; align-items: center; gap: 12px; padding: 16px 0; border-bottom: 1px solid var(--border); }
-.module-row { justify-content: space-between; }
+.module-row { justify-content: space-between; flex-wrap: wrap; }
+.module-actions { display: flex; gap: 8px; margin-left: auto; }
+.module-settings-dialog { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(480px, calc(100% - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--ink); box-shadow: 0 20px 60px #0002; }
+.module-settings-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 20px; border-bottom: 1px solid var(--border); }
+.module-settings-header h2 { font-size: 18px; font-weight: 600; }
+.module-settings-header p { margin-top: 4px; font-size: 13px; color: var(--muted); }
+.module-settings-body { padding: 20px; }
+.module-settings-notice { margin-bottom: 16px; padding: 12px; border-radius: 8px; background: var(--soft); color: var(--muted); font-size: 13px; }
 .layout-row select { width: 80px; }
 .settings-tabs { overflow-x: auto; overflow-y: hidden; }
 .settings-tabs > button { white-space: nowrap; }

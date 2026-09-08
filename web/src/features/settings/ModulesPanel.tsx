@@ -4,6 +4,7 @@ import { api } from "../../shared/api";
 import { useModules } from "../../app/queries";
 import { Button } from "../../components/ui/Button";
 import { Skeleton } from "../../components/ui/States";
+import { ModuleSettingsDialog } from "./ModuleSettingsDialog";
 
 export function ModulesPanel() {
   const modules = useModules();
@@ -22,6 +23,6 @@ export function ModulesPanel() {
   if (modules.isPending) return <Skeleton className="h-32" />;
   if (modules.isError) return <p role="alert">模块加载失败：{modules.error.message}</p>;
   return <div className="studio-form"><div className="control-heading"><div><h3>业务模块</h3><p>停用后隐藏页面和总览卡片，并暂停新的后台执行。已有数据与布局偏好会保留。</p></div></div>
-    {modules.data.items.map((module) => <div key={module.id} className="module-row"><div><h3>{module.name}</h3><p className="text-sm text-[var(--muted)]">版本 {module.version} · {module.enabled ? "已启用" : "已停用"}</p></div><Button variant="secondary" role="switch" aria-label={`${module.name}模块`} aria-checked={module.enabled} disabled={toggle.isPending} onClick={() => toggle.mutate({ id: module.id, enabled: !module.enabled })}>{module.enabled ? "停用" : "启用"}</Button></div>)}
+    {modules.data.items.map((module) => <div key={module.id} className="module-row"><div><h3>{module.name}</h3><p className="text-sm text-[var(--muted)]">版本 {module.version} · {module.enabled ? "已启用" : "已停用"}</p></div><div className="module-actions"><ModuleSettingsDialog module={module} /><Button variant="secondary" role="switch" aria-label={`${module.name}模块`} aria-checked={module.enabled} disabled={toggle.isPending} onClick={() => toggle.mutate({ id: module.id, enabled: !module.enabled })}>{module.enabled ? "停用" : "启用"}</Button></div></div>)}
   </div>;
 }

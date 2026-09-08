@@ -144,6 +144,20 @@ type TodoTask struct {
 	UpdatedAt   int64         `json:"updated_at"`
 }
 
+type TodoWallosOccurrence struct {
+	Source         string `json:"source"`
+	SubscriptionID string `json:"subscription_id"`
+	PaymentDate    string `json:"payment_date"`
+	TaskID         string `json:"task_id"`
+}
+
+type TodoWallosSetting struct {
+	ID        int64         `json:"id"`
+	Config    string        `json:"config"`
+	LastSync  sql.NullInt64 `json:"last_sync"`
+	LastError string        `json:"last_error"`
+}
+
 type WorkspaceSetting struct {
 	Section string `json:"section"`
 	Value   string `json:"value"`

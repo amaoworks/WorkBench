@@ -29,6 +29,8 @@ src/shared/                 API client、schema、工具与共享类型
 
 总览配置支持显隐、上下移和尺寸；模块管理位于设置的业务模块标签。queryKey、接口调用、Zod 校验与接入流程见 [业务开发指南](../doc/business-development.md)。
 
+模块的“设置”按钮位于启用/停用按钮旁，打开最大宽度 480px 的模态弹窗。业务通过可选 `settings` 懒加载组件提供自己的设置内容，接收 `{ enabled: boolean }`；未提供组件时显示暂无可配置项。弹窗支持 Escape、遮罩和关闭按钮退出，并恢复触发按钮焦点。
+
 ## 通知操作与导航按钮
 
 通知的查看、标为已读、归档统一使用共享 `Button` / `ButtonLink` 的 `ghost`、`sm` 规格，保持相同字体、行高、内边距和控件高度。`ButtonLink` 保留站内链接语义，与 `Button` 共用样式定义；新业务需要按钮形式的跳转时复用它。

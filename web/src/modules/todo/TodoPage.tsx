@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useMutation, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, Check, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -9,11 +9,15 @@ import { Card, CardHeader } from "../../components/ui/Card";
 import { EmptyState, Skeleton } from "../../components/ui/States";
 import { cn } from "../../shared/cn";
 import { PageHeader } from "../../components/ui/PageHeader";
+import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 
 export default function TodoPage() {
   const queryClient = useQueryClient();
   const [title, setTitle] = useState("");
   const [dueAt, setDueAt] = useState("");
+  const [deleting, setDeleting] = useState<Task | null>(null);
+  const deleteTrigger = useRef<HTMLElement | null>(null);
+  const titleInput = useRef<HTMLInputElement>(null);
   const tasks = useInfiniteQuery({ queryKey: ["todo", "tasks"], initialPageParam: "", queryFn: async ({ pageParam }) => tasksResponseSchema.parse(await api<unknown>(`/api/modules/todo/tasks?limit=50${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`)), getNextPageParam: (page) => page.nextCursor });
   const items = tasks.data?.pages.flatMap((page) => page.items) ?? [];
   const refresh = () => { void queryClient.invalidateQueries({ queryKey: ["todo"] }); void queryClient.invalidateQueries({ queryKey: ["dashboard"] }); void queryClient.invalidateQueries({ queryKey: ["widget"] }); };
@@ -23,14 +27,14 @@ export default function TodoPage() {
     onError: (error) => toast.error(error.message)
   });
   const update = useMutation({ mutationFn: ({ id, completed }: { id: string; completed: boolean }) => api<Task>(`/api/modules/todo/tasks/${id}`, { method: "PATCH", body: JSON.stringify({ completed }) }), onSuccess: refresh, onError: (error) => toast.error(error.message) });
-  const remove = useMutation({ mutationFn: (id: string) => api<void>(`/api/modules/todo/tasks/${id}`, { method: "DELETE" }), onSuccess: () => { refresh(); toast.success("待办已删除"); }, onError: (error) => toast.error(error.message) });
+  const remove = useMutation({ mutationFn: (id: string) => api<void>(`/api/modules/todo/tasks/${id}`, { method: "DELETE" }), onSuccess: () => { deleteTrigger.current = null; setDeleting(null); refresh(); toast.success("待办已删除"); }, onError: (error) => toast.error(error.message) });
   function submit(event: FormEvent) { event.preventDefault(); if (title.trim()) create.mutate(); }
   return (
     <div className="page">
       <PageHeader title="待办" description="记录下一步行动，按自己的节奏推进。" />
       <Card className="mb-4 p-4">
         <form onSubmit={submit} className="task-create flex gap-3">
-          <input aria-label="待办标题" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="添加一项待办…" className="ui-input min-w-0 flex-1" />
+          <input ref={titleInput} aria-label="待办标题" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="添加一项待办…" className="ui-input min-w-0 flex-1" />
           <label className="task-date relative">
             <span className="sr-only">截止时间</span>
             <CalendarClock className="pointer-events-none absolute left-3 top-2.5 text-[var(--muted)]" size={17} />
@@ -50,12 +54,15 @@ export default function TodoPage() {
               key={task.id}
               task={task}
               onToggle={() => update.mutate({ id: task.id, completed: !task.completedAt })}
-              onDelete={() => { if (window.confirm(`确定删除“${task.title}”吗？`)) remove.mutate(task.id); }}
+              onDelete={() => { deleteTrigger.current = document.activeElement as HTMLElement; setDeleting(task); }}
             />
           ))}
         </div>
         {tasks.hasNextPage && <div className="p-4"><Button variant="secondary" disabled={tasks.isFetchingNextPage} onClick={() => tasks.fetchNextPage()}>{tasks.isFetchingNextPage ? "加载中…" : "加载更多"}</Button></div>}
       </Card>
+      <ConfirmDialog open={deleting !== null} title="删除待办" description={`确定删除“${deleting?.title ?? ""}”吗？`} busy={remove.isPending}
+        onCancel={() => setDeleting(null)} onConfirm={() => { if (deleting && !remove.isPending) remove.mutate(deleting.id); }}
+        onClosed={() => { const target = deleteTrigger.current; if (target?.isConnected) target.focus(); else titleInput.current?.focus(); }} />
     </div>
   );
 }
@@ -67,6 +74,7 @@ function TaskRow({ task, onToggle, onDelete }: { task: Task; onToggle: () => voi
       <button onClick={onToggle} role="checkbox" aria-checked={!!task.completedAt} aria-label={task.completedAt ? "标记为未完成" : "标记为完成"} className="task-check focus-ring">{task.completedAt && <Check size={14} />}</button>
       <div className="min-w-0 flex-1">
         <p className={cn("truncate font-medium", task.completedAt && "text-[var(--muted)] line-through")}>{task.title}</p>
+        {task.description && <p className="mt-1 whitespace-pre-line break-words text-xs text-[var(--muted)]">{task.description}</p>}
         {task.dueAt && <p className={cn("mt-1 text-xs text-[var(--muted)]", overdue && "text-warning")}>{overdue ? "已逾期 · " : ""}{new Date(task.dueAt).toLocaleString()}</p>}
       </div>
       <Button variant="ghost" size="icon" className="task-delete opacity-0 group-hover:opacity-100 focus:opacity-100" onClick={onDelete} aria-label="删除待办"><Trash2 size={16} /></Button>

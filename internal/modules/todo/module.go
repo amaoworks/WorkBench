@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"workbench/internal/contracts"
@@ -26,6 +27,7 @@ type Module struct {
 	notifications contracts.NotificationService
 	queries       *todosqlc.Queries
 	now           func() time.Time
+	wallosMu      sync.Mutex
 }
 
 func New(db *sql.DB, events contracts.EventPublisher, notifications contracts.NotificationService) (*Module, error) {
@@ -48,6 +50,17 @@ func (m *Module) Migrations() contracts.MigrationSet {
 
 func (m *Module) Register(r contracts.ModuleRegistrar) error {
 	registrations := []error{
+		r.Handle(http.MethodGet, "/api/modules/todo/wallos", http.HandlerFunc(m.getWallos)),
+		r.Handle(http.MethodPut, "/api/modules/todo/wallos", http.HandlerFunc(m.saveWallos)),
+		r.Handle(http.MethodPost, "/api/modules/todo/wallos/sync", http.HandlerFunc(m.syncWallosHTTP)),
+		r.Job(contracts.JobDefinition{
+			ID: "todo.sync_wallos", Module: "todo",
+			Schedule: contracts.ScheduleSpec{Kind: contracts.ScheduleInterval, Interval: time.Hour},
+			TimeZone: "UTC", Timeout: 45 * time.Second,
+			OverlapPolicy: contracts.OverlapSkip, MisfirePolicy: contracts.MisfireRunOnce,
+			Retry:   contracts.RetryPolicy{MaxAttempts: 3, InitialWait: time.Minute, MaxWait: 5 * time.Minute},
+			Handler: func(ctx context.Context, _ contracts.JobRun) error { _, err := m.syncWallos(ctx); return err },
+		}),
 		r.Handle(http.MethodGet, "/api/modules/todo/tasks", http.HandlerFunc(m.listTasks)),
 		r.Handle(http.MethodPost, "/api/modules/todo/tasks", http.HandlerFunc(m.createTask)),
 		r.Handle(http.MethodPatch, "/api/modules/todo/tasks/{id}", http.HandlerFunc(m.updateTask)),

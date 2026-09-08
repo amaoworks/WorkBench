@@ -4,6 +4,7 @@ import type { ModuleUI } from "../registry";
 
 export default {
   id: "todo",
+  settings: lazy(() => import("./WallosSettings")),
   pages: { "todo.list": lazy(() => import("./TodoPage")) },
   widgets: { "todo.summary": lazy(() => import("./TodoSummaryWidget")) },
   icons: { "check-square": CheckSquare2 }
