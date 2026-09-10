@@ -1,150 +1,67 @@
 # 业务模块开发指南
 
-本文描述当前可执行的接入流程。完整参考：后端 [Todo](../internal/modules/todo/module.go)、[Investment](../internal/modules/investment/module.go)，前端 [Todo 注册项](../web/src/modules/todo/todo.module.ts)、[Investment 注册项](../web/src/modules/investment/investment.module.ts)。功能状态见 [扩展验收记录](module-platform.md)。
+先阅读[架构与目录](architecture.md)，再按本次需求定位模块。现有模块是实现参考，按实际职责选择文件；不要求复制所有文件或预先创建空目录。
 
-## 1. 分工与依赖方向
+## 代码归属
 
-业务负责自己的数据、用例、页面、Widget、领域事件与提醒条件；平台负责鉴权、数据库生命周期、可靠投递、调度、AI 服务配置、通知持久化以及 Shell 和总览布局。
-
-| 业务需要什么 | 使用入口 | 业务向平台提供什么 |
-|---|---|---|
-| 数据持久化 | 注入 `*sql.DB`，自身 sqlc Queries | 模块 migration、表前缀与 SQL |
-| 可靠事件 | `contracts.EventPublisher.PublishTx` | 版本化领域事件 |
-| 接收领域事件 | `ModuleRegistrar.Consume` | `EventConsumer`，含 `Module`、`MaxAttempts`、幂等 Handler |
-| 定时执行 | `ModuleRegistrar.Job` | `JobDefinition`，含超时、重叠、重试与 misfire 策略 |
-| 生成 AI 文本 | 注入 `contracts.TextGenerator` | `TextRequest` 的指令和业务数据 |
-| 让 AI 调用业务 | `ModuleRegistrar.Tool` | 参数 Schema、风险等级与业务 Handler |
-| 站内推送 | `contracts.NotificationService.Create/CreateTx` | 纯文本、站内跳转、幂等键 |
-| HTTP 接口 | `ModuleRegistrar.Handle` | 标准 `net/http.Handler` |
-| 导航页面 | `Manifest.Navigation` + 前端 `pages` | `pageKey`、路由、懒加载组件 |
-| 总览卡片 | `ModuleRegistrar.Widget` + 前端 `widgets` | 描述、数据端点、懒加载组件 |
-
-业务之间不得直接 import，也不得查询或更新其他业务的表。跨业务协作通过事件或通用能力的公开契约进行。当前数据库连接共享，表隔离是架构约束，**不是数据库权限沙箱**。模块可使用 `foundation/httpapi` 和 `foundation/identity` 的公共工具，不得直接依赖 AI SDK、gocron 或其他业务实现。
-
-`internal/modules/architecture_test.go` 检查业务间 import 和对能力实现的直接依赖；SQL 表归属仍需代码审查。不要把未经信任的第三方代码视为隔离插件。
-
-## 2. 新业务的文件结构
-
-以 `reading` 为例：
+一个业务对应 `internal/modules/<id>/` 和 `web/src/modules/<id>/`。模型、查询、迁移、业务用例、HTTP、定时任务、事件、工具、页面和模块设置都归该业务管理。第三方集成如果只服务一个业务，先留在该模块内，例如 Todo 的 Wallos 联动。
 
 ```text
-internal/modules/reading/
-  module.go                     # 构造、Manifest、Migrations、Register
-  service.go                    # 业务用例（复杂后再拆分）
+internal/modules/reading/       示例：按需求添加的业务
+  module.go                    构造、Manifest、Migrations、Register
+  book.go                      模型与业务操作
+  http.go                      HTTP 请求处理
+  jobs.go                      有定时任务时添加
+  events.go                    有事件消费时添加
+  tools.go                     有 AI Tool 时添加
   migrations/00001_reading.sql
   query/books.sql
-  sqlc/                         # sqlc 生成，不手改
-  module_test.go
+  sqlc/                        生成查询
+  *_test.go                    对应行为的测试
 web/src/modules/reading/
-  reading.module.ts             # 唯一前端注册入口
+  reading.module.ts            前端注册入口
   ReadingPage.tsx
-  ReadingWidget.tsx
-  queries.ts                    # 业务 Zod schema、Query hooks
+  ReadingWidget.tsx            提供总览卡片时添加
+  ReadingSettings.tsx          提供业务设置时添加
+  queries.ts                   接口函数、查询 hooks、缓存刷新
+  schema.ts                    业务响应校验和类型
 ```
 
-Module ID 使用小写 snake_case。表名使用 `reading_*`；事件使用 `reading.book.created`；Consumer、Job、Tool、Widget、pageKey、widgetKind 都使用 `reading.` 前缀。公开 API 使用 `/api/modules/reading/...`。
+Go 同一模块先按文件分工，出现独立职责和实际复用需求后再拆子包。公共契约放 `internal/contracts`，前端业务类型放模块的 `schema.ts`；`web/src/shared/schema.ts` 用于模块目录、Widget、通知等平台共享数据。
 
-## 3. 声明后端模块，显式注入依赖
+## 后端接入
 
-实现 `contracts.Module` 的三个方法：
+1. 选择稳定的模块 ID：小写字母开头，其余使用小写字母、数字和下划线，最多 63 字符。业务表使用 `<id>_` 前缀，资源标识使用 `<id>.` 前缀，HTTP 使用 `/api/modules/<id>/...`。
+2. 实现 [contracts.Module](../internal/contracts/module.go)：`Manifest()`、`Migrations()`、`Register()`。当前 Registry 支持 `ContractVersion: 1`；业务版本独立维护。
+3. 在构造函数显式接收所需依赖并检查必需项。Todo 使用位置参数，Investment 使用 `Dependencies`；根据依赖数量选择清楚的签名。
+4. 在 [internal/app/app.go](../internal/app/app.go) 创建模块并加入 `modules.Initialize` 清单。模块注册阶段只声明资源，检查并返回每个注册错误，不执行远程请求或业务写入，也不启动后台循环。
+5. 模块迁移通过本包 `go:embed migrations/*.sql` 提供，固定 SQL 放 `query/`，在 [sqlc.yaml](../sqlc.yaml) 增加 schema、query 和生成目标。运行 `sqlc generate` 并提交生成文件。
 
-```go
-Manifest() contracts.ModuleManifest
-Migrations() contracts.MigrationSet
-Register(contracts.ModuleRegistrar) error
-```
+业务不直接 import 其他业务、`internal/app` 或 `internal/capabilities` 实现。使用 `contracts` 接口注入，底层 HTTP/ID 工具可使用 `foundation/httpapi` 和 `foundation/identity`。共享数据库连接用于本业务表；跨业务读取应先设计公开契约或事件。
 
-`Manifest` 的 `ContractVersion` 当前为 1，`Version` 是业务自己的版本。页面示例：
+## 使用通用能力
 
-```go
-Navigation: []contracts.NavigationItem{
-    {Label: "阅读", Route: "/reading", PageKey: "reading.list", Order: 30},
-},
-```
+| 需求 | 接入方式 | 业务需要负责 |
+|---|---|---|
+| 保存数据 | 注入 `*sql.DB`，使用自身 sqlc Queries | 表和迁移、校验、事务 |
+| 发布可靠事件 | `EventPublisher.PublishTx` | 主题、版本、载荷和聚合 ID |
+| 消费事件 | `ModuleRegistrar.Consume` | 消费者 ID、主题、超时、重试次数、幂等 Handler |
+| 定时任务 | `ModuleRegistrar.Job` | 时间规则、时区、超时、重试、misfire、Handler |
+| 站内通知 | `NotificationService.Create/CreateTx` | 提醒条件、纯文本、站内跳转、幂等键 |
+| 生成文本 | `TextGenerator.GenerateText` | 指令、必要的业务输入、不可用和失败反馈 |
+| AI 调用业务 | `ModuleRegistrar.Tool` | 严格参数 schema、风险、Handler |
+| HTTP 接口 | `ModuleRegistrar.Handle` | `net/http.Handler`、请求校验和响应 |
+| 导航和卡片 | Manifest Navigation、`ModuleRegistrar.Widget` | 稳定标识、路由、数据接口和前端组件 |
 
-像 Investment 一样用 `Dependencies` 声明所需能力，在构造函数拒绝缺失依赖。由 `internal/app/app.go` 创建能力实例、构造业务并加入 `modules.Initialize` 的清单。不要在业务内部创建另一个 SQLite、通知服务或 AI 客户端，也不使用全局 service locator。
+业务写入与对应事件放在同一事务里，使用 `queries.WithTx(tx)` 和 `PublishTx(ctx, tx, event)`，成功后统一提交。远程读取、AI 请求放在写事务外。事件按至少一次交付设计，Job 也可能重试，幂等应使用业务语义，例如行情的 `(symbol, asOf)`、Wallos 的 `(source, subscriptionID, paymentDate)`。
 
-新增业务需要修改应用装配，但不需要修改 Foundation 实现。业务代码及 UI 随构建进入程序；运行时开关只改变 enabled 状态，不加载未知二进制。
+新建提醒统一调用通知服务，不直接插入通知表。`actionRoute` 使用站内路径，组件统一由通知中心渲染。模块停用会阻止后续入口，隐藏卡片不会停止业务；功能需要自行关闭时可增加模块设置。
 
-在 `Register` 内调用 `Handle/Consume/Job/Tool/Widget`，检查并返回所有注册错误。注册仅声明资源，不启动 goroutine、不执行外部请求、不写业务数据。资源会先暂存、校验，然后发布到注册目录；模块 migration 本身不与注册构成单一回滚事务，因此必须保持迁移可重复、向前兼容。
+业务主动生成文本时处理 `contracts.ErrAIUnavailable`，保留非 AI 功能可用。AI Tool 的对象 schema 要求 `additionalProperties: false`，属性进入 `required`，可选值通过可空类型表达。写工具需要幂等键；高风险工具还需要运行时确认信息，当前聊天界面没有通用高风险确认流程。具体契约见[接口与契约](contracts.md)。
 
-## 4. 数据库与事务事件
+## 前端注册和查询
 
-在模块目录嵌入 Goose migrations，用自己的前缀建表。应用统一负责打开数据库、执行 migration、备份和退出。禁用业务不回滚 migration、不删除表。
-
-在 `sqlc.yaml` 加入本模块的 schema、query 和输出目录，运行：
-
-```bash
-sqlc generate
-```
-
-固定 SQL 必须进 `query/*.sql`，通过生成 Queries 使用。业务写入和可靠事件共享事务：
-
-```go
-tx, err := m.db.BeginTx(ctx, nil)
-if err != nil { return err }
-defer tx.Rollback()
-// 使用 m.queries.WithTx(tx) 完成本业务写入。
-_, err = m.events.PublishTx(ctx, tx, contracts.NewEvent{
-    Topic: "reading.book.created", SchemaVersion: 1,
-    SourceModule: "reading", AggregateID: bookID, Payload: payload,
-})
-if err != nil { return err }
-return tx.Commit()
-```
-
-不要在数据库事务内等待 AI 或远程数据源。先执行外部读取，再开启短事务。事件是至少一次交付，Consumer 必须幂等。Investment 用 `(symbol, asOf)` 语义防止重复快照再次发布，用同一语义构造通知幂等键。
-
-时间在数据库中保存 UTC Unix 毫秒，在 HTTP 中输出 UTC RFC3339；实体 ID 使用 `identity.New()`。
-
-Todo 列表使用 `limit`（默认 50、最大 100）和 opaque `cursor`，返回 `items` 与可选 `nextCursor`。前端只能把服务端返回的游标原样传回。当前顺序为未完成优先、到期时间升序、创建时间降序、ID 升序。列表不是跨请求快照；任务完成状态或截止时间变更后应从第一页刷新。模块目录、Widget 目录和固定三品种行情属于有界配置/聚合响应，不采用分页。
-
-## 5. AI：调用能力与提供工具是两个方向
-
-业务主动生成文本，注入 `contracts.TextGenerator`：
-
-```go
-ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
-defer cancel()
-text, err := m.ai.GenerateText(ctx, contracts.TextRequest{
-    Profile: "default",
-    Instruction: "简要描述给定数据，只使用输入中的事实。",
-    Input: string(dataJSON),
-})
-```
-
-应用提供的 `ai.TextService` 每次请求读取当前 Provider，设置保存后新请求使用新配置；已经开始的请求使用原配置完成。AI 关闭时返回 `contracts.ErrAIUnavailable`。业务应明确返回 `ai_unavailable`，保持非 AI 功能可用。调用失败不要向浏览器暴露 Provider 原始错误或密钥。
-
-该接口仅支持文本生成，不给模型传入业务 Tool，也不执行模型返回的工具调用。适合摘要、分类、解释等用例。业务不直接调用对话 `Gateway`，因为 Gateway 会装配当前所有已启用业务的工具。当前统一使用 `default` profile；新增 profile 要在应用的 Provider 配置处注册，不由业务硬编码供应商模型。
-
-如果是让 AI 执行业务操作，则用 `r.Tool(contracts.AITool{...})`，参考 `todo.create_task`：声明严格 JSON Schema、`SchemaVersion` 和风险等级，写入使用幂等键，高风险工具由运行时验证确认。不要通过文本生成接口自行执行模型输出的命令。
-
-Investment 的 `POST /api/modules/investment/summary` 是完整的主动调用示例：读模拟行情 → 调用共享 AI → 保存业务摘要 → 返回结果。用户主动点击生成才发送模拟数据，没有后台 AI 请求。AI 摘要存业务表，不作为对话记录或 Tool 审计。
-
-## 6. 定时任务、消费事件与通知
-
-周期工作必须 `r.Job(...)`，不要在业务里自行启动 ticker。Job 需稳定 ID、所属模块、时区、超时、重叠策略、离线错过执行策略和重试策略，Handler 尊重 context，操作可重试。
-
-消费事件使用 `r.Consume(contracts.EventConsumer{ID, Module, Topics, Timeout, MaxAttempts, Handler})`。Consumer ID 发布后保持稳定；消费前检查 `SchemaVersion`。读取其他业务的事件 payload 不能变成对方表访问。
-
-站内通知示例：
-
-```go
-_, err := m.notifications.Create(ctx, contracts.NewNotification{
-    SourceModule: "reading", Severity: contracts.NotificationInfo,
-    Title: "阅读提醒", Content: "有一项阅读计划到期。",
-    ActionLabel: "查看阅读", ActionRoute: "/reading",
-    IdempotencyKey: "reading:due:" + bookID + ":" + deadlineVersion,
-})
-```
-
-需要与业务写入同时提交时使用 `CreateTx(ctx, tx, ...)`。通知服务自行持久化通知并发布通知事件；业务不用直接操作 SSE。SSE 是在线提示，重连后前端重新查询持久化状态。
-
-当前推送范围是站内通知/SSE。`NotificationChannel` 是预留接口，尚未装配邮件、Web Push 或外部 IM；不能只实现 `Deliver` 就宣称渠道已接入。新渠道还需要独立的投递状态、重试、幂等与秘密配置设计。
-
-## 7. 页面与 Widget 由业务提供
-
-新建 `web/src/modules/reading/reading.module.ts`：
+在 `<id>.module.ts` 导出满足 [ModuleUI](../web/src/modules/registry.ts) 的声明：
 
 ```ts
 import { lazy } from "react";
@@ -157,60 +74,22 @@ export default {
 } satisfies ModuleUI;
 ```
 
-`modules/registry.ts` 通过 Vite glob 收集一级业务目录中的 `*.module.ts`，检查 key 前缀和重复项。注册描述随主包加载，页面和 Widget 通过 `React.lazy` 分包加载。新增模块不需要修改 `Layout.tsx` 或 `DashboardPage.tsx`。可选 `icons` 使用模块前缀命名，并与后端 Manifest.Icon 对应。
+Registry 通过 `./*/*.module.ts` 收集声明，校验模块和资源标识。页面 key、Widget kind 必须与后端对应；组件通过 `React.lazy` 加载。提供模块设置时增加 `settings` 懒加载组件，接收 `{ enabled: boolean }`；关闭状态下暂停业务查询并提示启用模块。
 
-后端注册 Widget：
+接口函数与查询 hooks 放 `queries.ts`，响应的 Zod schema 和业务类型放 `schema.ts`。页面保留表单状态、交互反馈和渲染。参考 [Todo queries](../web/src/modules/todo/queries.ts) 与 [Investment queries](../web/src/modules/investment/queries.ts)。
 
-```go
-r.Widget(contracts.WidgetDefinition{
-    ID: "reading.summary", Module: "reading", SchemaVersion: 1,
-    Title: "阅读概览", WidgetKind: "reading.summary",
-    DataRoute: "/api/modules/reading/widget/summary",
-    Size: contracts.WidgetSmall, Order: 30,
-})
-```
+业务查询 key 以模块 ID 开头，例如 `["todo", "tasks"]`；卡片使用 `["widget", widget.id]`。写入后刷新受影响的业务和卡片缓存，涉及总览时刷新 `["dashboard"]`。列表读取 `nextCursor`，沿用后端分页语义，不能只请求第一页后在客户端当作全量数据。
 
-Widget 默认导出接收 `{widget: Widget}` 的 React 组件，通过 `widget.dataRoute` 请求业务数据。总览提供标题、网格、加载边界和单卡片错误边界；业务负责卡片内部内容与数据校验。未知 widgetKind 显示兼容性提示。
+共享 `api` 客户端处理同源凭据、CSRF 和标准错误。复用 `components/ui` 中的页面标题、卡片、按钮和确认弹窗，配色使用 `styles.css` 语义变量，图标使用 Lucide；其余交互约定见 [web/README](../web/README.md)。
 
-API 请求使用 `shared/api.ts`，写操作带 JSON body，该 client 自动处理 CSRF。响应通过业务 Zod schema 校验，状态用 TanStack Query。业务 queryKey 以模块 ID 开头，例如 `["reading", "books"]`；卡片用 `["widget", widget.id]`。业务写入后刷新相关业务与 Widget 查询。模块管理完成启停后刷新模块/总览/AI 清单，并清除对应业务与 Widget 缓存。
+## 验证和文档维护
 
-使用共享 PageHeader、Card、Button、ButtonLink 和语义颜色，提供加载、空态、失败态，尊重减少动态效果设置。列表分页使用 `useInfiniteQuery` 与“加载更多”，参考 Todo。新增 UI 必须重新构建前端及嵌入二进制。
-
-## 8. 总览配置与业务启停
-
-- 模块行的“设置”按钮打开紧凑弹窗，启用和停用状态均可打开。业务可以在 `ModuleUI` 注册可选的 `settings: lazy(() => import("./ReadingSettings"))`；组件默认导出并接收 `{ enabled: boolean }`。表单、校验与保存逻辑归业务所有，主设置页只提供弹窗容器。未注册设置组件时显示“此业务暂无可配置项”，不显示虚假的保存操作。待办已注册 Wallos 联动设置表单，详见 [Wallos 联动](todo-wallos.md)。
-- 设置组件通过 `enabled` 区分模块状态；现有业务 HTTP 接口仍受启停 Gate 控制。后续若需停用期间保存配置，应先明确独立设置端点的访问规则，不能直接绕过 Gate。
-- 设置 → 业务模块：启停业务；导航与总览过滤停用业务，后端 Gate 控制新请求、Consumer、Tool、Job。
-- 总览 → 配置总览：独立显隐、上下移动、选择小/中/大尺寸，保存到工作空间数据库；移动端自适应单列。
-- 隐藏卡片不会停用业务；停用业务不会清除该卡片的布局偏好。
-- 用户偏好覆盖 Widget 默认 Size/Order。新增注册卡片没有偏好时默认显示，采用业务声明的尺寸和顺序。
-- 已开始执行的 HTTP/Job/Consumer 不承诺被强制中断；禁用作用于后续入口。卸载代码和删除业务数据是独立操作。
-
-接口细节见 [核心契约](mvp/contracts/core-contracts.md)。
-
-## 9. 新增一种平台能力
-
-1. 在 `internal/contracts` 声明最小业务接口和输入/输出，避免暴露供应商类型。
-2. 在 `internal/capabilities/<name>` 实现，依赖 Foundation 公共能力。
-3. 在 `internal/app` 管理实例、配置更新与生命周期，再注入需要它的业务。
-4. 业务如需把资源注册给平台，显式扩展 Registrar 与目录校验，并定义 enabled Gate 语义；普通调用能力只需依赖注入，不必扩大 Registrar。
-5. 提供不可用、超时、重试/幂等、设置更新的测试和文档。不要以通用 map 或全局容器绕过契约。
-
-## 10. 开发与验收
+已有行为测试位于模块和平台对应包，后端架构测试覆盖模块 import 边界。修改 SQL 时检查迁移与生成查询，修改页面、缓存或模块设置时验证对应交互。完整检查入口：
 
 ```bash
-SQLC_BIN=/path/to/sqlc ./scripts/test.sh
-go test -race ./...
-go vet ./...
-git diff --check
+./scripts/test.sh
 ```
 
-测试脚本比较 sqlc 再生成前后的内容，覆盖 Foundation 和所有 `internal/modules/*/sqlc`，允许开发中的未提交改动。前端构建输出位于 `internal/webui/dist` 并随源码一并交付。
+该脚本检查 sqlc 生成漂移、Go 测试、前端 lint 和生产构建。浏览器回归方法见 [scripts/README](../scripts/README.md)，使用临时数据库运行。
 
-新增业务至少验证：事务失败回滚、事件重试幂等、禁用后入口关闭、重新启用及重启保留数据、AI 不可用时普通功能可用、旧数据库增加模块成功；新增卡片还需验证前端注册和布局保存。两个业务的隔离关系应由测试保护，而非只靠一个示例证明。
-
-浏览器脚本 `scripts/module-platform.e2e.cjs` **仅对全新临时工作空间执行**，会创建 51 条待办并修改布局/模块状态。需本地 Playwright 与 Chromium，可通过 `PLAYWRIGHT_MODULE`、`CHROMIUM_PATH` 和 `WORKBENCH_TEST_URL` 指定环境。完整命令与验证记录见 [扩展验收记录](module-platform.md)。
-
-### 通知跳转的统一呈现
-
-通知生产者只提供 `ActionRoute` / `ActionLabel`，目标地址由通知服务校验，跳转和操作控件由通知中心统一渲染。查看入口使用共享 `ButtonLink`，已读/归档使用 `Button`，全部采用 `variant="ghost" size="sm"`。两类组件共用尺寸与交互样式；其他业务无需也不应为通知额外提供按钮 HTML 或 CSS。
+新增模块后，在 [internal/modules/README](../internal/modules/README.md) 和 [文档入口](README.md) 登记，并在 `doc/modules/` 写当前功能、数据归属和接入点。调整公共能力、配置或数据库结构时同步修改对应设计说明。文档描述实现后的状态；未来需求以当次任务为准。

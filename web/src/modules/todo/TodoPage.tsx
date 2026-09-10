@@ -1,9 +1,9 @@
 import { useRef, useState, type FormEvent } from "react";
-import { useMutation, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { CalendarClock, Check, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "../../shared/api";
-import { tasksResponseSchema, type Task } from "../../shared/schema";
+import { createTask, deleteTask, updateTask, useRefreshTodo, useTasks } from "./queries";
+import type { Task } from "./schema";
 import { Button } from "../../components/ui/Button";
 import { Card, CardHeader } from "../../components/ui/Card";
 import { EmptyState, Skeleton } from "../../components/ui/States";
@@ -12,22 +12,21 @@ import { PageHeader } from "../../components/ui/PageHeader";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 
 export default function TodoPage() {
-  const queryClient = useQueryClient();
   const [title, setTitle] = useState("");
   const [dueAt, setDueAt] = useState("");
   const [deleting, setDeleting] = useState<Task | null>(null);
   const deleteTrigger = useRef<HTMLElement | null>(null);
   const titleInput = useRef<HTMLInputElement>(null);
-  const tasks = useInfiniteQuery({ queryKey: ["todo", "tasks"], initialPageParam: "", queryFn: async ({ pageParam }) => tasksResponseSchema.parse(await api<unknown>(`/api/modules/todo/tasks?limit=50${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`)), getNextPageParam: (page) => page.nextCursor });
+  const tasks = useTasks();
   const items = tasks.data?.pages.flatMap((page) => page.items) ?? [];
-  const refresh = () => { void queryClient.invalidateQueries({ queryKey: ["todo"] }); void queryClient.invalidateQueries({ queryKey: ["dashboard"] }); void queryClient.invalidateQueries({ queryKey: ["widget"] }); };
+  const refresh = useRefreshTodo();
   const create = useMutation({
-    mutationFn: () => api<Task>("/api/modules/todo/tasks", { method: "POST", body: JSON.stringify({ title, dueAt: dueAt ? new Date(dueAt).toISOString() : null }) }),
+    mutationFn: () => createTask({ title, dueAt: dueAt ? new Date(dueAt).toISOString() : null }),
     onSuccess: () => { setTitle(""); setDueAt(""); refresh(); toast.success("待办已创建"); },
     onError: (error) => toast.error(error.message)
   });
-  const update = useMutation({ mutationFn: ({ id, completed }: { id: string; completed: boolean }) => api<Task>(`/api/modules/todo/tasks/${id}`, { method: "PATCH", body: JSON.stringify({ completed }) }), onSuccess: refresh, onError: (error) => toast.error(error.message) });
-  const remove = useMutation({ mutationFn: (id: string) => api<void>(`/api/modules/todo/tasks/${id}`, { method: "DELETE" }), onSuccess: () => { deleteTrigger.current = null; setDeleting(null); refresh(); toast.success("待办已删除"); }, onError: (error) => toast.error(error.message) });
+  const update = useMutation({ mutationFn: updateTask, onSuccess: refresh, onError: (error) => toast.error(error.message) });
+  const remove = useMutation({ mutationFn: deleteTask, onSuccess: () => { deleteTrigger.current = null; setDeleting(null); refresh(); toast.success("待办已删除"); }, onError: (error) => toast.error(error.message) });
   function submit(event: FormEvent) { event.preventDefault(); if (title.trim()) create.mutate(); }
   return (
     <div className="page">

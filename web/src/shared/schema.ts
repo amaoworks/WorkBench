@@ -22,15 +22,6 @@ export const configurableWidgetSchema = widgetSchema.extend({ visible: z.boolean
 export const widgetCatalogSchema = z.object({ widgets: z.array(configurableWidgetSchema) });
 export type ConfigurableWidget = z.infer<typeof configurableWidgetSchema>;
 
-export const taskSchema = z.object({
-  id: z.string(), title: z.string(), description: z.string(),
-  dueAt: z.string().optional(), completedAt: z.string().optional(),
-  createdAt: z.string(), updatedAt: z.string()
-});
-export type Task = z.infer<typeof taskSchema>;
-
-export const tasksResponseSchema = z.object({ items: z.array(taskSchema), nextCursor: z.string().optional() });
-
 export const notificationSchema = z.object({
   id: z.string(), sourceModule: z.string(), severity: z.enum(["info", "success", "warning", "error"]),
   title: z.string(), content: z.string(), actionLabel: z.string().optional(), actionRoute: z.string().optional(),

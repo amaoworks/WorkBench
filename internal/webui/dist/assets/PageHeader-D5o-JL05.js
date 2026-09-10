@@ -1,0 +1,1 @@
+import{L as e}from"./schemas-BhZErccB.js";var t=e();function n({title:e,description:n,action:r}){return(0,t.jsxs)(`header`,{className:`page-header`,children:[(0,t.jsxs)(`div`,{children:[(0,t.jsx)(`h1`,{children:e}),(0,t.jsx)(`p`,{children:n})]}),r&&(0,t.jsx)(`div`,{className:`page-header-action`,children:r})]})}export{n as t};

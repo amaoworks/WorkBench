@@ -1,8 +1,72 @@
-# Scripts
+# 构建和验证脚本
 
-开发、构建、测试、打包、备份与恢复脚本目录。脚本不得绕过应用的 migration 或一致性备份流程。
+## 常规检查
 
+在仓库根目录执行：
 
-`test.sh` 在重新运行 sqlc 前后比较 Foundation 和所有模块的生成目录，不要求工作区无未提交改动。SQLC_BIN 可指定 sqlc 1.31.x 的路径。
+```bash
+./scripts/test.sh
+```
 
-`module-platform.e2e.cjs` 需要 Playwright/Chromium，仅对全新临时工作空间运行，会创建任务并修改模块和总览设置。可配置 PLAYWRIGHT_MODULE、CHROMIUM_PATH、WORKBENCH_TEST_URL；详见 [业务扩展验收](../doc/module-platform.md)。
+脚本按顺序检查 sqlc 重新生成前后的平台/全部业务生成目录、运行 Go 测试、前端 lint 和生产构建。它不要求工作区无未提交改动，也不自动运行浏览器测试。
+
+`SQLC_BIN` 可指定 sqlc 1.31.x 路径；未设置时查找 `.tools/bin/sqlc`，再使用 PATH。`GO_BIN` 可指定 Go 可执行文件。首次运行前先在 `web/` 执行 `npm ci`。部分 Go 测试使用本机临时 HTTP 服务，测试环境须允许监听 loopback 端口。
+
+```bash
+SQLC_BIN=/path/to/sqlc ./scripts/test.sh
+```
+
+生成结果漂移时脚本会保留新结果并失败，核对 SQL 和生成差异后再验证。生产前端产物也会更新到 `internal/webui/dist/`。
+
+## 构建
+
+`./scripts/build.sh` 从锁文件安装前端依赖，构建前端，再输出根目录 `workbench` 可执行文件。仅重新编译已有产物时可使用 `go build -o workbench ./cmd/workbench`。部署、工作空间和备份操作见[配置与运行](../doc/configuration.md)。
+
+## 浏览器回归
+
+现有两个脚本使用 Playwright 的 chromium API，需要可解析的 Playwright 包与 Chromium。可通过 `PLAYWRIGHT_MODULE` 指定包的绝对路径，`CHROMIUM_PATH` 指定浏览器可执行文件；未指定时使用 Node 模块解析和 Playwright 默认浏览器。
+
+可将测试依赖安装到临时目录，避免修改项目依赖：
+
+```bash
+npm install --prefix /tmp/workbench-e2e playwright
+```
+
+下面示例假定浏览器位于 `/usr/bin/chromium`；按本机实际路径调整。运行前先构建最新前端，再编译测试程序：
+
+```bash
+npm --prefix web run build
+go build -o /tmp/workbench-e2e-bin ./cmd/workbench
+```
+
+### 模块、总览和分页
+
+`module-platform.e2e.cjs` 覆盖模块启停、总览显隐/排序/尺寸持久化、超过一页的待办、模拟行情同步、AI 未启用反馈和移动端溢出检查。它连接已有服务并写入数据，使用全新的临时工作空间、local 模式且关闭 AI：
+
+```bash
+WORKBENCH_E2E_DATA_DIR=$(mktemp -d /tmp/workbench-platform.XXXXXX)
+OPENAI_API_KEY= WORKBENCH_ALLOWED_HOSTS= /tmp/workbench-e2e-bin \
+  -data "$WORKBENCH_E2E_DATA_DIR/data.db" -auth local -listen 127.0.0.1:18086
+```
+
+保持服务运行，在另一终端执行：
+
+```bash
+PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
+  CHROMIUM_PATH=/usr/bin/chromium WORKBENCH_TEST_URL=http://127.0.0.1:18086 \
+  node scripts/module-platform.e2e.cjs
+```
+
+测试后停止该服务，再清理本次临时目录。截图写入 `/tmp/workbench-platform-dashboard.png` 和 `/tmp/workbench-platform-mobile.png`。
+
+### Wallos 和待办交互
+
+`wallos.e2e.cjs` 自行创建并清理临时数据库及模拟 Wallos 服务，启动指定的工作台程序，覆盖模块设置、密钥不回显、同步去重、完成/删除/重建、弹窗焦点、桌面/移动端布局与停用门控。
+
+```bash
+PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
+  CHROMIUM_PATH=/usr/bin/chromium WORKBENCH_BIN=/tmp/workbench-e2e-bin \
+  node scripts/wallos.e2e.cjs
+```
+
+该脚本使用工作台端口 18137，`WORKBENCH_BIN` 默认是 `/tmp/workbench-wallos-test`。截图写入 `/tmp/wallos-settings-1440.png` 和 `/tmp/wallos-settings-390.png`。外部金额和汇率行为另由 Todo 包中的测试覆盖。

@@ -1,19 +1,12 @@
 import { useState, type FormEvent } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { z } from "zod";
+import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { api } from "../../shared/api";
 import { Button } from "../../components/ui/Button";
-
-const settingsSchema = z.object({
-  enabled: z.boolean(), baseUrl: z.string(), hasApiKey: z.boolean(),
-  daysBefore: z.number(), reminderHour: z.number(), timeZone: z.string(),
-  lastSync: z.string().optional(), lastError: z.string()
-});
-type Settings = z.infer<typeof settingsSchema>;
+import { saveWallosSettings, syncWallos, useRefreshTodo, useWallosSettings } from "./queries";
+import type { WallosSettings as Settings } from "./schema";
 
 export default function WallosSettings({ enabled }: { enabled: boolean }) {
-  const settings = useQuery({ queryKey: ["todo", "wallos"], enabled, queryFn: async () => settingsSchema.parse(await api<unknown>("/api/modules/todo/wallos")) });
+  const settings = useWallosSettings(enabled);
   if (!enabled) return <p className="text-sm text-[var(--muted)]">启用待办模块后可以配置 Wallos 联动。停用模块期间自动同步也会暂停。</p>;
   if (settings.isPending) return <p role="status">正在读取 Wallos 配置…</p>;
   if (settings.isError) return <p role="alert" className="text-danger">{settings.error.message}</p>;
@@ -21,18 +14,17 @@ export default function WallosSettings({ enabled }: { enabled: boolean }) {
 }
 
 function WallosForm({ initial }: { initial: Settings }) {
-  const client = useQueryClient();
   const [form, setForm] = useState({ enabled: initial.enabled, baseUrl: initial.baseUrl, apiKey: "", daysBefore: initial.daysBefore, reminderHour: initial.reminderHour, timeZone: initial.timeZone });
   const [dirty, setDirty] = useState(false);
   const change = (patch: Partial<typeof form>) => { setForm((value) => ({ ...value, ...patch })); setDirty(true); };
-  const refresh = () => { for (const queryKey of [["todo"], ["widget"], ["dashboard"]]) void client.invalidateQueries({ queryKey }); };
+  const refresh = useRefreshTodo();
   const save = useMutation({
-    mutationFn: () => api("/api/modules/todo/wallos", { method: "PUT", body: JSON.stringify(form) }),
+    mutationFn: () => saveWallosSettings(form),
     onSuccess: () => { setForm((value) => ({ ...value, apiKey: "" })); setDirty(false); refresh(); toast.success("Wallos 配置已保存"); },
     onError: (error) => toast.error(error.message)
   });
   const sync = useMutation({
-    mutationFn: async () => z.object({ created: z.number() }).parse(await api<unknown>("/api/modules/todo/wallos/sync", { method: "POST", body: "{}" })),
+    mutationFn: syncWallos,
     onSuccess: (result) => { refresh(); toast.success(`同步完成，新建 ${result.created} 条提醒待办`); },
     onError: (error) => { refresh(); toast.error(error.message); }
   });

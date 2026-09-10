@@ -1,12 +1,13 @@
-# Shared capabilities
+# 通用能力层
 
-| 目录 | 职责 |
+| 目录 | 当前职责 |
 |---|---|
-| `ai/` | Provider、模型 profile、AITool runtime |
-| `conversation/` | 渠道无关的站内对话用例 |
-| `dashboard/` | Widget 聚合与 Dashboard API |
-| `notifications/` | 通知持久化、未读状态与 SSE |
-| `scheduler/` | Job 注册、调度、执行历史与恢复 |
+| `ai/` | Provider、文本生成、Gateway、AI Tool runtime 与审计 |
+| `conversation/` | 对话持久化、普通与流式 HTTP 对话；组合 AI Gateway |
+| `dashboard/` | Widget 聚合、完整目录、布局保存与恢复 |
+| `notifications/` | 通知持久化、已读/归档、未读数、SSE |
+| `scheduler/` | Job 注册、持久化状态、执行记录、重试与恢复 |
 
-通用能力通过窄接口提供给模块，不向模块暴露底层实现。
+能力由 `internal/app` 构造，业务使用 `internal/contracts` 的接口和注册描述，不直接导入能力实现。能力层按职责使用底座，必要时组合其他能力。
 
+接口语义见[接口与契约](../../doc/contracts.md)，数据归属见[数据设计](../../doc/data-model.md)。

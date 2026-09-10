@@ -1,18 +1,17 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { api } from "../../shared/api";
 import { Button } from "../../components/ui/Button";
 import { Card, CardHeader } from "../../components/ui/Card";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { EmptyState, Skeleton } from "../../components/ui/States";
-import { useOverview } from "./queries";
+import { generateSummary, syncQuotes, useOverview } from "./queries";
 
 export default function InvestmentPage() {
   const overview = useOverview();
   const client = useQueryClient();
   const refresh = async () => { await Promise.all([client.invalidateQueries({ queryKey: ["investment"] }), client.invalidateQueries({ queryKey: ["widget", "investment.overview"] })]); };
-  const sync = useMutation({ mutationFn: () => api("/api/modules/investment/sync", { method: "POST", body: "{}" }), onSuccess: async () => { await refresh(); toast.success("模拟行情已同步"); }, onError: (err) => toast.error(err.message) });
-  const summary = useMutation({ mutationFn: () => api("/api/modules/investment/summary", { method: "POST", body: "{}" }), onSuccess: refresh, onError: (err) => toast.error(err.message) });
+  const sync = useMutation({ mutationFn: syncQuotes, onSuccess: async () => { await refresh(); toast.success("模拟行情已同步"); }, onError: (err) => toast.error(err.message) });
+  const summary = useMutation({ mutationFn: generateSummary, onSuccess: refresh, onError: (err) => toast.error(err.message) });
   return <div className="page"><PageHeader title="模拟行情" description="使用虚构数据体验行情同步、波动提醒和 AI 摘要。" />
     <div className="mb-4 flex flex-wrap gap-3"><Button disabled={sync.isPending} onClick={() => sync.mutate()}>{sync.isPending ? "同步中…" : "同步模拟行情"}</Button><Button variant="secondary" disabled={summary.isPending || !overview.data?.items.length} onClick={() => summary.mutate()}>{summary.isPending ? "正在生成…" : "生成 AI 摘要"}</Button></div>
     <p className="mb-5 text-sm text-[var(--muted)]">行情每五分钟自动同步；变动达到 ±2% 时产生站内提醒。生成摘要会把模拟行情发送给设置中的 AI 服务。</p>

@@ -1,6 +1,5 @@
-# Stable contracts
+# 跨层契约
 
-存放跨层使用的最小接口和资源描述类型，例如 Module、Event、Job、AITool、Widget 与 Notification 契约。该包不得依赖 Foundation、Capabilities 或具体业务模块实现，防止循环依赖。
+存放 Module、Event、Job、AITool、TextGenerator、Widget、Notification 和 APIError 等共享接口与资源描述。具体定义以本包 Go 源码为准，使用语义见[接口与契约](../../doc/contracts.md)。
 
-实现时可在不产生环依赖的前提下拆成多个叶子子包，不应演变为杂物 `common` 包。
-
+本包只依赖标准库，不依赖 foundation、capabilities、app 或具体业务实现。业务专属模型保留在业务包；需要跨边界协作时设计最小接口或事件载荷，避免把本包变成所有类型的集合。

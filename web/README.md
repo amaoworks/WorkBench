@@ -1,38 +1,44 @@
-# Workbench Web
+# Workbench 前端
 
-技术栈：React、TypeScript、Vite、Tailwind CSS、Radix UI、Lucide、React Router、TanStack Query 与 Zod。
+React + TypeScript 前端，使用 Vite、Tailwind CSS、Radix UI、Lucide、React Router、TanStack Query 和 Zod。安装版本以 `package-lock.json` 为准。
+
+## 目录与归属
 
 ```text
-src/app/                    应用装配、Provider 和主题
-src/components/ui/          通用 UI 基础组件
-src/features/dashboard/     Dashboard 通用能力
-src/features/notifications/ 通知中心与 SSE
-src/features/settings/      AI、安全、外观、数据与运行设置
-src/modules/                编译期业务模块页面/Widget
-src/shared/                 API client、schema、工具与共享类型
+src/app/                 登录、应用装配、导航外壳、主题、命令面板
+src/features/ai/         平台 AI 对话面板
+src/features/dashboard/ 总览及布局配置
+src/features/notifications/ 通知列表与 SSE
+src/features/settings/  模块管理、AI、安全、外观、数据与运行设置
+src/modules/registry.ts 编译期业务注册目录
+src/modules/<id>/       业务页面、Widget、模块设置、queries.ts、schema.ts
+src/components/ui/      通用界面组件
+src/shared/             HTTP 客户端、平台共享 schema、工具
+src/styles.css          主题变量和共享样式
 ```
 
-后端返回的 `pageKey/widgetKind` 只能映射到本地编译期注册项。
+业务前端与 `internal/modules/<id>/` 一一对应。业务接口函数、查询 hooks 和缓存刷新放模块内 `queries.ts`，数据校验和类型放 `schema.ts`。页面保留表单与交互状态；平台 shared 不存放 Task 等业务专属模型。业务之间不直接导入彼此实现。
+
+## 模块注册和缓存
+
+`src/modules/<id>/<id>.module.ts` 声明 pages、widgets、可选 icons 和 settings。Registry 自动收集声明，组件按需加载。后端 `pageKey/widgetKind` 只映射到已编译的本地注册项；Shell 和总览不包含业务组件实现。
+
+模块设置接收 `{ enabled: boolean }`，停用时不发起业务查询。设置弹窗由平台管理，没有设置组件的模块展示暂无配置内容。
+
+业务 queryKey 以模块 ID 开头，Widget 使用 `["widget", widget.id]`。启停模块后平台取消旧查询、清除对应业务和 Widget 缓存，再刷新模块、总览与 AI 状态；业务写入后刷新实际受影响的查询。分页使用后端 nextCursor。接入示例见[业务开发指南](../doc/business-development.md)。
 
 ## 界面约定
 
-- 图标统一使用 Lucide，不使用表情符号。
-- 页面标题使用 `PageHeader`，卡片和按钮使用通用 `Card`、`Button`，表单使用共享输入框样式。
-- 配色从 `styles.css` 的语义变量读取，统一明暗主题、状态色、边框和圆角；新页面不要另起一套固定色板。
-- 设置页通过五个标签切换，只显示当前面板，其他面板保持挂载以保留草稿。支持方向键、Home/End 选择标签。
-- `/settings?tab=modules|ai|security|appearance|data` 可直接定位分类，刷新保留分类；未保存的输入仅在本次页面停留期间保留。
-- 使用简洁的状态过渡，尊重系统及工作空间的减少动态效果设置。
+- 图标使用 Lucide。标题使用 PageHeader，卡片和按钮使用共享 Card、Button；按钮形式的站内跳转使用 ButtonLink。
+- 配色读取 `styles.css` 的语义变量，兼容明暗主题，尊重系统及工作空间的减少动态效果设置。
+- 删除确认使用共享 ConfirmDialog，支持键盘操作与关闭后的焦点恢复。
+- 设置页面有五个标签，切换时保留当前页面内的表单草稿；支持方向键、Home/End。`/settings?tab=modules|ai|security|appearance|data` 可定位标签。
+- 业务设置弹窗最大宽度 480px，支持 Escape、遮罩及关闭按钮，并将焦点还给触发按钮。
+- 通知的查看、已读、归档使用共享 Button/ButtonLink 的 ghost、sm 规格；业务只提供 actionRoute 和 actionLabel。
+- 设置标签栏按需横向滚动，避免纵向溢出；新增页面检查桌面和窄屏宽度。
 
-## 业务注册与总览
+## 开发与构建
 
-业务通过 `src/modules/<id>/<id>.module.ts` 声明 `pages`、`widgets` 和可选 `icons`。`modules/registry.ts` 编译时收集描述，组件通过 React.lazy 加载。Shell/总览不包含业务组件实现。
+在本目录执行 `npm ci`，使用 `npm run dev` 开发、`npm run lint` 检查、`npm run build` 执行类型检查和生产构建。产物直接写入 `internal/webui/dist/` 并检入，随后可嵌入 Go 程序。
 
-总览配置支持显隐、上下移和尺寸；模块管理位于设置的业务模块标签。queryKey、接口调用、Zod 校验与接入流程见 [业务开发指南](../doc/business-development.md)。
-
-模块的“设置”按钮位于启用/停用按钮旁，打开最大宽度 480px 的模态弹窗。业务通过可选 `settings` 懒加载组件提供自己的设置内容，接收 `{ enabled: boolean }`；未提供组件时显示暂无可配置项。弹窗支持 Escape、遮罩和关闭按钮退出，并恢复触发按钮焦点。
-
-## 通知操作与导航按钮
-
-通知的查看、标为已读、归档统一使用共享 `Button` / `ButtonLink` 的 `ghost`、`sm` 规格，保持相同字体、行高、内边距和控件高度。`ButtonLink` 保留站内链接语义，与 `Button` 共用样式定义；新业务需要按钮形式的跳转时复用它。
-
-业务通知只提供 `actionRoute` 和 `actionLabel`，由通知中心统一渲染，不自行定义通知操作的样式。设置标签栏只允许必要的横向滚动，禁用纵向溢出；选中指示线绘制在标签内部，避免产生额外滚动条。
+Vite 代理和 Host 配置见[配置与运行](../doc/configuration.md)，完整检查及浏览器回归见 [scripts/README](../scripts/README.md)。
