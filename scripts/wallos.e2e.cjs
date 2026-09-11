@@ -91,8 +91,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
       await page.screenshot({ path: `/tmp/wallos-settings-${width}.png` });
     }
     await page.getByRole("button", { name: "关闭模块设置", exact: true }).click();
-    await page.getByRole("switch", { name: "待办模块", exact: true }).click();
-    await page.waitForFunction(() => document.querySelector('[aria-label="待办模块"]')?.getAttribute("aria-checked") === "false");
+    await page.getByRole("switch", { name: "待办", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('[aria-label="待办"]')?.getAttribute("aria-checked") === "false");
     assert.equal((await page.request.get(`${baseURL}/api/modules/todo/wallos`)).status(), 503);
     await page.getByRole("button", { name: "待办设置", exact: true }).click();
     await page.getByText("启用待办模块后可以配置 Wallos 联动。停用模块期间自动同步也会暂停。", { exact: true }).waitFor();

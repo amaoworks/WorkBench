@@ -1,20 +1,31 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../shared/api";
 import type { Widget } from "../../shared/schema";
-import { overviewSchema } from "./schema";
-
-export function useOverview() {
-  return useQuery({ queryKey: ["investment", "overview"], queryFn: async () => overviewSchema.parse(await api<unknown>("/api/modules/investment/overview")), refetchInterval: 60_000 });
-}
+import { schwabSettingsSchema, type SchwabSettingsInput } from "./schema";
 
 export function useInvestmentWidget(widget: Widget) {
-  return useQuery({ queryKey: ["widget", widget.id], queryFn: async () => overviewSchema.parse(await api<unknown>(widget.dataRoute)), refetchInterval: 60_000 });
+  return useQuery({ queryKey: ["widget", widget.id], queryFn: async () => schwabSettingsSchema.parse(await api<unknown>(widget.dataRoute)), refetchInterval: 30_000 });
 }
 
-export function syncQuotes() {
-  return api("/api/modules/investment/sync", { method: "POST", body: "{}" });
+export function useSchwabSettings(enabled: boolean) {
+  return useQuery({ queryKey: ["investment", "schwab"], enabled, queryFn: async () => schwabSettingsSchema.parse(await api<unknown>("/api/modules/investment/schwab")), refetchInterval: 30_000 });
 }
 
-export function generateSummary() {
-  return api("/api/modules/investment/summary", { method: "POST", body: "{}" });
+export function saveSchwabSettings(input: SchwabSettingsInput) {
+  return api("/api/modules/investment/schwab", { method: "PUT", body: JSON.stringify(input) });
+}
+
+export function disconnectSchwab() {
+  return api("/api/modules/investment/schwab/disconnect", { method: "POST", body: "{}" });
+}
+
+export function refreshSchwabToken() {
+  return api("/api/modules/investment/schwab/oauth/refresh", { method: "POST", body: "{}" });
+}
+
+export function useRefreshInvestment() {
+  const client = useQueryClient();
+  return () => {
+    for (const queryKey of [["investment"], ["widget", "investment.overview"]]) void client.invalidateQueries({ queryKey });
+  };
 }

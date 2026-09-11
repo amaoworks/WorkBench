@@ -2,35 +2,15 @@ package investment
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"path/filepath"
 	"testing"
-	"time"
+	"testing/fstest"
 
-	"workbench/internal/capabilities/ai"
-	"workbench/internal/capabilities/notifications"
 	"workbench/internal/contracts"
 	workbenchdb "workbench/internal/foundation/database"
-	"workbench/internal/foundation/events"
 )
 
-type fixedQuotes struct{}
-
-func (fixedQuotes) Snapshot(context.Context) ([]Quote, error) {
-	return []Quote{{Symbol: "TEST", Name: "Test", PriceCents: 10000, ChangeBPS: 300, AsOf: time.Unix(1000, 0).UTC()}}, nil
-}
-
-type brokenEvents struct{}
-
-func (brokenEvents) Publish(context.Context, contracts.NewEvent) (contracts.EventID, error) {
-	return "", errors.New("unavailable")
-}
-func (brokenEvents) PublishTx(context.Context, *sql.Tx, contracts.NewEvent) (contracts.EventID, error) {
-	return "", errors.New("unavailable")
-}
-
-func TestSyncIsAtomicAndRepeatedSnapshotsDoNotPublishAgain(t *testing.T) {
+func TestRemovingDemoTablesPreservesExistingSchwabCredentials(t *testing.T) {
 	ctx := context.Background()
 	db, err := workbenchdb.Open(ctx, workbenchdb.Config{Path: filepath.Join(t.TempDir(), "data.db")})
 	if err != nil {
@@ -40,48 +20,34 @@ func TestSyncIsAtomicAndRepeatedSnapshotsDoNotPublishAgain(t *testing.T) {
 	if err := db.MigrateCore(ctx); err != nil {
 		t.Fatal(err)
 	}
-	store := events.NewStore(db.SQL())
-	notices, err := notifications.NewService(db.SQL(), store)
+	old := fstest.MapFS{}
+	for _, name := range []string{"migrations/00001_investment.sql", "migrations/00002_schwab.sql"} {
+		raw, err := migrations.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		old[name] = &fstest.MapFile{Data: raw}
+	}
+	if err := db.MigrateModule(ctx, "investment", contracts.MigrationSet{FS: old, Dir: "migrations"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.SQL().Exec(`INSERT INTO investment_quotes VALUES('DEMO','Demo',100,0,1); INSERT INTO investment_summary VALUES(1,'Demo summary',1); INSERT INTO investment_schwab(id,app_key,app_secret,access_token,refresh_token,updated_at) VALUES(1,'key','secret','access','refresh',1)`); err != nil {
+		t.Fatal(err)
+	}
+	module, err := New(Dependencies{DB: db.SQL()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	module, err := New(Dependencies{DB: db.SQL(), Events: brokenEvents{}, Notifications: notices, AI: ai.NewTextService(), Quotes: fixedQuotes{}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	defer module.Close()
 	if err := db.MigrateModule(ctx, "investment", module.Migrations()); err != nil {
 		t.Fatal(err)
 	}
-	if err := module.Sync(ctx); err == nil {
-		t.Fatal("expected publisher failure")
+	rec, err := module.loadSchwab(ctx)
+	if err != nil || rec.AppSecret != "secret" || rec.AccessToken != "access" || rec.RefreshToken != "refresh" {
+		t.Fatal("Schwab credentials lost during upgrade", err)
 	}
-	overview, err := module.readOverview(ctx)
-	if err != nil || len(overview.Items) != 0 {
-		t.Fatal("business write survived failed event")
-	}
-	module.deps.Events = store
-	for i := 0; i < 2; i++ {
-		if err := module.Sync(ctx); err != nil {
-			t.Fatal(err)
-		}
-	}
-	var count int
-	if err := db.SQL().QueryRow("SELECT COUNT(*) FROM events_log WHERE source_module='investment'").Scan(&count); err != nil || count != 1 {
-		t.Fatalf("events=%d error=%v", count, err)
-	}
-	var event contracts.Event
-	var payload string
-	if err := db.SQL().QueryRow("SELECT id,payload_json FROM events_log WHERE source_module='investment'").Scan(&event.ID, &payload); err != nil {
-		t.Fatal(err)
-	}
-	event.Payload = []byte(payload)
-	event.SchemaVersion = 1
-	for i := 0; i < 2; i++ {
-		if err := module.priceAlert(ctx, event); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := db.SQL().QueryRow("SELECT COUNT(*) FROM notifications WHERE source_module='investment'").Scan(&count); err != nil || count != 1 {
-		t.Fatalf("notices=%d error=%v", count, err)
+	var tables int
+	if err := db.SQL().QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE name IN ('investment_quotes','investment_summary')").Scan(&tables); err != nil || tables != 0 {
+		t.Fatalf("demo tables remain: %d %v", tables, err)
 	}
 }

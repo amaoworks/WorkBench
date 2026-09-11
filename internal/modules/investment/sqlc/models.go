@@ -4,16 +4,17 @@
 
 package investmentsqlc
 
-type InvestmentQuote struct {
-	Symbol     string `json:"symbol"`
-	Name       string `json:"name"`
-	PriceCents int64  `json:"price_cents"`
-	ChangeBps  int64  `json:"change_bps"`
-	AsOf       int64  `json:"as_of"`
-}
-
-type InvestmentSummary struct {
-	ID        int64  `json:"id"`
-	Content   string `json:"content"`
-	CreatedAt int64  `json:"created_at"`
+type InvestmentSchwab struct {
+	ID                  int64  `json:"id"`
+	AppKey              string `json:"app_key"`
+	AppSecret           string `json:"app_secret"`
+	CallbackUrl         string `json:"callback_url"`
+	AccessToken         string `json:"access_token"`
+	RefreshToken        string `json:"refresh_token"`
+	TokenExpiresAt      int64  `json:"token_expires_at"`
+	StreamerInfo        string `json:"streamer_info"`
+	OauthState          string `json:"oauth_state"`
+	OauthStateExpiresAt int64  `json:"oauth_state_expires_at"`
+	LastError           string `json:"last_error"`
+	UpdatedAt           int64  `json:"updated_at"`
 }

@@ -6,7 +6,7 @@ Workbench 是本地优先、单用户的个人工作台。当前采用 Go 模块
 
 | 层级 | 后端目录 | 职责 |
 |---|---|---|
-| 业务应用层 | `internal/modules/` | 待办、模拟行情等具体业务，拥有各自数据、规则、接口、任务与界面 |
+| 业务应用层 | `internal/modules/` | 待办、投资等具体业务，拥有各自数据、规则、接口、任务与界面 |
 | 通用能力层 | `internal/capabilities/` | AI、对话、调度、通知、总览等可复用服务 |
 | 基础设施层 | `internal/foundation/` | 数据库生命周期、鉴权、可靠事件、模块注册、HTTP 与 ID 工具 |
 
@@ -34,7 +34,7 @@ internal/
     scheduler/                 调度、执行记录、重试与恢复
   modules/
     todo/                      待办及 Wallos 联动
-    investment/                模拟行情
+    investment/                Schwab 代理、TradingView 投资终端
   webui/dist/                  已检入的前端生产资源
 web/src/
   app/                         登录、应用外壳、导航、主题、命令面板
@@ -42,7 +42,7 @@ web/src/
   modules/
     registry.ts                编译期业务界面注册表
     todo/                      Todo 页面、Widget、设置、查询、schema
-    investment/                行情页面、Widget、查询、schema
+    investment/                行情页面、Widget、Schwab 设置、查询、schema
   components/ui/               通用界面组件
   shared/                      HTTP 客户端、平台共享 schema、工具
   styles.css                   主题变量与共享样式
@@ -78,7 +78,7 @@ contracts → 标准库
 
 注册目录先在内存收集并校验，失败时不发布可用目录。模块迁移在注册目录构建前执行，不与全部注册操作组成一个可回滚事务。
 
-`App.Run` 绑定监听地址，启动调度器、事件投递和 HTTP 服务。退出时停止接收请求、关闭调度，最后关闭数据库并释放锁。
+`App.Run` 绑定监听地址，启动调度器、事件投递和 HTTP 服务。退出时停止接收请求、关闭投资 WebSocket 和调度，最后关闭数据库并释放锁。
 
 模块代码随程序构建。运行时启停会持久化到数据库，并影响后续模块 HTTP、Job、事件消费者、AI Tool、导航和总览卡片。停用不会删除表、历史数据或布局偏好，也不强制取消已开始的处理。隐藏 Widget 只影响总览展示。
 

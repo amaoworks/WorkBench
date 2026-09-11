@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>投资终端</title>
+  <style>
+    html, body, #tv_chart_container { margin: 0; height: 100%; background: #131722; }
+  </style>
+</head>
+<body>
+  <div id="stream-status" role="status" style="position:fixed;top:0;left:0;right:0;z-index:10000;background:#fff3cd;color:#664d03;padding:8px;text-align:center">正在连接 Schwab，实时行情与订单状态等待更新…</div>
+  <div id="tv_chart_container"></div>
+  <script type="module">
+    import { widget as tvWidget } from "/charting_library/charting_library.esm.js";
+    import Datafeed from "/investment/terminal/datafeed.js";
+    import Broker from "/investment/terminal/broker.js";
+    import { SchwabStream } from "/investment/terminal/stream.js";
+
+    const params = new URLSearchParams(location.search);
+    const theme = params.get("theme") === "dark" ? "dark" : "light";
+    window.ws = new SchwabStream();
+    const status = document.getElementById('stream-status');
+    window.addEventListener('SCHWAB_STREAM_READY', () => { status.hidden = true; });
+    window.addEventListener('SCHWAB_STREAM_CLOSED', () => { status.hidden = false; });
+    let broker, widget, disposed = false;
+    const datafeed = new Datafeed({ resetCharts: () => {
+      widget.chartReady().then(() => {
+        if (disposed || !window.ws.ready) return;
+        widget.resetCache();
+        for (let i = 0; i < widget.chartsCount(); i++) widget.chart(i).resetData();
+      }).catch(() => { status.hidden = false; });
+    } });
+    window.addEventListener('pagehide', () => { disposed = true; window.ws.close(); datafeed.destroy(); broker?.destroy(); });
+
+    widget = new tvWidget({
+      datafeed,
+      container: "tv_chart_container",
+      library_path: "/charting_library/",
+      symbol: params.get("symbol") || "AAPL",
+      interval: "1D",
+      theme,
+      locale: "zh",
+      timezone: "Asia/Shanghai",
+      symbol_search_request_delay: 1000,
+      fullscreen: false,
+      autosize: true,
+      disabled_features: ["header_saveload", "study_templates"],
+      enabled_features: ["pre_post_market_sessions"],
+      widgetbar: { details: true, watchlist: true, news: false, datawindow: true },
+      broker_factory: function (host) { broker = new Broker(host); return broker; },
+      broker_config: {
+        durations: [
+          { name: "DAY", value: "DAY", default: true },
+          { name: "GTC", value: "GTC" },
+          { name: "FOK", value: "FOK" },
+          { name: "IOC", value: "IOC" }
+        ],
+        configFlags: {
+          supportReversePosition: false,
+          supportPositions: true,
+          supportStopLimitOrders: true,
+          supportOrdersHistory: true,
+          supportExecutions: true
+        }
+      }
+    });
+    widget.chartReady().then(function () {});
+  </script>
+</body>
+</html>

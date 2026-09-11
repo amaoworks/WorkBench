@@ -10,9 +10,9 @@ export function ModuleSettingsDialog({ module }: { module: { id: string; name: s
     <Dialog.Trigger asChild><Button variant="secondary" aria-label={`${module.name}设置`}><Settings2 size={16} aria-hidden="true" />设置</Button></Dialog.Trigger>
     <Dialog.Portal>
       <Dialog.Overlay className="command-overlay z-40" />
-      <Dialog.Content className="module-settings-dialog z-50">
+      <Dialog.Content className="module-settings-dialog z-50" aria-describedby={undefined}>
         <div className="module-settings-header">
-          <div><Dialog.Title>{module.name}设置</Dialog.Title><Dialog.Description>管理此业务的专属配置。</Dialog.Description></div>
+          <div><Dialog.Title>{module.name}设置</Dialog.Title></div>
           <Dialog.Close asChild><Button variant="ghost" size="icon" aria-label="关闭模块设置"><X size={18} /></Button></Dialog.Close>
         </div>
         <div className="module-settings-body">

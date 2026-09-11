@@ -4,9 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
@@ -94,50 +91,37 @@ func TestDashboardLayoutIndependentOfModuleAndSurvivesRestart(t *testing.T) {
 	}
 }
 
-func TestInvestmentUsesLiveAIAndPreservesDataAcrossDisableAndRestart(t *testing.T) {
+func TestInvestmentCredentialsSurviveDisableAndRestart(t *testing.T) {
 	a := newTestApp(t)
 	token, cookies := csrf(t, a.Handler())
-	post := func(path string) *httptest.ResponseRecorder {
-		return request(t, a.Handler(), "POST", path, []byte(`{}`), token, cookies)
-	}
-	if got := post("/api/modules/investment/summary"); got.Code != 409 {
-		t.Fatalf("no quotes: %d", got.Code)
-	}
-	if got := post("/api/modules/investment/sync"); got.Code != 200 {
+	settings := []byte(`{"appKey":"test-key","appSecret":"test-secret","callbackUrl":"https://127.0.0.1:8080/oauth/schwab"}`)
+	if got := request(t, a.Handler(), "PUT", "/api/modules/investment/schwab", settings, token, cookies); got.Code != 200 {
 		t.Fatal(got.Body.String())
 	}
-	if got := post("/api/modules/investment/summary"); got.Code != 503 {
-		t.Fatalf("AI disabled: %d %s", got.Code, got.Body.String())
-	}
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw, _ := io.ReadAll(r.Body)
-		if !bytes.Contains(raw, []byte("DEMO-A")) || bytes.Contains(raw, []byte(`"tools":[{`)) {
-			t.Errorf("unexpected business AI request: %s", raw)
+	for _, route := range []string{"/api/modules/investment/overview", "/api/modules/investment/sync", "/api/modules/investment/summary"} {
+		for _, method := range []string{"GET", "POST"} {
+			if got := request(t, a.Handler(), method, route, []byte(`{}`), token, cookies); got.Code != 404 {
+				t.Fatalf("removed route %s %s: %d", method, route, got.Code)
+			}
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"resp_test","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"模拟行情摘要"}]}]}`)
-	}))
-	defer upstream.Close()
-	raw, _ := json.Marshal(map[string]any{"enabled": true, "baseUrl": upstream.URL + "/v1", "model": "test-model", "apiKey": "test-key"})
-	if got := request(t, a.Handler(), "PUT", "/api/settings/ai", raw, token, cookies); got.Code != 200 {
-		t.Fatal(got.Body.String())
 	}
-	if got := post("/api/modules/investment/summary"); got.Code != 200 || !bytes.Contains(got.Body.Bytes(), []byte("模拟行情摘要")) {
-		t.Fatalf("AI summary: %d %s", got.Code, got.Body.String())
+	for _, job := range a.registry.Catalog().Jobs {
+		if job.ID == "investment.sync" {
+			t.Fatal("demo job still registered")
+		}
 	}
-	// Pending module events pause while disabled, then reach the common notification service.
+	for _, consumer := range a.registry.Catalog().Consumers {
+		if consumer.ID == "investment.price_alert" {
+			t.Fatal("demo consumer still registered")
+		}
+	}
 	if got := request(t, a.Handler(), "PUT", "/api/modules/investment/enabled", []byte(`{"enabled":false}`), token, cookies); got.Code != 200 {
 		t.Fatal(got.Body.String())
 	}
-	if err := a.dispatcher.DispatchOnce(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	var count int
-	if err := a.DB().QueryRow("SELECT COUNT(*) FROM notifications WHERE source_module = 'investment'").Scan(&count); err != nil || count != 0 {
-		t.Fatalf("disabled consumer ran: %d %v", count, err)
-	}
-	if got := post("/api/modules/investment/sync"); got.Code != 503 {
-		t.Fatal("disabled route ran")
+	for _, route := range []string{"/api/modules/investment/schwab", "/investment/terminal", "/charting_library/charting_library.esm.js"} {
+		if got := request(t, a.Handler(), "GET", route, nil, "", cookies); got.Code != 503 {
+			t.Fatalf("disabled route %s: %d", route, got.Code)
+		}
 	}
 	cfg := a.config
 	if err := a.Close(); err != nil {
@@ -152,25 +136,13 @@ func TestInvestmentUsesLiveAIAndPreservesDataAcrossDisableAndRestart(t *testing.
 	if got := request(t, restarted.Handler(), "PUT", "/api/modules/investment/enabled", []byte(`{"enabled":true}`), token, cookies); got.Code != 200 {
 		t.Fatal(got.Body.String())
 	}
-	if err := restarted.dispatcher.DispatchOnce(context.Background()); err != nil {
-		t.Fatal(err)
+	got := request(t, restarted.Handler(), "GET", "/api/modules/investment/schwab", nil, "", cookies)
+	if got.Code != 200 || !bytes.Contains(got.Body.Bytes(), []byte("test-key")) || !bytes.Contains(got.Body.Bytes(), []byte(`"hasAppSecret":true`)) || bytes.Contains(got.Body.Bytes(), []byte("test-secret")) {
+		t.Fatalf("settings lost or leaked: %s", got.Body.String())
 	}
-	if err := restarted.dispatcher.DispatchOnce(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if err := restarted.DB().QueryRow("SELECT COUNT(*) FROM notifications WHERE source_module = 'investment'").Scan(&count); err != nil || count != 1 {
-		t.Fatalf("notification count: %d %v", count, err)
-	}
-	got := request(t, restarted.Handler(), "GET", "/api/modules/investment/overview", nil, "", cookies)
-	if got.Code != 200 || !bytes.Contains(got.Body.Bytes(), []byte("模拟行情摘要")) || !bytes.Contains(got.Body.Bytes(), []byte("DEMO-A")) {
-		t.Fatalf("data lost: %s", got.Body.String())
-	}
-	raw, _ = json.Marshal(map[string]any{"enabled": false, "baseUrl": upstream.URL + "/v1", "model": "test-model"})
-	if got := request(t, restarted.Handler(), "PUT", "/api/settings/ai", raw, token, cookies); got.Code != 200 {
-		t.Fatal(got.Body.String())
-	}
-	if got := request(t, restarted.Handler(), "POST", "/api/modules/investment/summary", []byte(`{}`), token, cookies); got.Code != 503 {
-		t.Fatal("new business AI request ignored disabled settings")
+	var tables int
+	if err := restarted.DB().QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE name IN ('investment_quotes','investment_summary')").Scan(&tables); err != nil || tables != 0 {
+		t.Fatalf("demo tables remain: %d %v", tables, err)
 	}
 }
 

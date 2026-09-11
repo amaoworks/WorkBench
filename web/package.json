@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
-    "lint": "eslint ."
+    "lint": "eslint . && npm run lint:investment",
+    "test:investment": "node --test ../internal/modules/investment/chart-tests/*.test.mjs",
+    "lint:investment": "cd .. && web/node_modules/.bin/eslint --config web/chart-eslint.config.mjs internal/modules/investment/chart/*.js --max-warnings=0"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "latest",
@@ -39,4 +41,3 @@
     "vite": "latest"
   }
 }
-

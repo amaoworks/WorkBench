@@ -33,4 +33,5 @@ fi
 
 cd "$repo_root/web"
 npm run lint
+npm run test:investment
 npm run build

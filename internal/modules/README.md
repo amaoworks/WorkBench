@@ -5,7 +5,7 @@
 | 模块 | 当前职责 | 说明 |
 |---|---|---|
 | `todo/` | 待办、分页、到期通知、AI 创建工具、Wallos 订阅提醒 | [Todo](../../doc/modules/todo.md)、[Wallos](../../doc/modules/todo-wallos.md) |
-| `investment/` | 模拟行情、同步、事件提醒、AI 摘要 | [Investment](../../doc/modules/investment.md) |
+| `investment/` | Schwab 代理、行情、持仓、订单和 TradingView 终端 | [Investment](../../doc/modules/investment.md) |
 
 `module.go` 聚焦构造、Manifest、迁移声明和注册，其余职责按需拆到同包文件；`migrations/`、`query/`、`sqlc/` 属于各业务。模块不能直接 import 其他业务、能力实现或 app，通过 contracts 和构造注入协作，不读写其他业务的表。
 

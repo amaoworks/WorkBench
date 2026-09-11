@@ -30,7 +30,7 @@ function WallosForm({ initial }: { initial: Settings }) {
   });
   function submit(event: FormEvent) { event.preventDefault(); save.mutate(); }
   return <form onSubmit={submit} className="space-y-4">
-    <div><h3 className="font-medium">Wallos 订阅提醒</h3><p className="mt-1 text-sm text-[var(--muted)]">每小时同步，将当月应付款的有效订阅提前加入待办，再按指定时间提醒。月付、季付、半年付、年付均按 Wallos 付款日期处理。</p></div>
+    <div><h3 className="font-medium">Wallos 订阅提醒</h3><p className="mt-1 text-sm text-[var(--muted)]">按付款日将到期订阅加入待办并提醒。</p></div>
     <fieldset disabled={save.isPending || sync.isPending} className="space-y-4">
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.enabled} onChange={(e) => change({ enabled: e.target.checked })} />启用自动同步</label>
       <label className="block text-sm">Wallos 地址<input type="url" required={form.enabled} value={form.baseUrl} onChange={(e) => change({ baseUrl: e.target.value })} placeholder="https://wallos.example.com" className="ui-input mt-1 w-full" /></label>
@@ -42,7 +42,7 @@ function WallosForm({ initial }: { initial: Settings }) {
       </div>
       <label className="block text-sm">时区<input required value={form.timeZone} onChange={(e) => change({ timeZone: e.target.value })} placeholder="Asia/Shanghai" className="ui-input mt-1 w-full" /></label>
     </fieldset>
-    <p className="text-xs text-[var(--muted)]">同一账期不会重复生成；完成后保留，删除后可在下次同步重新生成。提前天数和提醒小时按所选时区计算，届时发送站内提醒。下月账单若提前提醒落在本月，也会及时加入。修改配置只影响尚未生成的待办。</p>
+    <p className="text-xs text-[var(--muted)]">同一账期不重复生成，删除后可再次同步。提醒按所选时区计算。</p>
     {initial.lastSync && <p className="text-xs text-[var(--muted)]">最近成功同步：{new Date(initial.lastSync).toLocaleString()}</p>}
     {initial.lastError && <p role="alert" className="text-sm text-danger">最近同步失败：{initial.lastError}</p>}
     <div className="flex flex-wrap gap-2">

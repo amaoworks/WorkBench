@@ -50,6 +50,7 @@ type App struct {
 	appearance    Appearance
 	gateway       *ai.Gateway
 	textAI        *ai.TextService
+	investment    *investment.Module
 }
 
 func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
@@ -81,7 +82,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 		return fail(err)
 	}
 	textAI := ai.NewTextService()
-	investmentModule, err := investment.New(investment.Dependencies{DB: database.SQL(), Events: eventStore, Notifications: notificationService, AI: textAI, Quotes: investment.MockProvider{}})
+	investmentModule, err := investment.New(investment.Dependencies{DB: database.SQL()})
 	if err != nil {
 		return fail(err)
 	}
@@ -137,6 +138,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	application := &App{
 		config: cfg, logger: logger, database: database, registry: registry,
 		dispatcher: dispatcher, scheduler: scheduled, auth: authService,
+		investment: investmentModule,
 	}
 	application.gateway = gateway
 	application.textAI = textAI
@@ -180,6 +182,9 @@ func (a *App) routes(
 		r.Post("/login", a.auth.LoginHandler)
 		r.Post("/logout", a.auth.LogoutHandler)
 	})
+	for _, route := range a.investment.PublicRoutes() {
+		router.Method(route.Method, route.Pattern, route.Handler)
+	}
 
 	router.Group(func(protected chi.Router) {
 		protected.Use(a.auth.Require)
@@ -206,6 +211,9 @@ func (a *App) routes(
 		protected.Put("/api/settings/password", a.auth.ChangePasswordHandler)
 		for _, route := range a.registry.Catalog().Routes {
 			protected.Method(route.Method, route.Pattern, a.registry.Gate(route.Module, route.Handler))
+		}
+		for _, route := range a.investment.AssetRoutes() {
+			protected.Method(route.Method, route.Pattern, a.registry.Gate("investment", route.Handler))
 		}
 	})
 	router.NotFound(ui.ServeHTTP)
@@ -256,6 +264,9 @@ func (a *App) setModuleEnabled(w http.ResponseWriter, r *http.Request) {
 	if err := a.registry.SetEnabled(r.Context(), id, *input.Enabled); err != nil {
 		httpapi.Error(w, http.StatusNotFound, "module_not_found", err.Error())
 		return
+	}
+	if id == "investment" && !*input.Enabled {
+		a.investment.ResetStream()
 	}
 	httpapi.Write(w, http.StatusOK, map[string]any{"id": id, "enabled": *input.Enabled})
 }
@@ -343,6 +354,7 @@ func (a *App) Run(ctx context.Context) error {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), a.config.ShutdownGrace)
 	defer cancel()
+	a.investment.Close()
 	serverErr := a.server.Shutdown(shutdownCtx)
 	schedulerErr := a.shutdownScheduler(shutdownCtx)
 	return errors.Join(serverErr, schedulerErr)
@@ -356,6 +368,7 @@ func (a *App) shutdownScheduler(ctx context.Context) error {
 func (a *App) Close() error {
 	var result error
 	a.closeOnce.Do(func() {
+		a.investment.Close()
 		result = errors.Join(a.shutdownScheduler(context.Background()), a.database.Close())
 	})
 	return result

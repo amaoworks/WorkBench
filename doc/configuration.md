@@ -60,7 +60,7 @@ Host 校验使用请求实际发送的 `host[:port]`。未明确配置时，默�
 - 外观：日光、夜幕、跟随系统，以及减少动态效果；自动保存。
 - 数据与运行：创建在线备份，并查看当前部署参数。
 
-切换设置标签会保留当前页面内的表单草稿；刷新或离开页面不会持久化未保存输入。AI 和 Wallos 密钥只写入、不回显，留空通常保留已有值；更换端点须重新提供密钥。详细边界见[安全说明](security.md)。
+切换设置标签会保留当前页面内的表单草稿；刷新或离开页面不会持久化未保存输入。AI、Wallos 和 Schwab 密钥只写入、不回显，留空通常保留已有值；更换端点、App Key 或回调须重新提供密钥。详细边界见[安全说明](security.md)。
 
 ## 前端开发和验证
 
@@ -71,7 +71,11 @@ npm ci
 npm run dev
 ```
 
-Vite 将 `/api` 和 `/health` 代理到 `http://127.0.0.1:8080`。浏览器通过 Vite 访问时，后端也会校验浏览器的 Host，因此启动后端时应允许 Vite 实际使用的地址，例如 `-allowed-host localhost:5173 -allowed-host 127.0.0.1:8080`；端口变化时相应调整。前后端联调保持 Origin 与代理保留的 Host 一致。
+Vite 将 `/api`、`/health`、`/oauth/schwab`、`/investment/terminal` 和 `/charting_library` 代理到 `http://127.0.0.1:8080`。浏览器通过 Vite 访问时，后端也会校验浏览器的 Host，因此启动后端时应允许 Vite 实际使用的地址，例如 `-allowed-host localhost:5173 -allowed-host 127.0.0.1:8080`；端口变化时相应调整。前后端联调保持 Origin 与代理保留的 Host 一致。
+
+Schwab OAuth 回调必须使用实际可访问工作台的 HTTPS 入口，例如 `https://workbench.example.com/oauth/schwab`（替换为实际域名和端口），并在工作台和 Schwab Developer Portal 登记相同的完整 URL。默认 HTTP 后端或 Vite 开发地址不能直接用作此回调；先配置 TLS 或 HTTPS 反向代理，并让 `/oauth/schwab` 转发到工作台回调处理器。建议从同一个 HTTPS 入口打开工作台并开始登录。部署在服务器时，`127.0.0.1` 指向用户浏览器所在机器，不能代替服务器地址。
+
+在 Schwab 的账户关联确认页点击 Done 后，浏览器应进入工作台的 `/oauth/schwab`；成功后自动返回 `/investment`。如果点击后仍停留在 Schwab 域名，先核对上述两个回调配置和授权请求的 `redirect_uri`。如果进入工作台后出现 code/state 或换取令牌错误，按回调页面的具体错误排查。诊断时只分享域名和路径，不分享授权 code、state、密钥或令牌。
 
 完整验证执行 `./scripts/test.sh`。`GO_BIN` 可以指定 Go 可执行文件，`SQLC_BIN` 可以指定 sqlc；后者未设置时依次查找 `.tools/bin/sqlc` 和 PATH。浏览器脚本和临时环境运行方法见 [scripts/README](../scripts/README.md)。
 

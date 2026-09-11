@@ -1,7 +1,12 @@
 import { z } from "zod";
 
-export const overviewSchema = z.object({
-  source: z.literal("mock"),
-  items: z.array(z.object({ symbol: z.string(), name: z.string(), priceCents: z.number(), changeBps: z.number(), asOf: z.string() })),
-  summary: z.object({ content: z.string(), createdAt: z.string() }).nullable()
+export const schwabSettingsSchema = z.object({
+  appKey: z.string(),
+  callbackUrl: z.string(),
+  hasAppSecret: z.boolean(),
+  connected: z.boolean(),
+  tokenExpiresAt: z.string().optional(),
+  lastError: z.string()
 });
+export type SchwabSettings = z.infer<typeof schwabSettingsSchema>;
+export type SchwabSettingsInput = { appKey: string; appSecret: string; callbackUrl: string };
