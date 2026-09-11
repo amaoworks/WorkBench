@@ -12,7 +12,7 @@ const libraryOrigin = "https://trading-terminal.tradingview-widget.com";
 const assets = join(__dirname, "../internal/modules/investment/chart");
 const cache = join(tmpdir(), "workbench-tv-test-cache");
 const order = {
-  orderId: 42, orderType: "LIMIT", orderStrategyType: "SINGLE", session: "NORMAL", duration: "DAY",
+  orderId: 42, orderType: "LIMIT", orderStrategyType: "SINGLE", session: "SEAMLESS", duration: "GOOD_TILL_CANCEL",
   quantity: 2, price: 101, status: "WORKING", enteredTime: new Date().toISOString(),
   orderLegCollection: [{ instruction: "BUY", quantity: 2, instrument: { symbol: "MSFT", assetType: "EQUITY" } }]
 };
@@ -104,7 +104,7 @@ const order = {
     assert(chart, "TradingView chart iframe missing");
     await chart.getByRole("row").filter({ hasText: "AAPL" }).waitFor();
     assert.match(await chart.getByRole("row").filter({ hasText: "AAPL" }).innerText(), /7/);
-    await chart.getByRole("tab", { name: /^订单/ }).click();
+    await chart.getByRole("tab", { name: /^订单(?:\s|$)/ }).click();
     const orderRow = chart.getByRole("row").filter({ hasText: "MSFT" });
     await orderRow.waitFor();
     await orderRow.getByText("MSFT", { exact: true }).click();
@@ -123,7 +123,39 @@ const order = {
     await chart.getByRole("row").filter({ hasText: "MSFT" }).waitFor();
     assert.deepEqual(errors, []);
     await page.screenshot({ path: join(tmpdir(), "workbench-investment-account-manager.png"), fullPage: true, animations: "disabled" });
-    console.log("PASS: actual TradingView account initialization, positions/orders rendering, order symbol navigation, account switch and reconnect; no browser errors or trades.");
+
+    // Open the native order ticket without submitting it. Verify the actual UI
+    // uses our translations and only offers the supported request enums.
+    await page.evaluate(() => { void window.__host.showOrderDialog({ symbol: "MSFT", type: 1, side: 1, qty: 2, limitPrice: 101 }); });
+    const duration = chart.getByRole("combobox", { name: "有效期", exact: true });
+    const session = chart.getByRole("combobox", { name: "交易时段", exact: true });
+    await duration.filter({ hasText: "DAY(当天有效)" }).waitFor();
+    await session.waitFor();
+    assert.equal(await chart.getByText("有效时间", { exact: true }).count(), 0);
+    assert.equal(await duration.innerText(), "DAY(当天有效)");
+    assert.equal(await session.inputValue(), "常规(9:30-16:00 ET)");
+    await duration.click();
+    await chart.getByRole("option", { name: "IOC(立即成交，否则取消)", exact: true }).waitFor();
+    assert.deepEqual((await chart.getByRole("option").allTextContents()).map(text => text.trim()), ["DAY(当天有效)", "GTC(取消前有效)", "FOK(立即全部成交，否则取消)", "IOC(立即成交，否则取消)"]);
+    await chart.getByRole("option", { name: "IOC(立即成交，否则取消)", exact: true }).click();
+    await session.click();
+    await chart.getByRole("option", { name: "盘后(16:05-20:00 ET)", exact: true }).waitFor();
+    assert.deepEqual((await chart.getByRole("option").allTextContents()).map(text => text.trim()), ["常规(9:30-16:00 ET)", "盘前(7:00-9:25 ET)", "盘后(16:05-20:00 ET)", "延长时段(7:00-20:00 ET)"]);
+    await chart.getByRole("option", { name: "盘后(16:05-20:00 ET)", exact: true }).click();
+    await chart.getByRole("button", { name: "关闭按钮", exact: true }).click();
+
+    // An existing order must override the previously selected session.
+    await page.evaluate(() => window.__broker.setCurrentAccount("A"));
+    await chart.getByRole("row").filter({ hasText: "AAPL" }).waitFor();
+    await page.evaluate(async () => {
+      const [existing] = await window.__broker.orders();
+      void window.__host.showOrderDialog(existing);
+    });
+    await session.waitFor();
+    assert.equal(await session.inputValue(), "延长时段(7:00-20:00 ET)");
+    assert.deepEqual(errors, []);
+    await page.screenshot({ path: join(tmpdir(), "workbench-investment-order-ticket.png"), fullPage: true, animations: "disabled" });
+    console.log("PASS: actual TradingView account manager, account switch/reconnect, order ticket labels/options and existing order session; no browser errors or trades.");
   } finally {
     await browser.close();
   }

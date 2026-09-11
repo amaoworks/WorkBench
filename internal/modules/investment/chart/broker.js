@@ -296,15 +296,14 @@ export default class Broker {
             customFields: [{
                 inputType: 'ComboBox',
                 id: 'session',
-                title: '时段',
+                title: '交易时段',
                 saveToSettings: true,
                 value: 'NORMAL',
                 items: [
-                    { text: '常规 9:30–16:00 ET', value: 'NORMAL' },
-                    { text: '盘前', value: 'AM' },
-                    { text: '盘后', value: 'PM' },
-                    { text: '扩展 13h（盘前+常规+盘后）', value: 'SEAMLESS' },
-                    { text: '24h（扩展+隔夜 EXTO）', value: 'EXTO' },
+                    { text: '常规(9:30-16:00 ET)', value: 'NORMAL' },
+                    { text: '盘前(7:00-9:25 ET)', value: 'AM' },
+                    { text: '盘后(16:05-20:00 ET)', value: 'PM' },
+                    { text: '延长时段(7:00-20:00 ET)', value: 'SEAMLESS' },
                 ],
             }],
         };

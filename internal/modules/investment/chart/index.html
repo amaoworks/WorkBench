@@ -41,6 +41,7 @@
       interval: "1D",
       theme,
       locale: "zh",
+      custom_translate_function: (originalText) => originalText === "Time in force" ? "有效期" : null,
       timezone: "Asia/Shanghai",
       symbol_search_request_delay: 1000,
       fullscreen: false,
@@ -51,10 +52,10 @@
       broker_factory: function (host) { broker = new Broker(host); return broker; },
       broker_config: {
         durations: [
-          { name: "DAY", value: "DAY", default: true },
-          { name: "GTC", value: "GTC" },
-          { name: "FOK", value: "FOK" },
-          { name: "IOC", value: "IOC" }
+          { name: "DAY(当天有效)", value: "DAY", default: true },
+          { name: "GTC(取消前有效)", value: "GTC" },
+          { name: "FOK(立即全部成交，否则取消)", value: "FOK", supportedOrderTypes: [1] },
+          { name: "IOC(立即成交，否则取消)", value: "IOC", supportedOrderTypes: [1] }
         ],
         configFlags: {
           supportReversePosition: false,

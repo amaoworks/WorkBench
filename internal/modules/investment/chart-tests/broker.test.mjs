@@ -44,11 +44,37 @@ test('new orders default to DAY/NORMAL and preserve explicit duration', () => {
     }
     assert.equal(buildOrder({ ...order, session: 'AM' }).session, 'AM');
     assert.equal(buildOrder({ ...order, customFields: { session: 'SEAMLESS' } }).session, 'SEAMLESS');
-    assert.equal(buildOrder({ ...order, customFields: { session: 'EXTO' } }).session, 'EXTO');
-    assert.throws(() => buildOrder({ ...order, type: 2, customFields: { session: 'EXTO' } }), /扩展时段/);
+    assert.throws(() => buildOrder({ ...order, customFields: { session: 'EXTO' } }), /不支持的交易时段/);
     assert.throws(() => buildOrder({ ...order, qty: 0 }), /数量/);
     assert.throws(() => buildOrder({ ...order, duration: { type: 'UNSUPPORTED' } }), /有效期/);
-    assert.throws(() => buildOrder({ ...order, type: 2, session: 'AM' }), /扩展时段/);
+    assert.throws(() => buildOrder({ ...order, type: 2, session: 'AM' }), /股票限价单/);
+});
+
+test('editing an order round-trips its session and duration into the ticket', () => {
+    for (const [session, duration] of [['NORMAL', 'DAY'], ['AM', 'DAY'], ['PM', 'DAY'], ['SEAMLESS', 'GOOD_TILL_CANCEL'], ['NORMAL', 'FILL_OR_KILL'], ['NORMAL', 'IMMEDIATE_OR_CANCEL']]) {
+        const original = { ...rawOrder, session, duration };
+        const mapped = mapOrder(original);
+        assert.equal(mapped.customFields.session, session);
+        const payload = buildOrder({ ...mapped, limitPrice: 102 }, original);
+        assert.equal(payload.session, session);
+        assert.equal(payload.duration, duration);
+        assert.equal(payload.price, 102);
+    }
+});
+
+test('unsupported sessions and deferred durations never submit or replace an order', async t => {
+    const original = { ...rawOrder, session: 'EXTO' };
+    const { broker, calls } = await setup(t, path => path.endsWith('/orders/42') ? json(original) : undefined);
+    for (const fields of [{ session: 'EXTO' }, { customFields: { session: 'EXTO' } }]) {
+        await assert.rejects(broker.placeOrder({ ...order, ...fields }), /交易时段/);
+    }
+    for (const type of ['END_OF_WEEK', 'END_OF_MONTH', 'NEXT_END_OF_MONTH', 'UNKNOWN']) {
+        await assert.rejects(broker.placeOrder({ ...order, duration: { type } }), /有效期/);
+    }
+    // A removed dropdown value must not silently turn an existing EXTO order
+    // into a regular-session order when the UI falls back to its default.
+    await assert.rejects(broker.modifyOrder({ ...mapOrder(original), customFields: { session: 'NORMAL' } }), /交易时段/);
+    assert.equal(calls.filter(call => ['POST', 'PUT'].includes(call.init.method)).length, 0);
 });
 
 test('modifying stop-limit orders preserves both prices, session, duration and instruction', () => {
@@ -122,7 +148,7 @@ test('account picker shows a label not the raw account number and summary uses S
     assert.equal(menu[0].text, '导出');
     assert.ok(menu.some(item => item.text === '刷新持仓'));
     const sessions = (await broker.getOrderDialogOptions()).customFields[0].items.map(item => item.value);
-    assert.deepEqual(sessions, ['NORMAL', 'AM', 'PM', 'SEAMLESS', 'EXTO']);
+    assert.deepEqual(sessions, ['NORMAL', 'AM', 'PM', 'SEAMLESS']);
 });
 
 test('working orders stay on the orders page and completed orders go to history newest first', async t => {

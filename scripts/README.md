@@ -77,7 +77,7 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 
 ### 投资账户管理器
 
-`investment-terminal.e2e.cjs` 在 Chromium 中加载仓库内的终端代码和实际 TradingView 库，验证账户初始化、持仓与订单渲染、订单标的跳转、账户切换及断线重连，并检查浏览器异常。Schwab HTTP 和 WebSocket 请求全部使用虚构响应，无需启动工作台、配置凭据或提交交易。
+`investment-terminal.e2e.cjs` 在 Chromium 中加载仓库内的终端代码和实际 TradingView 库，验证账户初始化、持仓与订单渲染、订单标的跳转、账户切换及断线重连；打开原生下单面板，检查有效期/交易时段的名称、可选值及已有订单的回填，并检查浏览器异常。Schwab HTTP 和 WebSocket 请求全部使用虚构响应，无需启动工作台、配置凭据或提交交易。
 
 ```bash
 PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
@@ -85,7 +85,7 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
   node scripts/investment-terminal.e2e.cjs
 ```
 
-脚本需要访问 TradingView 静态资源站，带内容哈希的库文件缓存在系统临时目录 `workbench-tv-test-cache/`。截图写入 `/tmp/workbench-investment-account-manager.png`。终端 JS 通过 Go embed 编入程序；修改后需重新编译并启动工作台进程，再刷新浏览器。
+脚本需要访问 TradingView 静态资源站，带内容哈希的库文件缓存在系统临时目录 `workbench-tv-test-cache/`。截图写入 `/tmp/workbench-investment-account-manager.png` 和 `/tmp/workbench-investment-order-ticket.png`。终端 JS 通过 Go embed 编入程序；修改后需重新编译并启动工作台进程，再刷新浏览器。
 
 ### Schwab 跨站 OAuth 返回
 

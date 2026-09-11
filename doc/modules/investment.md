@@ -18,7 +18,9 @@
 
 账户初始化在 `broker_factory` 返回后的下一个任务中启动，等待 TradingView 完成适配器注册后再通知连接状态。持仓与订单的标的列使用数据中的 `symbol` 字段，分别传给券商标的和图表标的参数，避免渲染异常或将订单 ID 当作图表标的。
 
-账户管理器显示末四位账号、净值、现金和购买力，不把完整账号当成金额。持仓方向用「持有 / 卖空」，避免 TradingView 把普通多头译成「做多」。新订单默认常规时段、DAY 有效期，界面提供 DAY、GTC、FOK、IOC，并可选常规、盘前、盘后、扩展 13h（`SEAMLESS`）和 24h（`EXTO`，扩展+隔夜，对应 TOS 的 EXTO / GTC_EXTO）。`EXTO` 未出现在 Schwabdev 示例里，但账户里已有该 session 的成交单，可与 DAY 或 GTC 组合；扩展/隔夜仍仅限股票限价单。适配器保留显式指定的有效期，校验数量、价格及扩展时段组合；改单先读取原订单，保留其时段、有效期和买卖指令。当前支持股票和股票期权单腿订单，复杂策略及未支持的订单类型（如跟踪止损）提示回 Schwab 修改，避免转换时丢失原订单语义。未实现的反转持仓与附加止盈止损能力不在界面声明为可用。
+账户管理器显示末四位账号、净值、现金和购买力，不把完整账号当成金额。持仓方向用「持有 / 卖空」，避免 TradingView 把普通多头译成「做多」。下单保留两个独立字段：TradingView 原生「有效期」提供DAY(当天有效)、GTC(取消前有效)、FOK(立即全部成交，否则取消) 和 IOC(立即成交，否则取消)，FOK/IOC 仅在限价单中显示；「交易时段」提供常规(9:30-16:00 ET)、盘前(7:00-9:25 ET)、盘后(16:05-20:00 ET)、延长时段(7:00-20:00 ET)，分别映射 `NORMAL`、`AM`、`PM`、`SEAMLESS`。新订单默认当天有效、常规时段。延长时段包含盘前、常规和盘后，不含隔夜；时间范围内仍有常规开盘前、收盘后各五分钟的暂停，参见[嘉信时段说明](https://www.schwab.com/stocks/extended-hours-trading)。
+
+按 Schwab `OrderRequest` 的 session 枚举，不提供或提交 `EXTO`；查询可以保留外部平台已有的隔夜订单，修改此类订单提示回 Schwab 操作。`END_OF_WEEK`、`END_OF_MONTH`、`NEXT_END_OF_MONTH` 暂未确认适用范围，不开放下单；`UNKNOWN` 不作为用户选项。适配器校验数量、价格及有效期/时段组合，盘前、盘后和延长时段仅支持 DAY/GTC 股票限价单。改单先读取原订单，并将原时段回填界面，保留原有效期和买卖指令。当前支持股票和股票期权单腿订单，复杂策略及未支持的订单类型（如跟踪止损）提示回 Schwab 修改，避免转换时丢失原订单语义。未实现的反转持仓与附加止盈止损能力不在界面声明为可用。
 
 下单成功使用响应 Location 中的真实订单 ID；成功写入后的状态读取失败只提示刷新错误，不把已成功的交易改报为下单失败。撤单检查上游 HTTP 状态，并通过 REST 查询确认最终状态，不把“接受撤单”直接当成“已取消”。
 
@@ -67,6 +69,6 @@ Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后
 
 Go 测试覆盖配置、OAuth、代理、连接确认、断线恢复和配置变更竞态；Node 测试直接导入终端 JS，覆盖交易语义、未确认的交易结果、真实持仓、订单时间分段、跨账户异步响应、订阅重放及历史/实时 K 线衔接。`./scripts/test.sh` 执行 sqlc 漂移检查、Go 测试、React/终端 JS lint、Node 测试与生产构建。模拟服务验证不替代真实券商端到端验收。
 
-实际 TradingView 库的账户管理器浏览器回归使用虚构的 Schwab 响应，覆盖初始化时序、持仓与订单列渲染、标的跳转、账户切换和重连；运行方式见[脚本说明](../../scripts/README.md#投资账户管理器)。终端资源嵌入 Go 程序，修改后需重新编译并启动调试进程才能生效。
+实际 TradingView 库的浏览器回归使用虚构的 Schwab 响应，覆盖初始化时序、持仓与订单列渲染、标的跳转、账户切换和重连，以及下单面板的有效期/交易时段名称、可选值和已有订单回填；运行方式见[脚本说明](../../scripts/README.md#投资账户管理器)。终端资源嵌入 Go 程序，修改后需重新编译并启动调试进程才能生效。
 
 参考：[原始适配器 demo](https://github.com/invmy/schwab_API-tradingview_adapter)、[Cloudflare 代理](https://github.com/invmy/CF_schwab-API)、[Schwabdev](https://github.com/tylerebowers/Schwabdev)、[TradingView 账户切换契约](https://www.tradingview.com/charting-library-docs/latest/api/interfaces/Charting_Library.IBrokerConnectionAdapterHost/)。

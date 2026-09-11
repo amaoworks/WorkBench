@@ -1,5 +1,6 @@
 const ORDER_TYPES = { 1: 'LIMIT', 2: 'MARKET', 3: 'STOP', 4: 'STOP_LIMIT' };
 const DURATIONS = { DAY: 'DAY', GTC: 'GOOD_TILL_CANCEL', GOOD_TILL_CANCEL: 'GOOD_TILL_CANCEL', FOK: 'FILL_OR_KILL', FILL_OR_KILL: 'FILL_OR_KILL', IOC: 'IMMEDIATE_OR_CANCEL', IMMEDIATE_OR_CANCEL: 'IMMEDIATE_OR_CANCEL' };
+const SESSIONS = ['NORMAL', 'AM', 'PM', 'SEAMLESS'];
 
 function positive(value, label) {
     const number = Number(value);
@@ -14,6 +15,9 @@ export function buildOrder(order, original) {
     if (original && !Object.values(ORDER_TYPES).includes(original.orderType)) {
         throw new Error('当前不支持修改此订单类型，请在 Schwab 操作');
     }
+    if (original?.session && !SESSIONS.includes(original.session)) {
+        throw new Error('当前接口不支持修改此交易时段的订单，请在 Schwab 操作');
+    }
     const originalLeg = original?.orderLegCollection?.[0];
     const symbol = originalLeg?.instrument?.symbol || String(order.symbol || '').trim();
     if (!symbol) throw new Error('缺少交易品种');
@@ -26,9 +30,9 @@ export function buildOrder(order, original) {
     const duration = DURATIONS[durationType];
     if (!duration || order.duration?.datetime) throw new Error('不支持的订单有效期');
     const session = String(order.customFields?.session ?? order.session ?? original?.session ?? 'NORMAL');
-    if (!['NORMAL', 'AM', 'PM', 'SEAMLESS', 'EXTO'].includes(session)) throw new Error('不支持的交易时段');
+    if (!SESSIONS.includes(session)) throw new Error('不支持的交易时段，请重新选择');
     if (session !== 'NORMAL' && (type !== 'LIMIT' || assetType !== 'EQUITY' || !['DAY', 'GOOD_TILL_CANCEL'].includes(duration))) {
-        throw new Error('扩展时段仅支持 DAY/GTC 股票限价单');
+        throw new Error('盘前、盘后和延长时段仅支持当天有效或取消前有效的股票限价单');
     }
     if (['STOP', 'STOP_LIMIT'].includes(type) && !['DAY', 'GOOD_TILL_CANCEL'].includes(duration)) throw new Error('止损单仅支持 DAY/GTC');
     if (order.stopLoss != null || order.takeProfit != null) throw new Error('当前不支持附加止盈止损订单');
@@ -70,7 +74,8 @@ export function mapOrder(order) {
         ...(filledQty ? { avgPrice: fills.reduce((total, fill) => total + Number(fill.price) * Number(fill.quantity || 0), 0) / filledQty } : {}),
         ...(['LIMIT', 'STOP_LIMIT'].includes(order.orderType) ? { limitPrice: Number(order.price) } : {}),
         ...(['STOP', 'STOP_LIMIT'].includes(order.orderType) ? { stopPrice: Number(order.stopPrice) } : {}),
-        duration: { type: order.duration === 'GOOD_TILL_CANCEL' ? 'GTC' : order.duration || 'DAY' },
+        duration: { type: { GOOD_TILL_CANCEL: 'GTC', FILL_OR_KILL: 'FOK', IMMEDIATE_OR_CANCEL: 'IOC' }[order.duration] || order.duration || 'DAY' },
+        customFields: { session: order.session || 'NORMAL' },
         updateTime: Date.parse(order.closeTime || order.enteredTime) || Date.now(),
     };
 }
