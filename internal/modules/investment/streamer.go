@@ -102,6 +102,7 @@ func (m *Module) serveStreamer(w http.ResponseWriter, r *http.Request) {
 	}
 	client := &streamerClient{conn: conn, send: make(chan []byte, 64)}
 	if err := m.streamer.add(r.Context(), client); err != nil {
+		m.logger.Warn("Schwab stream connection failed", "errorType", fmt.Sprintf("%T", err))
 		_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseTryAgainLater, "Schwab connection unavailable"), time.Now().Add(time.Second))
 		_ = conn.Close()
 		return
@@ -265,6 +266,7 @@ func (s *streamer) ensure(ctx context.Context) error {
 		return errors.New("Schwab 配置已变更，请重新连接")
 	}
 	s.schwab, s.info = conn, info
+	s.module.logger.Info("Schwab stream connected")
 	keep = true
 	go s.readSchwab(conn)
 	return nil
@@ -343,6 +345,7 @@ func (s *streamer) readSchwab(conn *websocket.Conn) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		if s.schwab == conn {
+			s.module.logger.Warn("Schwab stream disconnected; clients must reconnect")
 			s.closeLocked()
 		}
 		_ = conn.Close()
@@ -374,6 +377,7 @@ func (s *streamer) readSchwab(conn *websocket.Conn) {
 			select {
 			case client.send <- raw:
 			default:
+				s.module.logger.Warn("slow stream client disconnected")
 				s.removeLocked(client) // Reconnect and reconcile instead of silently losing order events.
 			}
 		}

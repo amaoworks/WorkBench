@@ -180,6 +180,7 @@ func (d *Dispatcher) claim(ctx context.Context, consumer contracts.EventConsumer
 }
 
 func (d *Dispatcher) handle(parent context.Context, consumer contracts.EventConsumer, delivery claimedDelivery) {
+	d.logger.Debug("event delivery started", "eventId", delivery.event.ID, "consumerId", consumer.ID, "attempt", delivery.attempts)
 	ctx, cancel := context.WithTimeout(parent, consumer.Timeout)
 	err := consumer.Handler(ctx, delivery.event)
 	cancel()
@@ -195,6 +196,8 @@ func (d *Dispatcher) handle(parent context.Context, consumer contracts.EventCons
 		})
 		if updateErr != nil {
 			d.logger.Error("mark event delivery succeeded", "eventId", delivery.event.ID, "consumerId", consumer.ID, "error", updateErr)
+		} else {
+			d.logger.Debug("event delivered", "eventId", delivery.event.ID, "consumerId", consumer.ID)
 		}
 		return
 	}
@@ -205,6 +208,12 @@ func (d *Dispatcher) handle(parent context.Context, consumer contracts.EventCons
 		status = "dead"
 		nextAttempt = 0
 	}
+	level := slog.LevelWarn
+	if status == "dead" {
+		level = slog.LevelError
+	}
+	d.logger.Log(parent, level, "event delivery failed", "eventId", delivery.event.ID, "consumerId", consumer.ID,
+		"attempt", delivery.attempts, "status", status, "errorType", fmt.Sprintf("%T", err))
 	updateErr := queries.MarkDeliveryFailed(updateCtx, dbsqlc.MarkDeliveryFailedParams{
 		Status: status, NextAttemptAt: nextAttempt,
 		LastError: sql.NullString{String: truncateError(err), Valid: true}, UpdatedAt: now.UnixMilli(),

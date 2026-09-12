@@ -104,7 +104,12 @@ def main():
         try:
             start()
             request("GET", "/api/modules/todo/tasks", expected=401)
+            token = request("GET", "/api/auth/csrf")["token"]
+            request("PUT", "/api/settings/logging", {"level": "error"}, expected=401)
             login()
+            assert request("GET", "/api/settings")["logging"]["level"] == "info"
+            request("PUT", "/api/settings/logging", {"level": "warn"})
+            request("PUT", "/api/settings/logging", {"level": "invalid"}, expected=400)
             title = "Deployment persistence " + secrets.token_hex(4)
             request("POST", "/api/modules/todo/tasks", {"title": title}, expected=201)
             backup = request("POST", "/api/system/backup", {}, expected=201)["file"]
@@ -122,11 +127,13 @@ def main():
                 assert db.execute("SELECT count(*) FROM todo_tasks WHERE title = ?", (title,)).fetchone()[0] == 1
             stop()
             env["WORKBENCH_PASSWORD"] = ""  # Existing credentials must survive recreation.
+            env["WORKBENCH_LOG_LEVEL"] = "debug"  # Saved settings must take precedence.
             start()
             login()
+            assert request("GET", "/api/settings")["logging"]["level"] == "warn", "log level lost after restart"
             assert title in json.dumps(request("GET", "/api/modules/todo/tasks")), "data lost after restart"
             stop()
-            print("PASS: initialization, login, healthcheck, backup, graceful stop and persisted data/credentials")
+            print("PASS: initialization, login, healthcheck, backup, graceful stop and persisted data/credentials/log level")
         except BaseException:
             if args.image:
                 subprocess.run(compose + ["logs", "--no-color", "--tail", "80"], env=env, check=False)

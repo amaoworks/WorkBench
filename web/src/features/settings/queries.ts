@@ -3,9 +3,11 @@ import { api } from "../../shared/api";
 
 export type Appearance = { theme: "light" | "dark" | "system"; motion: "full" | "reduced" };
 export type AISettings = { enabled: boolean; model: string; baseUrl: string; hasApiKey: boolean };
+export type LoggingSettings = { level: "debug" | "info" | "warn" | "error" };
 export type Settings = {
   ai: AISettings;
   appearance: Appearance;
+  logging: LoggingSettings;
   deployment: { listenAddress: string; dataPath: string; authMode: "local" | "password"; publicUrl: string; allowedHosts: string[] | null };
 };
 export function useSettings() {

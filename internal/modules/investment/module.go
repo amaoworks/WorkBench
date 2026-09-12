@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"embed"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"sync"
@@ -26,7 +27,8 @@ const (
 )
 
 type Dependencies struct {
-	DB *sql.DB
+	DB     *sql.DB
+	Logger *slog.Logger
 }
 
 type HTTPRoute struct {
@@ -45,14 +47,19 @@ type Module struct {
 	tvProxy    *httputil.ReverseProxy
 	tokenMu    sync.Mutex
 	streamer   *streamer
+	logger     *slog.Logger
 }
 
 func New(deps Dependencies) (*Module, error) {
 	if deps.DB == nil {
 		return nil, errors.New("investment dependencies are required")
 	}
+	if deps.Logger == nil {
+		deps.Logger = slog.Default()
+	}
 	module := &Module{
 		deps:    deps,
+		logger:  deps.Logger,
 		queries: investmentsqlc.New(deps.DB),
 		now:     time.Now,
 		httpClient: &http.Client{
@@ -65,6 +72,7 @@ func New(deps Dependencies) (*Module, error) {
 		tvOrigin:  defaultTVOrigin,
 	}
 	module.tvProxy = newTVProxy(module.tvOrigin)
+	module.tvProxy.ErrorLog = slog.NewLogLogger(deps.Logger.Handler(), slog.LevelError)
 	module.streamer = newStreamer(module)
 	return module, nil
 }

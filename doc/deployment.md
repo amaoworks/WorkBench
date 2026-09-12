@@ -18,12 +18,12 @@ Workbench 发布 Linux amd64、arm64 二进制包，以及相同架构的 Docker
 
 ## 二进制部署
 
-从 [GitHub Releases](https://github.com/amaoworks/WorkBench/releases) 下载相同版本的 `SHA256SUMS` 和对应架构压缩包。`uname -m` 为 `x86_64` 时选择 amd64，为 `aarch64` 时选择 arm64。下文 `v1.0.0` 仅为示例，请替换为已发布版本。
+从 [GitHub Releases](https://github.com/amaoworks/WorkBench/releases) 下载相同版本的 `SHA256SUMS` 和对应架构压缩包。`uname -m` 为 `x86_64` 时选择 amd64，为 `aarch64` 时选择 arm64。下文 `v0.1.1` 仅为示例，请替换为已发布版本。
 
 ```bash
 sha256sum --check --ignore-missing SHA256SUMS
-tar -xzf workbench_v1.0.0_linux_amd64.tar.gz
-cd workbench_v1.0.0_linux_amd64
+tar -xzf workbench_v0.1.1_linux_amd64.tar.gz
+cd workbench_v0.1.1_linux_amd64
 ./workbench -version
 ./workbench
 ```
@@ -74,7 +74,7 @@ chmod 600 .env
 
 ```dotenv
 WORKBENCH_IMAGE=ghcr.io/amaoworks/workbench
-WORKBENCH_VERSION=v1.0.0
+WORKBENCH_VERSION=v0.1.1
 WORKBENCH_PORT=8080
 WORKBENCH_PUBLIC_URL=https://workbench.example.com
 WORKBENCH_PASSWORD='填写独立的强密码'
@@ -175,10 +175,10 @@ Dockerfile 从源码多阶段构建，忽略本地 `internal/webui/dist` 并重�
 本地生成发布包：
 
 ```bash
-VERSION=v1.0.0 ./scripts/release.sh
+VERSION=v0.1.1 ./scripts/release.sh
 ```
 
-产物位于 `dist/release/v1.0.0/`，包括两个 Linux 压缩包、部署文件包和 `SHA256SUMS`。本地打包需要 Go、Node.js/npm、tar 及 sha256sum；Go、前端依赖和 sqlc 要求见[配置与运行](configuration.md)。
+产物位于 `dist/release/v0.1.1/`，包括两个 Linux 压缩包、部署文件包和 `SHA256SUMS`。本地打包需要 Go、Node.js/npm、tar 及 sha256sum；Go、前端依赖和 sqlc 要求见[配置与运行](configuration.md)。
 
 ## GitHub Actions 编译与发布
 
@@ -191,15 +191,19 @@ VERSION=v1.0.0 ./scripts/release.sh
 下载 artifact ZIP 并解压后，先运行 `sha256sum --check SHA256SUMS`。二进制包解压即可运行；`*_docker.tar.gz` 使用 `docker load --input 文件名` 导入，镜像名为 `workbench:sha-<完整提交号>`。Compose 设置 `WORKBENCH_IMAGE=workbench`、`WORKBENCH_VERSION=sha-<完整提交号>`，其余配置与正常部署一致。普通构建不推送 GHCR，也不创建正式 Release。
 
 
-`.github/workflows/release.yml` 在推送 `v*` 标签时复用 CI。接受 `vMAJOR.MINOR.PATCH` 及预发布后缀，例如 `v1.0.0-rc.1`，不使用带 `+` 的构建元数据。验证后构建二进制包，分别在两个架构的 runner 上运行压缩包中的程序，再推送多架构 GHCR 镜像并创建 GitHub Release。
+`.github/workflows/release.yml` 在推送 `v*` 标签时复用 CI。接受 `vMAJOR.MINOR.PATCH` 及预发布后缀，例如 `v0.1.1-rc.1`，不使用带 `+` 的构建元数据。验证后构建二进制包，分别在两个架构的 runner 上运行压缩包中的程序，再推送多架构 GHCR 镜像并创建 GitHub Release。
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
-二进制和镜像注入相同的版本、提交号和提交时间。镜像标签包括版本原文（`v1.0.0`）、完整提交号（`sha-...`），稳定版本另更新 `latest`；预发布不会更新 `latest`，GitHub Release 标记为 prerelease。部署推荐固定版本。不要移动已发布标签；需要修正时发布新版本。
+二进制和镜像注入相同的版本、提交号和提交时间。镜像标签包括版本原文（`v0.1.1`）、完整提交号（`sha-...`），稳定版本另更新 `latest`；预发布不会更新 `latest`，GitHub Release 标记为 prerelease。部署推荐固定版本。不要移动已发布标签；需要修正时发布新版本。
 
 Actions 通过内置 `GITHUB_TOKEN` 发布：镜像任务有 `packages: write`，Release 任务有 `contents: write`，验证任务仅请求读权限。仓库或组织需允许相应权限。Actions 依赖固定到提交 SHA，Dependabot 每月检查工作流依赖更新。Fork 发布时镜像名自动取该仓库的小写路径，部署 `.env` 的 `WORKBENCH_IMAGE` 需对应修改。
 
 推送镜像与创建 Release 是两个外部步骤，不具备跨服务事务；若最后一步失败，查看 Actions 日志后处理已产生的产物。工作流发布产物后，由服务器执行拉取与重启完成升级。
+
+## 日志与排障
+
+在设置 → 数据与运行中保存日志等级，支持 debug/info/warn/error，立即生效且重启保留。Compose 的 `WORKBENCH_LOG_LEVEL` 和二进制的 `-log-level` 只提供未保存设置时的初始值。服务日志为 JSON，输出到 stderr，容器通过 `docker compose logs -f --tail 100 workbench` 查看，systemd 使用 `journalctl -u workbench -f`。Compose 已配置每份 10 MB、最多 3 份的日志轮转；二进制文件重定向需自行轮转。详细分级和字段见[运行日志](configuration.md#运行日志)。

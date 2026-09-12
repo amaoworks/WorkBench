@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"workbench/internal/foundation/auth"
+	"workbench/internal/foundation/logging"
 )
 
 type Config struct {
@@ -21,6 +22,7 @@ type Config struct {
 	OpenAIBaseURL string
 	OpenAIModel   string
 	ShutdownGrace time.Duration
+	LogLevel      string
 }
 
 func DefaultConfig() (Config, error) {
@@ -34,6 +36,7 @@ func DefaultConfig() (Config, error) {
 		AuthMode:      auth.ModeLocal,
 		OpenAIModel:   "gpt-5.2",
 		ShutdownGrace: 10 * time.Second,
+		LogLevel:      "info",
 	}, nil
 }
 
@@ -43,6 +46,11 @@ func (c Config) PublicHTTPS() bool {
 }
 
 func (c Config) Validate() error {
+	if c.LogLevel != "" {
+		if _, err := logging.ParseLevel(c.LogLevel); err != nil {
+			return err
+		}
+	}
 	if c.ListenAddress == "" || c.DataPath == "" {
 		return errors.New("listen address and data path are required")
 	}

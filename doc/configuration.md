@@ -29,6 +29,7 @@ Go 版本以 [go.mod](../go.mod) 为准，当前为 1.27.1。前端使用 Node.j
 |---|---|---|
 | `-listen` | `WORKBENCH_LISTEN` | `127.0.0.1:8080`，始终为 HTTP |
 | `-data` | `WORKBENCH_DATA` | 用户目录下的 `.workbench/data.db` |
+| `-log-level` | `WORKBENCH_LOG_LEVEL` | `info`；可选 `debug`、`info`、`warn`、`error`，工作空间已保存的日志等级优先 |
 | `-auth` | `WORKBENCH_AUTH` | `local`；可选 `password` |
 | `-public-url` | `WORKBENCH_PUBLIC_URL` | 空；反代部署填写完整 HTTPS 来源，例如 `https://workbench.example.com`，可带端口、不可带子路径 |
 | `-allowed-host` | `WORKBENCH_ALLOWED_HOSTS` | 参数可重复，环境变量用逗号分隔；存在参数时替代环境列表 |
@@ -63,7 +64,7 @@ Session 和 CSRF Cookie 的 Secure 属性、CSRF 的 HTTPS 来源判断均依据
 - AI 配置：开关、端点、模型、密钥，支持测试连接与保存。端点须兼容 Responses API；测试会发送简短请求，可能产生费用。保存后新请求使用新 Provider。
 - 账户安全：验证当前密码后修改密码，已有登录全部失效。
 - 外观：日光、夜幕、跟随系统，以及减少动态效果；自动保存。
-- 数据与运行：创建在线备份，并查看当前部署参数。
+- 数据与运行：切换日志等级、创建在线备份，并查看当前部署参数。
 
 切换设置标签会保留当前页面内的表单草稿；刷新或离开页面不会持久化未保存输入。AI、Wallos 和 Schwab 密钥只写入、不回显，留空通常保留已有值；更换端点、App Key 或回调须重新提供密钥。详细边界见[安全说明](security.md)。
 
@@ -92,4 +93,30 @@ Schwab OAuth 回调必须使用实际可访问工作台的 HTTPS 入口，例如
 
 数据库及备份含凭据和业务内容，应用创建数据库目录时使用 0700，数据库和完成的备份文件设为 0600。文件布局、迁移表和维护行为见[数据设计](data-model.md)。
 
-健康检查为 `GET /health/live` 和 `GET /health/ready`，后者检查数据库连接；无需登录，但仍校验 Host。`workbench -healthcheck` 自动使用配置的外部 Host 或允许列表，通过 HTTP 探测运行中的服务。应用以 JSON 日志输出到 stderr，HTTP 日志包含请求 ID、方法、路径、状态、字节数和耗时。
+健康检查为 `GET /health/live` 和 `GET /health/ready`，后者检查数据库连接；无需登录，但仍校验 Host。`workbench -healthcheck` 自动使用配置的外部 Host 或允许列表，通过 HTTP 探测运行中的服务。
+
+## 运行日志
+
+设置 → 数据与运行 → 运行日志中选择最低记录等级并保存，无需重启。等级保存到当前数据库的 `workspace_settings.logging`，重启后优先于 `-log-level` 和 `WORKBENCH_LOG_LEVEL`；未保存过时使用启动默认值。日志等级不会改变程序行为或健康检查结果。
+
+| 最低等级 | 记录内容 |
+|---|---|
+| `debug` | 全部日志，加上成功的健康检查、后台任务和事件投递细节 |
+| `info`（默认） | 正常 HTTP 请求、启停、配置变更、备份，以及警告和错误 |
+| `warn` | HTTP 4xx、任务重试、事件投递重试、行情连接异常，以及错误 |
+| `error` | HTTP 5xx、请求 panic、后台任务最终失败和事件死信等错误 |
+
+二进制和容器使用同一套 JSON 日志，输出到标准错误流（stderr），含时间、等级、消息和组件。HTTP 日志另含 `requestId`、方法、路由模板、状态、字节数、耗时；响应返回同一个 `X-Request-ID`。Host/Origin/CSRF 拒绝也会记录。SSE/WebSocket 请求日志在连接结束时输出，中间件保留流式刷新和连接升级能力。
+
+请求日志不记录正文、查询参数、Cookie 或 Authorization。路径使用 `/api/modules/{id}/enabled` 等模板，未匹配或提前拒绝的请求标记为 `unmatched`，避免把路径内账户标识写入日志。Panic 记录调用栈但不记录 panic 值；后台业务失败记录任务/事件标识、重试状态和错误类型，不直接复制可能包含密钥的上游响应。数据库内原有任务错误记录不是服务日志，参见[安全说明](security.md)。
+
+```bash
+# 二进制：捕获 JSON 日志，文件由运行用户管理
+./workbench -log-level info 2>>workbench.log
+# Docker Compose：自带每份 10 MB、最多 3 份的滚动日志配置
+docker compose logs -f --tail 100 workbench
+# systemd：由 journal 管理日志
+journalctl -u workbench -f
+```
+
+程序不另外写日志文件；直接重定向部署时由管理员配置文件权限和轮转。临时排障可在页面切到 debug，排查完成后切回 info。

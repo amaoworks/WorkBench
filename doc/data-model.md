@@ -33,7 +33,7 @@
 | 通知 | `notifications` | 提醒内容、幂等键、读取/归档/过期状态和来源 |
 | 对话 | `ai_conversations`、`ai_messages` | 对话元数据和消息 |
 | 工具运行时 | `ai_tool_calls` | 工具执行、参数审计、幂等键和结果 |
-| 工作空间设置 | `workspace_settings` | 按 section 存储 JSON，目前有 `ai`、`appearance`、`dashboard` |
+| 工作空间设置 | `workspace_settings` | 按 section 存储 JSON，目前有 `ai`、`appearance`、`dashboard`、`logging`；日志仅存最低等级，日志内容写入 stderr |
 | Todo | `todo_tasks` | 标题、说明、提醒时间、完成状态和创建/更新时间 |
 | Todo / Wallos | `todo_wallos_settings` | 联动配置、密钥、最近成功同步和错误 |
 | Todo / Wallos | `todo_wallos_occurrences` | 外部来源、订阅 ID、付款日期与待办映射 |

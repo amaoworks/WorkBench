@@ -8,6 +8,7 @@ services:
       WORKBENCH_AUTH: password
       WORKBENCH_PUBLIC_URL: ${WORKBENCH_PUBLIC_URL:?Set WORKBENCH_PUBLIC_URL to the HTTPS reverse proxy origin}
       WORKBENCH_PASSWORD: ${WORKBENCH_PASSWORD:-}
+      WORKBENCH_LOG_LEVEL: ${WORKBENCH_LOG_LEVEL:-info}
     ports:
       - "127.0.0.1:${WORKBENCH_PORT:-8080}:8080"
     volumes:

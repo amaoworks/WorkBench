@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -31,6 +32,7 @@ type Config struct {
 	PublicHTTPS     bool
 	InitialPassword string
 	AllowedHosts    []string
+	Logger          *slog.Logger
 }
 
 type Service struct {
@@ -79,6 +81,14 @@ func New(ctx context.Context, db *sql.DB, cfg Config) (*Service, error) {
 	sessions.Cookie.SameSite = http.SameSiteStrictMode
 	sessions.Cookie.Secure = cfg.PublicHTTPS
 	sessions.Cookie.Persist = true
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	sessions.ErrorFunc = func(w http.ResponseWriter, _ *http.Request, _ error) {
+		logger.Error("session persistence failed")
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"code": "session_failed", "message": "could not persist session"})
+	}
 
 	service := &Service{
 		db:      db,

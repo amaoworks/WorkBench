@@ -65,8 +65,9 @@ JSON 错误使用 `code`、`message`，并可含 `details`、`requestId`，定�
 | PUT | `/api/notifications/read-all` | 标记当前已有通知为已读 |
 | GET | `/api/ai/status` | AI 是否可用 |
 | POST | `/api/chat`、`/api/chat/stream` | 对话、流式对话 |
-| GET | `/api/settings` | AI、外观、部署信息，密钥不回显 |
+| GET | `/api/settings` | AI、外观、日志等级、部署信息，密钥不回显 |
 | PUT | `/api/settings/ai`、`/api/settings/appearance` | 保存 AI 或外观 |
+| PUT | `/api/settings/logging` | 保存 `{ "level": "info" }` 并立即生效；支持 debug/info/warn/error，返回规范化等级 |
 | POST | `/api/settings/ai/test` | 测试候选 AI 配置，不保存 |
 | PUT | `/api/settings/password` | 验证当前密码并修改 |
 | POST | `/api/system/backup` | 创建服务端备份，返回文件名 |

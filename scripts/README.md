@@ -36,7 +36,7 @@ SQLC_BIN=/path/to/sqlc ./scripts/test.sh
 
 ## 发布和部署验证
 
-`VERSION=v1.0.0 ./scripts/release.sh` 重新构建前端并生成 Linux amd64、arm64 压缩包、部署文件包及 SHA256 校验文件，输出到 `dist/release/v1.0.0/`。版本号需符合 `vMAJOR.MINOR.PATCH`，可带预发布后缀。Actions 的版本、权限、产物和部署步骤见[部署与发布](../doc/deployment.md)。
+`VERSION=v0.1.1 ./scripts/release.sh` 重新构建前端并生成 Linux amd64、arm64 压缩包、部署文件包及 SHA256 校验文件，输出到 `dist/release/v0.1.1/`。版本号需符合 `vMAJOR.MINOR.PATCH`，可带预发布后缀。Actions 的版本、权限、产物和部署步骤见[部署与发布](../doc/deployment.md)。
 
 主分支推送或在 Actions 手动运行 **CI and Build** 会生成可下载的二进制和 Docker 镜像文件，保留在运行的 Artifacts 中 14 天。`scripts/export-build.sh` 从已构建的本地镜像提取二进制、执行 `docker save`，附带部署包和 SHA256 校验文件，输出到 `dist/build/`：
 
@@ -141,3 +141,15 @@ WORKBENCH_BROWSER_TEST=1 \
   CHROMIUM_PATH=/usr/bin/chromium \
   go test -race ./internal/modules/investment -run '^TestSchwabOAuthBrowser$' -v
 ```
+
+## 日志设置验证
+
+后端测试覆盖动态等级过滤、共享子 Logger、并发切换、配置持久化、CSRF、非法输入、保存失败、认证拒绝日志和 panic 恢复。`deployment-smoke.py` 同时验证未登录不能改等级，以及二进制/Compose 重启后保留等级并覆盖环境初始值。
+
+在一次性 local 模式工作空间运行 `logging.e2e.cjs`，验证四档切换、保存、刷新恢复与移动端布局，最后恢复 info：
+
+```bash
+WORKBENCH_TEST_URL=http://127.0.0.1:18086 node scripts/logging.e2e.cjs
+```
+
+`PLAYWRIGHT_MODULE`、`CHROMIUM_PATH` 可指定已安装的 Playwright 和 Chromium，复用上述浏览器测试环境。勿对正式工作空间运行该脚本。

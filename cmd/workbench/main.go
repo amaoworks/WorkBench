@@ -35,7 +35,7 @@ type options struct {
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("workbench failed", "service", "workbench", "component", "app", "error", err)
 		os.Exit(1)
 	}
 }
@@ -59,6 +59,7 @@ func parseOptions(args []string, getenv func(string) string, output io.Writer) (
 	flags.StringVar(&opt.config.DataPath, "data", envDefault("WORKBENCH_DATA", config.DataPath), "SQLite database path")
 	flags.StringVar(&mode, "auth", envDefault("WORKBENCH_AUTH", string(config.AuthMode)), "authentication mode: local or password")
 	flags.StringVar(&opt.config.PublicURL, "public-url", getenv("WORKBENCH_PUBLIC_URL"), "browser-facing HTTPS origin served by a reverse proxy")
+	flags.StringVar(&opt.config.LogLevel, "log-level", envDefault("WORKBENCH_LOG_LEVEL", config.LogLevel), "initial log level: debug, info, warn or error (saved settings take precedence)")
 	flags.BoolVar(&opt.version, "version", false, "print version and exit")
 	flags.BoolVar(&opt.healthcheck, "healthcheck", false, "check the running HTTP service and exit")
 	flags.Func("allowed-host", "additional allowed HTTP Host header (repeatable)", func(value string) error {

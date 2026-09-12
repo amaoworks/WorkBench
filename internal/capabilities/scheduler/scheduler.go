@@ -195,7 +195,11 @@ func (s *Scheduler) register(definition contracts.JobDefinition) error {
 	job, err := s.engine.NewJob(
 		schedule,
 		gocron.NewTask(func(ctx context.Context) error {
-			return s.execute(ctx, definition, s.now().UTC())
+			err := s.execute(ctx, definition, s.now().UTC())
+			if err != nil {
+				s.logger.Error("scheduled job failed", "jobId", definition.ID, "errorType", fmt.Sprintf("%T", err))
+			}
+			return err
 		}),
 		gocron.WithIdentifier(identifier),
 		gocron.WithName(string(definition.ID)),
@@ -227,7 +231,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 				return
 			}
 			if err := s.execute(ctx, missed.definition, missed.scheduledAt); err != nil {
-				s.logger.Error("misfired job failed", "jobId", missed.definition.ID, "error", err)
+				s.logger.Error("misfired job failed", "jobId", missed.definition.ID, "errorType", fmt.Sprintf("%T", err))
 			}
 		}()
 	}
@@ -265,6 +269,7 @@ func (s *Scheduler) execute(parent context.Context, definition contracts.JobDefi
 		}
 
 		runCtx, cancel := context.WithTimeout(parent, definition.Timeout)
+		s.logger.Debug("job attempt started", "jobId", definition.ID, "runId", runID, "attempt", attempt)
 		lastErr = definition.Handler(runCtx, contracts.JobRun{
 			ID: runID, JobID: definition.ID, ScheduledAt: scheduledAt.UTC(), Attempt: attempt,
 		})
@@ -288,6 +293,7 @@ func (s *Scheduler) execute(parent context.Context, definition contracts.JobDefi
 			return fmt.Errorf("finish job run %q: %w", definition.ID, err)
 		}
 		if lastErr == nil {
+			s.logger.Debug("job completed", "jobId", definition.ID, "runId", runID, "attempt", attempt, "durationMs", finished.Sub(now).Milliseconds())
 			_ = s.queries.MarkScheduledJobLastRun(context.WithoutCancel(parent), dbsqlc.MarkScheduledJobLastRunParams{
 				LastRunAt: sql.NullInt64{Int64: finished.UnixMilli(), Valid: true}, UpdatedAt: finished.UnixMilli(), ID: string(definition.ID),
 			})
@@ -296,6 +302,8 @@ func (s *Scheduler) execute(parent context.Context, definition contracts.JobDefi
 		}
 		if attempt < definition.Retry.MaxAttempts {
 			wait := retryWait(definition.Retry, attempt)
+			// Handler errors can include upstream response bodies or credentials.
+			s.logger.Warn("job attempt failed; retry scheduled", "jobId", definition.ID, "runId", runID, "attempt", attempt, "status", status, "retryInMs", wait.Milliseconds(), "errorType", fmt.Sprintf("%T", lastErr))
 			timer := time.NewTimer(wait)
 			select {
 			case <-parent.Done():

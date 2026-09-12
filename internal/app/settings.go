@@ -13,6 +13,7 @@ import (
 	"workbench/internal/capabilities/ai"
 	"workbench/internal/contracts"
 	"workbench/internal/foundation/httpapi"
+	"workbench/internal/foundation/logging"
 )
 
 // APIKey is stored in the private workspace database, never returned by settings APIs.
@@ -37,7 +38,8 @@ func (a *App) loadSettings(ctx context.Context) error {
 		a.aiSettings.Model = "gpt-5.2"
 	}
 	a.appearance = Appearance{Theme: "system", Motion: "full"}
-	for section, target := range map[string]any{"ai": &a.aiSettings, "appearance": &a.appearance} {
+	a.logging = LoggingSettings{Level: a.config.LogLevel}
+	for section, target := range map[string]any{"ai": &a.aiSettings, "appearance": &a.appearance, "logging": &a.logging} {
 		var raw string
 		err := a.database.SQL().QueryRowContext(ctx, "SELECT value FROM workspace_settings WHERE section = ?", section).Scan(&raw)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -50,6 +52,12 @@ func (a *App) loadSettings(ctx context.Context) error {
 			return err
 		}
 	}
+	level, err := logging.ParseLevel(a.logging.Level)
+	if err != nil {
+		return err
+	}
+	a.logging.Level = strings.ToLower(level.String())
+	a.logLevel.Set(level)
 	provider, err := settingsProvider(a.aiSettings)
 	if err != nil {
 		return err
@@ -75,6 +83,7 @@ func (a *App) getSettings(w http.ResponseWriter, r *http.Request) {
 	httpapi.Write(w, 200, map[string]any{
 		"ai":         map[string]any{"enabled": a.aiSettings.Enabled, "baseUrl": a.aiSettings.BaseURL, "model": a.aiSettings.Model, "hasApiKey": a.aiSettings.APIKey != ""},
 		"appearance": a.appearance,
+		"logging":    a.logging,
 		"deployment": map[string]any{"listenAddress": a.config.ListenAddress, "dataPath": a.config.DataPath, "authMode": a.config.AuthMode, "publicUrl": a.config.PublicURL, "allowedHosts": a.config.AllowedHosts},
 	})
 }
@@ -154,6 +163,7 @@ func (a *App) saveAISettings(w http.ResponseWriter, r *http.Request) {
 	a.aiSettings = value
 	a.gateway.SetProvider(provider)
 	a.textAI.SetProvider(provider)
+	a.logger.Info("AI settings saved", "component", "settings", "enabled", value.Enabled)
 	httpapi.Write(w, 200, map[string]bool{"saved": true})
 }
 
@@ -204,5 +214,6 @@ func (a *App) saveAppearance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.appearance = value
+	a.logger.Info("appearance saved", "component", "settings")
 	httpapi.Write(w, 200, value)
 }

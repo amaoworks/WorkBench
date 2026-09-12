@@ -17,13 +17,13 @@ chmod 600 .env
 
 ```dotenv
 WORKBENCH_IMAGE=ghcr.io/amaoworks/workbench
-WORKBENCH_VERSION=v1.0.0
+WORKBENCH_VERSION=v0.1.1
 WORKBENCH_PORT=8080
 WORKBENCH_PUBLIC_URL=https://workbench.example.com
 WORKBENCH_PASSWORD='替换为自己的强密码'
 ```
 
-`v1.0.0` 是示例，请使用实际已发布的版本。首次密码至少 8 个字符，包含大写、小写、数字、特殊符号四类中的至少三类。配置后启动：
+`v0.1.1` 是示例，请使用实际已发布的版本。首次密码至少 8 个字符，包含大写、小写、数字、特殊符号四类中的至少三类。配置后启动：
 
 ```bash
 docker compose pull
@@ -52,22 +52,30 @@ docker compose up -d --wait
 
 ```bash
 sha256sum --check --ignore-missing SHA256SUMS
-tar -xzf workbench_v1.0.0_linux_amd64.tar.gz
-cd workbench_v1.0.0_linux_amd64
+tar -xzf workbench_v0.1.1_linux_amd64.tar.gz
+cd workbench_v0.1.1_linux_amd64
 ./workbench -version
 ./workbench
 ```
 
 默认访问 `http://127.0.0.1:8080`，数据保存在 `~/.workbench/data.db`。前端、迁移和时区数据已嵌入，无需安装 Go、Node.js 或数据库服务。服务器反代部署使用 `-auth password -public-url https://实际域名`，首次启动通过 `WORKBENCH_PASSWORD` 设置密码；长期运行可使用 [systemd 示例](deploy/workbench.service)。
 
+## 日志与排障
+
+进入 **设置 → 数据与运行 → 运行日志**，选择 `debug / info / warn / error` 最低等级，点击「保存日志等级」后立即生效，重启后保留。默认 `info`；选择 `warn` 会同时记录警告和错误，选择 `error` 仅记录错误。
+
+二进制和容器均输出 JSON 日志到 stderr。Docker 使用 `docker compose logs -f --tail 100 workbench`，systemd 使用 `journalctl -u workbench -f`。首次启动默认等级可通过 `WORKBENCH_LOG_LEVEL=info` 或 `-log-level info` 设置；页面已保存的等级优先。详细字段、等级规则和轮转说明见[运行日志](doc/configuration.md#运行日志)。
+
 ## GitHub Actions 编译与发布
+
+推送版本标签后，只有 **Release 工作流全部成功** 才会创建 Releases 条目并附上二进制与部署包；Git 标签本身不等于 GitHub Release。
 
 | 触发方式 | 工作流 | 产物位置 |
 |---|---|---|
 | 推送 `main` | **CI and Build** | 验证通过后，在该次运行的 **Artifacts** 下载 Linux amd64/arm64 二进制包、Docker 镜像文件和部署文件 |
 | Actions → **CI and Build** → **Run workflow**，选择分支 | **CI and Build** | 与主分支构建相同，可手动打包，无需先创建版本标签 |
 | 提交 PR | **CI and Build** | 运行检查、双架构镜像构建及部署验证 |
-| 推送 `v1.0.0` 等版本标签 | **Release** | 二进制包与校验文件发布至 **Releases**，多架构镜像推送至 **GHCR** |
+| 推送 `v0.1.1` 等版本标签 | **Release** | 二进制包与校验文件发布至 **Releases**，多架构镜像推送至 **GHCR** |
 
 普通分支构建的 Artifacts 保留 14 天，名称为 `workbench-linux-<架构>-<提交号>`。下载并解开 GitHub 的 artifact ZIP 后，其中包含可直接解压的二进制 `.tar.gz`、可用 `docker load` 导入的 `*_docker.tar.gz`、部署文件包和 `SHA256SUMS`。
 
@@ -81,11 +89,11 @@ docker load --input workbench_<构建版本>_linux_amd64_docker.tar.gz
 正式发布时，在包含工作流的提交上创建并推送版本标签：
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
-**Release** 会复用检查、编译并验证两种架构的二进制、构建和推送 Docker 镜像，最后创建 GitHub Release。稳定版本更新镜像 `latest`；`v1.0.0-rc.1` 等预发布版本独立标记。失败的检查会阻止后续构建或发布，可在 Actions 查看对应步骤日志。工作流入口：[CI and Build](.github/workflows/ci.yml)、[Release](.github/workflows/release.yml)。
+**Release** 会复用检查、编译并验证两种架构的二进制、构建和推送 Docker 镜像，最后创建 GitHub Release。稳定版本更新镜像 `latest`；`v0.1.1-rc.1` 等预发布版本独立标记。失败的检查会阻止后续构建或发布，可在 Actions 查看对应步骤日志。工作流入口：[CI and Build](.github/workflows/ci.yml)、[Release](.github/workflows/release.yml)。
 
 ## 文档
 

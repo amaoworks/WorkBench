@@ -16,11 +16,23 @@ func TestDeploymentOptionsPrecedence(t *testing.T) {
 		"WORKBENCH_AUTH": "password", "WORKBENCH_PUBLIC_URL": "https://workbench.example.com",
 		"WORKBENCH_ALLOWED_HOSTS": " one.example.com, , two.example.com ",
 		"WORKBENCH_PASSWORD":      "Test-Password-123", "OPENAI_MODEL": "test-model",
+		"WORKBENCH_LOG_LEVEL": "warn",
 	}
 	getenv := func(key string) string { return env[key] }
 	opt, err := parseOptions(nil, getenv, io.Discard)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if opt.config.LogLevel != "warn" {
+		t.Fatal("log level environment was not applied")
+	}
+	levelOverride, err := parseOptions([]string{"-log-level", "debug"}, getenv, io.Discard)
+	if err != nil || levelOverride.config.LogLevel != "debug" {
+		t.Fatal("log level flag did not override environment")
+	}
+	levelOverride.config.LogLevel = "trace"
+	if err := levelOverride.config.Validate(); err == nil {
+		t.Fatal("invalid startup log level accepted")
 	}
 	if opt.config.ListenAddress != env["WORKBENCH_LISTEN"] || opt.config.DataPath != "/data/data.db" || opt.config.AuthMode != "password" || opt.config.PublicURL != env["WORKBENCH_PUBLIC_URL"] || opt.config.Password != env["WORKBENCH_PASSWORD"] || opt.config.OpenAIModel != "test-model" || strings.Join(opt.config.AllowedHosts, ",") != "one.example.com,two.example.com" {
 		t.Fatal("deployment environment was not applied")

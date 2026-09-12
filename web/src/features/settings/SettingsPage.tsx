@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { api } from "../../shared/api";
 import { useAppearance, useSettings, type AISettings, type Settings } from "./queries";
 import { ModulesPanel } from "./ModulesPanel";
+import { LoggingPanel } from "./LoggingPanel";
 import { PageHeader } from "../../components/ui/PageHeader";
 
 const sections = [
@@ -44,7 +45,7 @@ export default function SettingsPage() {
     <div className="settings-panel" role="tabpanel" id="panel-ai" aria-labelledby="tab-ai" hidden={active !== "ai"}><AIForm key={JSON.stringify(data.ai)} value={data.ai} /></div>
     <div className="settings-panel" role="tabpanel" id="panel-security" aria-labelledby="tab-security" hidden={active !== "security"}><PasswordForm mode={data.deployment.authMode} /></div>
     <div className="settings-panel" role="tabpanel" id="panel-appearance" aria-labelledby="tab-appearance" hidden={active !== "appearance"}><AppearanceForm value={data} /></div>
-    <div className="settings-panel" role="tabpanel" id="panel-data" aria-labelledby="tab-data" hidden={active !== "data"}><DataPanel value={data} /></div>
+    <div className="settings-panel" role="tabpanel" id="panel-data" aria-labelledby="tab-data" hidden={active !== "data"}><LoggingPanel key={data.logging.level} value={data.logging} /><DataPanel value={data} /></div>
   </div>;
 }
 

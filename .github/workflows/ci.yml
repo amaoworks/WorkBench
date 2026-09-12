@@ -41,8 +41,8 @@ jobs:
       - run: npm ci --prefix web
       - name: Test and build
         run: ./scripts/test.sh
-      - name: Check deployment concurrency
-        run: go test -race ./cmd/workbench ./internal/app ./internal/foundation/auth
+      - name: Check deployment and logging concurrency
+        run: go test -race ./cmd/workbench ./internal/app ./internal/foundation/auth ./internal/foundation/logging ./internal/foundation/events ./internal/capabilities/scheduler
 
   build:
     name: Build linux/${{ matrix.arch }}

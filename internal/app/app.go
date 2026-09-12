@@ -27,6 +27,7 @@ import (
 	"workbench/internal/foundation/database/sqlc"
 	"workbench/internal/foundation/events"
 	"workbench/internal/foundation/httpapi"
+	"workbench/internal/foundation/logging"
 	"workbench/internal/foundation/modules"
 	"workbench/internal/modules/investment"
 	"workbench/internal/modules/todo"
@@ -36,6 +37,7 @@ import (
 type App struct {
 	config        Config
 	logger        *slog.Logger
+	logLevel      *slog.LevelVar
 	database      *workbenchdb.Database
 	registry      *modules.Registry
 	dispatcher    *events.Dispatcher
@@ -49,6 +51,7 @@ type App struct {
 	settingsMu    sync.Mutex
 	aiSettings    AISettings
 	appearance    Appearance
+	logging       LoggingSettings
 	gateway       *ai.Gateway
 	textAI        *ai.TextService
 	investment    *investment.Module
@@ -62,9 +65,14 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 		origin, _ := url.Parse(cfg.PublicURL) // Validated above.
 		cfg.AllowedHosts = append(append([]string(nil), cfg.AllowedHosts...), origin.Host)
 	}
-	if logger == nil {
-		logger = slog.Default()
+	if cfg.LogLevel == "" {
+		cfg.LogLevel = "info"
 	}
+	logger, logLevel, err := logging.New(logger, cfg.LogLevel)
+	if err != nil {
+		return nil, err
+	}
+	logger = logger.With("service", "workbench")
 	database, err := workbenchdb.Open(ctx, workbenchdb.Config{Path: cfg.DataPath, MaxConnections: 4})
 	if err != nil {
 		return nil, err
@@ -87,7 +95,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 		return fail(err)
 	}
 	textAI := ai.NewTextService()
-	investmentModule, err := investment.New(investment.Dependencies{DB: database.SQL()})
+	investmentModule, err := investment.New(investment.Dependencies{DB: database.SQL(), Logger: logger.With("component", "investment")})
 	if err != nil {
 		return fail(err)
 	}
@@ -99,18 +107,19 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	hub := notifications.NewHub()
 	consumers := append(registry.Catalog().Consumers, hub.Consumer())
 	enabled := func(id contracts.ModuleID) bool { return id == "core" || registry.IsEnabled(id) }
-	dispatcher, err := events.NewDispatcher(database.SQL(), eventStore, consumers, enabled, logger)
+	dispatcher, err := events.NewDispatcher(database.SQL(), eventStore, consumers, enabled, logger.With("component", "events"))
 	if err != nil {
 		return fail(err)
 	}
 	jobs := append(registry.Catalog().Jobs, maintenanceJob(database.SQL()))
-	scheduled, err := scheduler.New(ctx, database.SQL(), jobs, enabled, logger)
+	scheduled, err := scheduler.New(ctx, database.SQL(), jobs, enabled, logger.With("component", "scheduler"))
 	if err != nil {
 		return fail(err)
 	}
 	authService, err := auth.New(ctx, database.SQL(), auth.Config{
 		Mode: cfg.AuthMode, ListenAddress: cfg.ListenAddress, PublicHTTPS: cfg.PublicHTTPS(),
 		InitialPassword: cfg.Password, AllowedHosts: cfg.AllowedHosts,
+		Logger: logger.With("component", "auth"),
 	})
 	if err != nil {
 		_ = scheduled.Shutdown(context.Background())
@@ -141,7 +150,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	conversationHTTP := conversation.NewHTTPHandler(conversationService)
 
 	application := &App{
-		config: cfg, logger: logger, database: database, registry: registry,
+		config: cfg, logger: logger, logLevel: logLevel, database: database, registry: registry,
 		dispatcher: dispatcher, scheduler: scheduled, auth: authService,
 		investment: investmentModule,
 	}
@@ -156,7 +165,9 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 		Addr: cfg.ListenAddress, Handler: application.handler,
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second,
 		WriteTimeout: 0, IdleTimeout: 2 * time.Minute,
+		ErrorLog: slog.NewLogLogger(logger.With("component", "http").Handler(), slog.LevelError),
 	}
+	logger.Debug("workspace initialized", "component", "app", "modules", len(registry.Catalog().Manifests))
 	return application, nil
 }
 
@@ -169,7 +180,9 @@ func (a *App) routes(
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
 	router.Use(a.requestLogger)
-	router.Use(middleware.Recoverer)
+	router.Use(a.recoverPanic)
+	router.Use(a.auth.Security)
+	router.Use(a.auth.LoadAndSave)
 	router.Get("/health/live", func(w http.ResponseWriter, _ *http.Request) {
 		httpapi.Write(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
@@ -213,6 +226,7 @@ func (a *App) routes(
 		protected.Put("/api/settings/ai", a.saveAISettings)
 		protected.Post("/api/settings/ai/test", a.testAISettings)
 		protected.Put("/api/settings/appearance", a.saveAppearance)
+		protected.Put("/api/settings/logging", a.saveLoggingSettings)
 		protected.Put("/api/settings/password", a.auth.ChangePasswordHandler)
 		for _, route := range a.registry.Catalog().Routes {
 			protected.Method(route.Method, route.Pattern, a.registry.Gate(route.Module, route.Handler))
@@ -222,27 +236,7 @@ func (a *App) routes(
 		}
 	})
 	router.NotFound(ui.ServeHTTP)
-	return a.auth.Security(a.auth.LoadAndSave(router))
-}
-
-func (a *App) requestLogger(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestID := middleware.GetReqID(r.Context())
-		if requestID != "" {
-			w.Header().Set("X-Request-ID", requestID)
-		}
-		wrapped := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
-		started := time.Now()
-		next.ServeHTTP(wrapped, r)
-		a.logger.Info("HTTP request",
-			"requestId", requestID,
-			"method", r.Method,
-			"path", r.URL.Path,
-			"status", wrapped.Status(),
-			"bytes", wrapped.BytesWritten(),
-			"durationMs", time.Since(started).Milliseconds(),
-		)
-	})
+	return router
 }
 
 func (a *App) listModules(w http.ResponseWriter, _ *http.Request) {
@@ -273,6 +267,7 @@ func (a *App) setModuleEnabled(w http.ResponseWriter, r *http.Request) {
 	if id == "investment" && !*input.Enabled {
 		a.investment.ResetStream()
 	}
+	a.logger.Info("module state changed", "component", "modules", "module", id, "enabled", *input.Enabled)
 	httpapi.Write(w, http.StatusOK, map[string]any{"id": id, "enabled": *input.Enabled})
 }
 
@@ -311,10 +306,11 @@ func (a *App) backup(w http.ResponseWriter, r *http.Request) {
 	name := "workbench-" + time.Now().UTC().Format("20060102T150405.000Z") + ".db"
 	destination := filepath.Join(backupDir, name)
 	if err := a.database.Backup(r.Context(), destination); err != nil {
-		a.logger.Error("online backup failed", "error", err)
+		a.logger.Error("online backup failed", "component", "database", "error", err)
 		httpapi.Error(w, http.StatusInternalServerError, "backup_failed", "could not create backup")
 		return
 	}
+	a.logger.Info("online backup created", "component", "database", "file", name)
 	httpapi.Write(w, http.StatusCreated, map[string]string{"file": name})
 }
 
@@ -336,7 +332,7 @@ func (a *App) Run(ctx context.Context) error {
 	go func() {
 		serverDone <- a.server.Serve(listener)
 	}()
-	a.logger.Info("workbench started", "address", a.config.ListenAddress, "authMode", a.config.AuthMode, "publicURL", a.config.PublicURL)
+	a.logger.Info("workbench started", "component", "app", "address", a.config.ListenAddress, "authMode", a.config.AuthMode, "publicURL", a.config.PublicURL)
 
 	select {
 	case <-ctx.Done():
@@ -350,12 +346,16 @@ func (a *App) Run(ctx context.Context) error {
 		}
 	}
 	cancelRun()
+	a.logger.Info("workbench stopping", "component", "app")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), a.config.ShutdownGrace)
 	defer cancel()
 	a.investment.Close()
 	serverErr := a.server.Shutdown(shutdownCtx)
 	schedulerErr := a.shutdownScheduler(shutdownCtx)
+	if serverErr == nil && schedulerErr == nil {
+		a.logger.Info("workbench stopped", "component", "app")
+	}
 	return errors.Join(serverErr, schedulerErr)
 }
 
