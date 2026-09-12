@@ -24,9 +24,27 @@ SQLC_BIN=/path/to/sqlc ./scripts/test.sh
 
 `./scripts/build.sh` 从锁文件安装前端依赖，构建前端，再通过 `compile.sh` 输出根目录 `workbench` 静态可执行文件。`compile.sh` 支持 `OUTPUT`、`GOOS`、`GOARCH`、`VERSION`、`COMMIT`、`BUILD_DATE`，并强制禁用 CGO；时区数据由程序内嵌。仅重新编译已有产物时可使用 `go build -o workbench ./cmd/workbench`。部署、工作空间和备份操作见[配置与运行](../doc/configuration.md)。
 
+## 工作流检查
+
+修改 GitHub Actions 时执行：
+
+```bash
+./scripts/check-workflows.sh
+```
+
+需要 Go 和 ShellCheck；脚本使用固定版本 actionlint，并检查工作流中的 shell 脚本及构建辅助脚本。可通过 `ACTIONLINT_BIN`、`SHELLCHECK_BIN` 指定本地工具。缺少 ShellCheck 时直接失败，不能把跳过 shell 检查的结果当作 CI 验证通过。
+
 ## 发布和部署验证
 
 `VERSION=v1.0.0 ./scripts/release.sh` 重新构建前端并生成 Linux amd64、arm64 压缩包、部署文件包及 SHA256 校验文件，输出到 `dist/release/v1.0.0/`。版本号需符合 `vMAJOR.MINOR.PATCH`，可带预发布后缀。Actions 的版本、权限、产物和部署步骤见[部署与发布](../doc/deployment.md)。
+
+主分支推送或在 Actions 手动运行 **CI and Build** 会生成可下载的二进制和 Docker 镜像文件，保留在运行的 Artifacts 中 14 天。`scripts/export-build.sh` 从已构建的本地镜像提取二进制、执行 `docker save`，附带部署包和 SHA256 校验文件，输出到 `dist/build/`：
+
+```bash
+IMAGE=workbench:local VERSION=v0.0.0-dev.1 ARCH=amd64 ./scripts/export-build.sh
+```
+
+`ARCH` 必须与镜像架构一致。镜像文件可用 `docker load --input` 导入；导出的二进制与镜像内程序相同。正式标签发布仍使用 `release.sh` 和 Release 工作流。
 
 `deployment-smoke.py` 仅依赖 Python 3 标准库，使用随机端口、临时密码和独立工作空间，验证首次初始化、登录、健康探针、在线备份、退出，以及重建后的数据和凭据保留。容器模式还检查非 root 用户和只读根文件系统；测试结束清理自己的 Compose 项目和临时卷。
 

@@ -180,9 +180,16 @@ VERSION=v1.0.0 ./scripts/release.sh
 
 产物位于 `dist/release/v1.0.0/`，包括两个 Linux 压缩包、部署文件包和 `SHA256SUMS`。本地打包需要 Go、Node.js/npm、tar 及 sha256sum；Go、前端依赖和 sqlc 要求见[配置与运行](configuration.md)。
 
-## GitHub Actions 发布
+## GitHub Actions 编译与发布
 
-`.github/workflows/ci.yml` 在 PR 和主分支推送时检查 SQL 生成漂移、Go 测试、前端 lint、投资 JS 测试和生产构建，检查部署相关并发行为及工作流语法，然后在 Linux amd64/arm64 runner 上分别构建镜像并验证 Compose 生命周期、登录、备份和数据保留。
+`.github/workflows/ci.yml`（界面名称 **CI and Build**）支持 PR、主分支推送和 `workflow_dispatch`。手动编译时，在 Actions 中选择 **CI and Build → Run workflow** 并选择目标分支。
+
+流程先通过 `scripts/check-workflows.sh` 执行 actionlint 和 ShellCheck，缺少 ShellCheck 会明确失败，避免本地悄悄跳过而 CI 报错。随后检查 SQL 生成漂移、Go 测试、前端 lint、投资 JS 测试和生产构建，以及部署相关并发行为，最后在 Linux amd64/arm64 runner 上分别构建镜像并验证 Compose 生命周期、登录、备份和数据保留。
+
+主分支推送及手动分支构建还通过 `scripts/export-build.sh` 从已经验证的镜像中提取相同的静态二进制，导出 Docker 镜像和部署文件包，并验证导出的二进制。构建版本为 `v0.0.0-dev.<运行序号>-<短提交号>`，产物上传到该次运行的 **Artifacts**，按架构分为 `workbench-linux-amd64-<提交号>`、`workbench-linux-arm64-<提交号>`，保留 14 天。PR 执行检查和镜像验证，正式标签的产物由 Release 工作流发布。
+
+下载 artifact ZIP 并解压后，先运行 `sha256sum --check SHA256SUMS`。二进制包解压即可运行；`*_docker.tar.gz` 使用 `docker load --input 文件名` 导入，镜像名为 `workbench:sha-<完整提交号>`。Compose 设置 `WORKBENCH_IMAGE=workbench`、`WORKBENCH_VERSION=sha-<完整提交号>`，其余配置与正常部署一致。普通构建不推送 GHCR，也不创建正式 Release。
+
 
 `.github/workflows/release.yml` 在推送 `v*` 标签时复用 CI。接受 `vMAJOR.MINOR.PATCH` 及预发布后缀，例如 `v1.0.0-rc.1`，不使用带 `+` 的构建元数据。验证后构建二进制包，分别在两个架构的 runner 上运行压缩包中的程序，再推送多架构 GHCR 镜像并创建 GitHub Release。
 

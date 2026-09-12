@@ -1,9 +1,10 @@
-name: CI
+name: CI and Build
 
 on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
   workflow_call:
 
 permissions:
@@ -18,6 +19,8 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      - name: Check workflows and shell scripts
+        run: ./scripts/check-workflows.sh -color
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
@@ -40,10 +43,9 @@ jobs:
         run: ./scripts/test.sh
       - name: Check deployment concurrency
         run: go test -race ./cmd/workbench ./internal/app ./internal/foundation/auth
-      - name: Check workflows
-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -color
 
-  container:
+  build:
+    name: Build linux/${{ matrix.arch }}
     needs: check
     strategy:
       fail-fast: false
@@ -58,18 +60,61 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
-      - name: Read Go version
-        id: go
-        run: echo "version=$(awk '$1 == "go" {print $2}' go.mod)" >> "$GITHUB_OUTPUT"
+      - name: Read build metadata
+        id: info
+        run: |
+          version="v0.0.0-dev.${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            version="$GITHUB_REF_NAME"
+          fi
+          {
+            echo "version=$version"
+            echo "image=workbench:sha-${GITHUB_SHA}"
+            echo "go=$(awk '$1 == "go" {print $2}' go.mod)"
+            echo "date=$(git show -s --format=%cI HEAD)"
+          } >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           load: true
           platforms: linux/${{ matrix.arch }}
-          tags: workbench-ci:test
+          tags: ${{ steps.info.outputs.image }}
           build-args: |
-            GO_VERSION=${{ steps.go.outputs.version }}
+            GO_VERSION=${{ steps.info.outputs.go }}
+            VERSION=${{ steps.info.outputs.version }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ steps.info.outputs.date }}
           cache-from: type=gha,scope=workbench-${{ matrix.arch }}
           cache-to: type=gha,scope=workbench-${{ matrix.arch }},mode=max
       - name: Verify Compose lifecycle and data
-        run: python3 scripts/deployment-smoke.py --image workbench-ci:test
+        env:
+          IMAGE: ${{ steps.info.outputs.image }}
+        run: python3 scripts/deployment-smoke.py --image "$IMAGE"
+      - name: Export binary and Docker image
+        if: github.event_name != 'pull_request' && github.ref_type != 'tag'
+        env:
+          IMAGE: ${{ steps.info.outputs.image }}
+          VERSION: ${{ steps.info.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: ./scripts/export-build.sh
+      - name: Verify exported binary
+        if: github.event_name != 'pull_request' && github.ref_type != 'tag'
+        env:
+          VERSION: ${{ steps.info.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          cd dist/build
+          sha256sum --check SHA256SUMS
+          tar -xzf "workbench_${VERSION}_linux_${ARCH}.tar.gz"
+          cd ../..
+          python3 scripts/deployment-smoke.py --binary "dist/build/workbench_${VERSION}_linux_${ARCH}/workbench"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: github.event_name != 'pull_request' && github.ref_type != 'tag'
+        with:
+          name: workbench-linux-${{ matrix.arch }}-${{ github.sha }}
+          path: |
+            dist/build/*.tar.gz
+            dist/build/SHA256SUMS
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

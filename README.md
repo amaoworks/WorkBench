@@ -4,6 +4,89 @@ Workbench 是本地优先、单用户的个人工作台，采用 Go 模块化单
 
 当前业务包括待办及 Wallos 订阅提醒、投资（Schwab 行情、账户和 TradingView 终端）。业务可在设置中启停，数据和总览布局偏好会保留。新增业务按模块扩展，前后端使用对应的模块目录。
 
+## Docker Compose 部署
+
+从 [GitHub Releases](https://github.com/amaoworks/WorkBench/releases) 下载 `workbench_<版本>_deployment.tar.gz` 并解压，或在本仓库根目录操作。程序镜像为 `ghcr.io/amaoworks/workbench`，支持 Linux amd64/arm64。
+
+```bash
+cp .env.example .env
+chmod 600 .env
+```
+
+编辑 `.env`，填写已发布版本、反向代理的外部地址和首次登录密码：
+
+```dotenv
+WORKBENCH_IMAGE=ghcr.io/amaoworks/workbench
+WORKBENCH_VERSION=v1.0.0
+WORKBENCH_PORT=8080
+WORKBENCH_PUBLIC_URL=https://workbench.example.com
+WORKBENCH_PASSWORD='替换为自己的强密码'
+```
+
+`v1.0.0` 是示例，请使用实际已发布的版本。首次密码至少 8 个字符，包含大写、小写、数字、特殊符号四类中的至少三类。配置后启动：
+
+```bash
+docker compose pull
+docker compose up -d --wait
+docker compose ps
+docker compose logs -f --tail 100 workbench
+```
+
+应用只提供 HTTP，Compose 默认将端口发布到宿主机 `127.0.0.1:8080`，由 Nginx/Caddy 反代并提供 HTTPS。代理需要保留原始 Host、支持 WebSocket 和 SSE；模板见 [Nginx](deploy/nginx.conf.example)、[Caddy](deploy/Caddyfile.example)。通过 `.env` 中配置的 HTTPS 地址访问和登录。
+
+数据保存在挂载到 `/data` 的持久化卷，包含数据库和备份。升级时先在设置中备份，再修改 `.env` 的版本，执行 `docker compose pull && docker compose up -d --wait`。`docker compose down` 保留数据，`docker compose down --volumes` 会删除数据卷。
+
+已有反代也运行在容器内时，使用[容器网络覆盖配置](deploy/compose.proxy.yaml)，同一网络的上游地址为 `http://workbench:8080`。完整部署、权限及恢复步骤见[部署与发布](doc/deployment.md)。
+
+尚未发布版本时，也可在仓库根目录先构建本地镜像：
+
+```bash
+docker build -t workbench:local .
+# 在 .env 中设置 WORKBENCH_IMAGE=workbench、WORKBENCH_VERSION=local
+docker compose up -d --wait
+```
+
+## 二进制部署
+
+从 [Releases](https://github.com/amaoworks/WorkBench/releases) 下载对应架构的二进制包和 `SHA256SUMS`。例如 amd64：
+
+```bash
+sha256sum --check --ignore-missing SHA256SUMS
+tar -xzf workbench_v1.0.0_linux_amd64.tar.gz
+cd workbench_v1.0.0_linux_amd64
+./workbench -version
+./workbench
+```
+
+默认访问 `http://127.0.0.1:8080`，数据保存在 `~/.workbench/data.db`。前端、迁移和时区数据已嵌入，无需安装 Go、Node.js 或数据库服务。服务器反代部署使用 `-auth password -public-url https://实际域名`，首次启动通过 `WORKBENCH_PASSWORD` 设置密码；长期运行可使用 [systemd 示例](deploy/workbench.service)。
+
+## GitHub Actions 编译与发布
+
+| 触发方式 | 工作流 | 产物位置 |
+|---|---|---|
+| 推送 `main` | **CI and Build** | 验证通过后，在该次运行的 **Artifacts** 下载 Linux amd64/arm64 二进制包、Docker 镜像文件和部署文件 |
+| Actions → **CI and Build** → **Run workflow**，选择分支 | **CI and Build** | 与主分支构建相同，可手动打包，无需先创建版本标签 |
+| 提交 PR | **CI and Build** | 运行检查、双架构镜像构建及部署验证 |
+| 推送 `v1.0.0` 等版本标签 | **Release** | 二进制包与校验文件发布至 **Releases**，多架构镜像推送至 **GHCR** |
+
+普通分支构建的 Artifacts 保留 14 天，名称为 `workbench-linux-<架构>-<提交号>`。下载并解开 GitHub 的 artifact ZIP 后，其中包含可直接解压的二进制 `.tar.gz`、可用 `docker load` 导入的 `*_docker.tar.gz`、部署文件包和 `SHA256SUMS`。
+
+```bash
+sha256sum --check SHA256SUMS
+docker load --input workbench_<构建版本>_linux_amd64_docker.tar.gz
+```
+
+导入后的镜像名为 `workbench:sha-<完整提交号>`，可在 `.env` 中设置 `WORKBENCH_IMAGE=workbench`、`WORKBENCH_VERSION=sha-<完整提交号>` 后使用 Compose。二进制包解压后运行其中的 `workbench`。普通构建不会创建正式 Release 或推送 GHCR。
+
+正式发布时，在包含工作流的提交上创建并推送版本标签：
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+**Release** 会复用检查、编译并验证两种架构的二进制、构建和推送 Docker 镜像，最后创建 GitHub Release。稳定版本更新镜像 `latest`；`v1.0.0-rc.1` 等预发布版本独立标记。失败的检查会阻止后续构建或发布，可在 Actions 查看对应步骤日志。工作流入口：[CI and Build](.github/workflows/ci.yml)、[Release](.github/workflows/release.yml)。
+
 ## 文档
 
 [文档入口](doc/README.md)汇总当前实现的设计和使用说明：
@@ -35,22 +118,6 @@ deploy/                 systemd、反向代理和容器网络配置示例
 scripts/                构建、发布、测试和浏览器回归
 doc/                    当前设计与开发运行说明
 ```
-
-## 部署
-
-从 [GitHub Releases](https://github.com/amaoworks/WorkBench/releases) 获取 Linux amd64/arm64 二进制包或部署文件包。二进制解压后直接运行 `./workbench`；前端、数据库迁移与时区数据均已嵌入。
-
-Docker Compose 使用 GHCR 的对应版本镜像。准备部署文件后：
-
-```bash
-cp .env.example .env
-# 填写已发布的版本、外部 HTTPS 地址和首次登录密码
-chmod 600 .env
-docker compose pull
-docker compose up -d --wait
-```
-
-应用只提供 HTTP 服务，HTTPS 由反向代理负责。Compose 默认仅发布到宿主机 `127.0.0.1:8080`；容器内的数据保存在 `/data` 持久化卷。完整安装、systemd、Nginx/Caddy、容器代理网络及升级恢复步骤见[部署与发布](doc/deployment.md)。
 
 ## 从源码构建与运行
 
