@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"sync"
 	"time"
@@ -57,6 +58,10 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
+	if cfg.PublicURL != "" {
+		origin, _ := url.Parse(cfg.PublicURL) // Validated above.
+		cfg.AllowedHosts = append(append([]string(nil), cfg.AllowedHosts...), origin.Host)
+	}
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -104,7 +109,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 		return fail(err)
 	}
 	authService, err := auth.New(ctx, database.SQL(), auth.Config{
-		Mode: cfg.AuthMode, ListenAddress: cfg.ListenAddress, PublicHTTPS: cfg.HTTPS(),
+		Mode: cfg.AuthMode, ListenAddress: cfg.ListenAddress, PublicHTTPS: cfg.PublicHTTPS(),
 		InitialPassword: cfg.Password, AllowedHosts: cfg.AllowedHosts,
 	})
 	if err != nil {
@@ -329,15 +334,9 @@ func (a *App) Run(ctx context.Context) error {
 	go func() { dispatchDone <- a.dispatcher.Run(runCtx) }()
 	serverDone := make(chan error, 1)
 	go func() {
-		var serveErr error
-		if a.config.HTTPS() {
-			serveErr = a.server.ServeTLS(listener, a.config.TLSCertFile, a.config.TLSKeyFile)
-		} else {
-			serveErr = a.server.Serve(listener)
-		}
-		serverDone <- serveErr
+		serverDone <- a.server.Serve(listener)
 	}()
-	a.logger.Info("workbench started", "address", a.config.ListenAddress, "authMode", a.config.AuthMode, "https", a.config.HTTPS())
+	a.logger.Info("workbench started", "address", a.config.ListenAddress, "authMode", a.config.AuthMode, "publicURL", a.config.PublicURL)
 
 	select {
 	case <-ctx.Done():

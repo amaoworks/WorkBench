@@ -1,6 +1,6 @@
 # 配置与运行
 
-配置入口是 [cmd/workbench/main.go](../cmd/workbench/main.go)、[app/config.go](../internal/app/config.go) 和 [app/settings.go](../internal/app/settings.go)。部署参数在启动时读取；业务开关、AI、外观和总览布局保存到当前工作空间。
+配置入口是 [cmd/workbench/main.go](../cmd/workbench/main.go)、[app/config.go](../internal/app/config.go) 和 [app/settings.go](../internal/app/settings.go)。应用仅监听 HTTP，HTTPS 由反向代理提供。二进制安装、Compose、systemd、代理配置和 Actions 发布见[部署与发布](deployment.md)。部署参数在启动时读取；业务开关、AI、外观和总览布局保存到当前工作空间。
 
 ## 构建和本地运行
 
@@ -23,32 +23,37 @@ Go 版本以 [go.mod](../go.mod) 为准，当前为 1.27.1。前端使用 Node.j
 
 ## 启动参数和环境变量
 
-| 配置 | 默认值 / 行为 |
-|---|---|
-| `-listen` | `127.0.0.1:8080` |
-| `-data` | 用户目录下的 `.workbench/data.db` |
-| `-auth` | `local`；可选 `password` |
-| `-tls-cert`、`-tls-key` | 成对提供证书和私钥文件 |
-| `-allowed-host` | 可重复指定允许的 HTTP Host，例如 `workbench.lan:8443` |
-| `WORKBENCH_ALLOWED_HOSTS` | 逗号分隔的 Host；存在 `-allowed-host` 时不使用此环境变量 |
-| `WORKBENCH_PASSWORD` | 仅在密码模式尚无凭据时用于初始化 |
-| `OPENAI_API_KEY` | 尚未保存 AI 页面配置时的初始密钥；非空时初始启用 AI |
-| `OPENAI_BASE_URL` | 初始 AI 端点；未设置时为 `https://api.openai.com/v1` |
-| `OPENAI_MODEL` | 初始模型；代码默认值为 `gpt-5.2` |
+优先级为命令行参数 → 非空环境变量 → 默认值。程序不自动读取 `.env` 或配置文件；Compose 读取 `.env` 后传入容器，systemd 通过 `EnvironmentFile` 注入环境。
 
-AI 默认值描述本项目配置，不代表模型选型建议。AI 保存后，数据库中的整套设置优先于上述环境变量。应用没有配置文件加载入口，也没有数据路径或监听端口的环境变量入口。
+| 参数 | 环境变量 | 默认值 / 行为 |
+|---|---|---|
+| `-listen` | `WORKBENCH_LISTEN` | `127.0.0.1:8080`，始终为 HTTP |
+| `-data` | `WORKBENCH_DATA` | 用户目录下的 `.workbench/data.db` |
+| `-auth` | `WORKBENCH_AUTH` | `local`；可选 `password` |
+| `-public-url` | `WORKBENCH_PUBLIC_URL` | 空；反代部署填写完整 HTTPS 来源，例如 `https://workbench.example.com`，可带端口、不可带子路径 |
+| `-allowed-host` | `WORKBENCH_ALLOWED_HOSTS` | 参数可重复，环境变量用逗号分隔；存在参数时替代环境列表 |
+| — | `WORKBENCH_PASSWORD` | 仅在密码模式尚无凭据时用于初始化 |
+| — | `OPENAI_API_KEY` | 尚未保存 AI 页面配置时的初始密钥；非空时初始启用 AI |
+| — | `OPENAI_BASE_URL` | 初始 AI 端点；未设置时为 `https://api.openai.com/v1` |
+| — | `OPENAI_MODEL` | 初始模型；代码默认值为 `gpt-5.2` |
+| `-version` | — | 输出版本、提交号和构建时间后退出 |
+| `-healthcheck` | — | 按当前监听和 Host 配置检查运行中的 HTTP 服务；不打开数据库、不启动服务 |
 
-`local` 仅接受 loopback 监听地址。非 loopback 使用 `password` 并提供 TLS，例如初始化凭据后运行：
+AI 默认值描述本项目配置，不代表模型选型建议。AI 保存后，数据库中的整套设置优先于上述环境变量。启动配置不覆盖工作空间里已经保存的业务设置。
+
+`local` 仅接受 loopback 监听，适用于本机试用。配置 `public-url` 必须使用 `password`；密码模式非 loopback 监听必须配置 HTTPS 外部地址。二进制服务器部署通常仍监听 loopback，容器内监听 `0.0.0.0:8080` 并通过宿主机 loopback 端口映射或专用 Docker 网络接入代理。
 
 ```bash
-./workbench -auth password -listen 0.0.0.0:8443 \
-  -tls-cert /path/to/cert.pem -tls-key /path/to/key.pem \
-  -allowed-host workbench.lan:8443
+WORKBENCH_PASSWORD='替换为独立的强密码' ./workbench \
+  -auth password -listen 127.0.0.1:8080 \
+  -public-url https://workbench.example.com
 ```
 
-Host 校验使用请求实际发送的 `host[:port]`。未明确配置时，默认允许监听地址；loopback 监听还允许同端口的 localhost、127.0.0.1 和 ::1。使用域名或通配监听时明确列出浏览器访问的 Host。
+外部地址的 Host 自动加入允许列表，显式配置的 `allowed-host` 可添加其他 Host。未配置外部地址及列表时，默认允许监听地址；loopback 监听还允许同端口的 localhost、127.0.0.1 和 ::1。Host 校验使用请求实际发送的 `host[:port]`，因此代理必须保留原始 Host。
 
-应用依据自身 TLS 配置判断 HTTPS，不通过代理转发头改变认证模式或 Cookie 安全属性。反向代理必须保留正确 Host；流式聊天和通知 SSE 需要关闭响应缓冲。
+Session 和 CSRF Cookie 的 Secure 属性、CSRF 的 HTTPS 来源判断均依据固定外部地址。应用不信任 `Forwarded`、`X-Forwarded-Proto` 或 `X-Forwarded-Host`，不根据请求头改变认证和来源配置。代理需支持 WebSocket，并关闭流式聊天和通知 SSE 的响应缓冲；完整配置见[部署与发布](deployment.md#反向代理)。
+
+旧的 `-tls-cert` 和 `-tls-key` 参数已移除；已有部署应把证书配置迁移至反向代理，并改用 `-public-url`。在设置的「数据与运行」查看监听地址、数据库路径、认证模式、外部访问地址和允许访问的 Host。
 
 ## 设置页面
 
@@ -73,7 +78,7 @@ npm run dev
 
 Vite 将 `/api`、`/health`、`/oauth/schwab`、`/investment/terminal` 和 `/charting_library` 代理到 `http://127.0.0.1:8080`。浏览器通过 Vite 访问时，后端也会校验浏览器的 Host，因此启动后端时应允许 Vite 实际使用的地址，例如 `-allowed-host localhost:5173 -allowed-host 127.0.0.1:8080`；端口变化时相应调整。前后端联调保持 Origin 与代理保留的 Host 一致。
 
-Schwab OAuth 回调必须使用实际可访问工作台的 HTTPS 入口，例如 `https://workbench.example.com/oauth/schwab`（替换为实际域名和端口），并在工作台和 Schwab Developer Portal 登记相同的完整 URL。默认 HTTP 后端或 Vite 开发地址不能直接用作此回调；先配置 TLS 或 HTTPS 反向代理，并让 `/oauth/schwab` 转发到工作台回调处理器。建议从同一个 HTTPS 入口打开工作台并开始登录。部署在服务器时，`127.0.0.1` 指向用户浏览器所在机器，不能代替服务器地址。
+Schwab OAuth 回调必须使用实际可访问工作台的 HTTPS 入口，例如 `https://workbench.example.com/oauth/schwab`（替换为实际域名和端口），并在工作台和 Schwab Developer Portal 登记相同的完整 URL。默认 HTTP 后端或 Vite 开发地址不能直接用作此回调；先配置 HTTPS 反向代理和 `WORKBENCH_PUBLIC_URL`，并让 `/oauth/schwab` 转发到工作台回调处理器。建议从同一个 HTTPS 入口打开工作台并开始登录。部署在服务器时，`127.0.0.1` 指向用户浏览器所在机器，不能代替服务器地址。
 
 在 Schwab 的账户关联确认页点击 Done 后，浏览器应进入工作台的 `/oauth/schwab`；成功后自动返回 `/investment`。如果点击后仍停留在 Schwab 域名，先核对上述两个回调配置和授权请求的 `redirect_uri`。如果进入工作台后出现 code/state 或换取令牌错误，按回调页面的具体错误排查。诊断时只分享域名和路径，不分享授权 code、state、密钥或令牌。
 
@@ -87,4 +92,4 @@ Schwab OAuth 回调必须使用实际可访问工作台的 HTTPS 入口，例如
 
 数据库及备份含凭据和业务内容，应用创建数据库目录时使用 0700，数据库和完成的备份文件设为 0600。文件布局、迁移表和维护行为见[数据设计](data-model.md)。
 
-健康检查为 `GET /health/live` 和 `GET /health/ready`，后者检查数据库连接。应用以 JSON 日志输出到 stderr，HTTP 日志包含请求 ID、方法、路径、状态、字节数和耗时。
+健康检查为 `GET /health/live` 和 `GET /health/ready`，后者检查数据库连接；无需登录，但仍校验 Host。`workbench -healthcheck` 自动使用配置的外部 Host 或允许列表，通过 HTTP 探测运行中的服务。应用以 JSON 日志输出到 stderr，HTTP 日志包含请求 ID、方法、路径、状态、字节数和耗时。

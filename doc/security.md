@@ -1,15 +1,17 @@
 # 当前安全边界
 
-本文根据 [auth](../internal/foundation/auth/auth.go)、[密码变更](../internal/foundation/auth/change_password.go)、[设置](../internal/app/settings.go)、[数据库](../internal/foundation/database/database.go) 和 [AI runtime](../internal/capabilities/ai/runtime.go) 描述实际行为。部署步骤见[配置与运行](configuration.md)。
+本文根据 [auth](../internal/foundation/auth/auth.go)、[密码变更](../internal/foundation/auth/change_password.go)、[设置](../internal/app/settings.go)、[数据库](../internal/foundation/database/database.go) 和 [AI runtime](../internal/capabilities/ai/runtime.go) 描述实际行为。部署步骤见[部署与发布](deployment.md)，参数见[配置与运行](configuration.md)。
 
 ## 认证和浏览器请求
 
 - local 模式仅允许 loopback 监听，免登录但保留 Host、Origin、CSRF 校验。
-- password 模式持久化密码哈希；非 loopback 监听要求应用自身配置 TLS。
+- 应用仅提供 HTTP。password 模式持久化密码哈希；反代部署显式配置 HTTPS 外部地址，非 loopback 密码监听必须提供该地址。配置外部地址时禁止 local 免登录模式。
 - 密码使用 Argon2id；新密码至少 8 个 Unicode 字符，且大小写、数字、特殊符号四类中至少包含三类。
-- Session 保存在 SQLite，Cookie 使用 HttpOnly、SameSite=Strict；应用启用 TLS 时使用 Secure。会话最长 7 天，空闲期限 24 小时，数据库保存哈希后的会话 token。
+- Session 保存在 SQLite，Cookie 使用 HttpOnly、SameSite=Strict；配置 HTTPS 外部地址时使用 Secure。会话最长 7 天，空闲期限 24 小时，数据库保存哈希后的会话 token。
 - 登录更新会话 token。密码变更检查当前密码，在事务中更新凭据版本并删除会话；受保护请求再次检查版本，旧登录失效。
-- Host 必须匹配允许列表。写请求提供 Origin 时校验同源，应用启用 TLS 时要求 HTTPS Origin；写请求另由 CSRF token 保护。
+- Host 必须匹配允许列表。写请求提供 Origin 时校验同源，配置 HTTPS 外部地址时要求 HTTPS Origin；写请求另由 CSRF token 保护。
+
+应用以固定的 `WORKBENCH_PUBLIC_URL` 确定浏览器来源，Host 自动加入允许列表。CSRF 中间件按该配置判断外部 HTTPS，不依赖后端 TLS 状态或客户端可伪造的 `Forwarded` / `X-Forwarded-*`。应用的 HTTP 端口仅供本机代理或专用容器网络访问：二进制默认监听 loopback，Compose 默认只向宿主机 `127.0.0.1` 发布端口。代理保留原始 Host，并提供实际的 HTTPS 入口。
 
 ## 凭据和数据
 

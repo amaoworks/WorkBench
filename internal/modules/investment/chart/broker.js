@@ -16,6 +16,9 @@ const ORDER_COLUMNS = [
     { label: 'avgPrice', id: 'avgPrice', dataFields: ['avgPrice', 'currency'], formatter: 'formatPriceInCurrency' },
 ];
 const byRecent = (a, b) => (b.updateTime || 0) - (a.updateTime || 0);
+// A missing broker timestamp falls back to Date.now() in mapOrder. It is not
+// itself an order change and must not turn every poll into an update event.
+const orderSignature = order => JSON.stringify({ ...order, updateTime: undefined });
 
 function accountLabel(accountNumber) {
     const digits = String(accountNumber).replace(/\D/g, '');
@@ -34,6 +37,7 @@ export default class Broker {
         this._orders = new Map();
         this._rawOrders = new Map();
         this._ordersSnapshot = undefined;
+        this._orderSignatures = undefined;
         this._controller = new AbortController();
         this._onActivity = () => this._scheduleRefresh();
         this._onReady = () => { this._ready = this._init(); };
@@ -59,6 +63,7 @@ export default class Broker {
         this._orders.clear();
         this._rawOrders.clear();
         this._ordersSnapshot = undefined;
+        this._orderSignatures = undefined;
     }
     async _init() {
         const preferredAccount = this._account;
@@ -170,19 +175,27 @@ export default class Broker {
     }
     _scheduleRefresh() {
         if (this._refreshTimer || !this._account || this._destroyed) return;
-        this._refreshTimer = setTimeout(async () => {
+        this._refreshTimer = setTimeout(() => {
             this._refreshTimer = undefined;
-            const epoch = this._epoch;
-            try {
-                // Account activity is an invalidation signal. REST is the source of truth,
-                // including fills and events with no identifiable account in their payload.
-                this._ordersSnapshot = undefined;
-                const [orders, positions] = await Promise.all([this._loadOrders(), this.positions()]);
-                if (epoch !== this._epoch) return;
-                orders.forEach(order => this.host.orderUpdate(order));
-                positions.forEach(position => this.host.positionUpdate?.(position));
-            } catch (error) { if (epoch === this._epoch) this._notify(error); }
+            void this._refresh();
         }, 200);
+    }
+    async _refresh() {
+        const epoch = this._epoch;
+        try {
+            // Account activity is an invalidation signal. REST is the source of truth,
+            // including fills and events with no identifiable account in their payload.
+            this._ordersSnapshot = undefined;
+            const [orders, positions] = await Promise.all([this._loadOrders(), this.positions()]);
+            if (epoch !== this._epoch) return;
+            for (const order of orders) {
+                const signature = orderSignature(order);
+                if (this._orderSignatures.get(order.id) === signature) continue;
+                this._orderSignatures.set(order.id, signature);
+                this.host.orderUpdate(order);
+            }
+            positions.forEach(position => this.host.positionUpdate?.(position));
+        } catch (error) { if (epoch === this._epoch) this._notify(error); }
     }
     connectionStatus() { return this._connectionStatus; }
     currentAccount() { return this._account; }
@@ -232,6 +245,9 @@ export default class Broker {
         const mapped = [...all.values()].filter(o => o.orderLegCollection?.length).map(mapOrder).sort(byRecent);
         this._rawOrders = all;
         this._orders = new Map(mapped.map(order => [order.id, order]));
+        // Initial data is returned through orders()/ordersHistory(). Replaying
+        // it through orderUpdate would announce old fills/cancellations again.
+        this._orderSignatures ??= new Map(mapped.map(order => [order.id, orderSignature(order)]));
         this._ordersSnapshot = { epoch: context.epoch, mapped };
         return mapped;
     }
@@ -257,6 +273,7 @@ export default class Broker {
         const order = mapOrder(raw);
         this._rawOrders.set(order.id, raw);
         this._orders.set(order.id, order);
+        this._orderSignatures?.set(order.id, orderSignature(order));
         this.host.orderUpdate(order);
     }
     async placeOrder(order) {

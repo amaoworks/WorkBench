@@ -1,0 +1,26 @@
+[Unit]
+Description=Workbench personal workspace
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=workbench
+Group=workbench
+Environment=HOME=/var/lib/workbench
+EnvironmentFile=/etc/workbench/workbench.env
+ExecStart=/usr/local/bin/workbench
+WorkingDirectory=/var/lib/workbench
+StateDirectory=workbench
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

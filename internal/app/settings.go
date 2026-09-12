@@ -75,7 +75,7 @@ func (a *App) getSettings(w http.ResponseWriter, r *http.Request) {
 	httpapi.Write(w, 200, map[string]any{
 		"ai":         map[string]any{"enabled": a.aiSettings.Enabled, "baseUrl": a.aiSettings.BaseURL, "model": a.aiSettings.Model, "hasApiKey": a.aiSettings.APIKey != ""},
 		"appearance": a.appearance,
-		"deployment": map[string]any{"listenAddress": a.config.ListenAddress, "dataPath": a.config.DataPath, "authMode": a.config.AuthMode, "tls": a.config.HTTPS(), "allowedHosts": a.config.AllowedHosts},
+		"deployment": map[string]any{"listenAddress": a.config.ListenAddress, "dataPath": a.config.DataPath, "authMode": a.config.AuthMode, "publicUrl": a.config.PublicURL, "allowedHosts": a.config.AllowedHosts},
 	})
 }
 

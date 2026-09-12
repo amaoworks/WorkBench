@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -14,8 +15,7 @@ type Config struct {
 	DataPath      string
 	AuthMode      auth.Mode
 	Password      string
-	TLSCertFile   string
-	TLSKeyFile    string
+	PublicURL     string
 	AllowedHosts  []string
 	OpenAIAPIKey  string
 	OpenAIBaseURL string
@@ -37,16 +37,24 @@ func DefaultConfig() (Config, error) {
 	}, nil
 }
 
-func (c Config) HTTPS() bool {
-	return c.TLSCertFile != "" && c.TLSKeyFile != ""
+// PublicHTTPS describes the browser-facing origin, never the HTTP listener.
+func (c Config) PublicHTTPS() bool {
+	return c.PublicURL != ""
 }
 
 func (c Config) Validate() error {
 	if c.ListenAddress == "" || c.DataPath == "" {
 		return errors.New("listen address and data path are required")
 	}
-	if (c.TLSCertFile == "") != (c.TLSKeyFile == "") {
-		return errors.New("TLS certificate and key must be configured together")
+	if c.PublicURL != "" {
+		u, err := url.Parse(c.PublicURL)
+		if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil ||
+			(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawFragment != "" {
+			return errors.New("public URL must be an HTTPS origin, for example https://workbench.example.com (no subpath, credentials, query or fragment)")
+		}
+		if c.AuthMode != auth.ModePassword {
+			return errors.New("public URL requires password authentication")
+		}
 	}
 	if c.ShutdownGrace <= 0 {
 		return errors.New("shutdown grace period must be positive")

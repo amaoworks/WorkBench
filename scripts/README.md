@@ -22,7 +22,22 @@ SQLC_BIN=/path/to/sqlc ./scripts/test.sh
 
 ## 构建
 
-`./scripts/build.sh` 从锁文件安装前端依赖，构建前端，再输出根目录 `workbench` 可执行文件。仅重新编译已有产物时可使用 `go build -o workbench ./cmd/workbench`。部署、工作空间和备份操作见[配置与运行](../doc/configuration.md)。
+`./scripts/build.sh` 从锁文件安装前端依赖，构建前端，再通过 `compile.sh` 输出根目录 `workbench` 静态可执行文件。`compile.sh` 支持 `OUTPUT`、`GOOS`、`GOARCH`、`VERSION`、`COMMIT`、`BUILD_DATE`，并强制禁用 CGO；时区数据由程序内嵌。仅重新编译已有产物时可使用 `go build -o workbench ./cmd/workbench`。部署、工作空间和备份操作见[配置与运行](../doc/configuration.md)。
+
+## 发布和部署验证
+
+`VERSION=v1.0.0 ./scripts/release.sh` 重新构建前端并生成 Linux amd64、arm64 压缩包、部署文件包及 SHA256 校验文件，输出到 `dist/release/v1.0.0/`。版本号需符合 `vMAJOR.MINOR.PATCH`，可带预发布后缀。Actions 的版本、权限、产物和部署步骤见[部署与发布](../doc/deployment.md)。
+
+`deployment-smoke.py` 仅依赖 Python 3 标准库，使用随机端口、临时密码和独立工作空间，验证首次初始化、登录、健康探针、在线备份、退出，以及重建后的数据和凭据保留。容器模式还检查非 root 用户和只读根文件系统；测试结束清理自己的 Compose 项目和临时卷。
+
+```bash
+./scripts/build.sh
+python3 scripts/deployment-smoke.py --binary ./workbench
+docker build -t workbench:smoke .
+python3 scripts/deployment-smoke.py --image workbench:smoke
+```
+
+`internal/app/proxy_test.go` 使用真实的本机 HTTPS 代理转发到 HTTP 后端，检查 Secure Cookie、登录、来源与 Host 拒绝、CSRF、SSE 和代理头伪造。普通 Go 测试会执行此项。浏览器 OAuth 回归见下文；全部服务使用临时数据和模拟凭据。
 
 ## 浏览器回归
 
@@ -77,7 +92,7 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 
 ### 投资账户管理器
 
-`investment-terminal.e2e.cjs` 在 Chromium 中加载仓库内的终端代码和实际 TradingView 库，验证账户初始化、持仓与订单渲染、订单标的跳转、账户切换及断线重连；打开原生下单面板，检查有效期/交易时段的名称、可选值及已有订单的回填，并检查浏览器异常。Schwab HTTP 和 WebSocket 请求全部使用虚构响应，无需启动工作台、配置凭据或提交交易。
+`investment-terminal.e2e.cjs` 在 Chromium 中加载仓库内的终端代码和实际 TradingView 库，验证账户初始化、持仓与订单渲染、订单标的跳转、账户切换及断线重连；打开原生下单面板，检查有效期/交易时段的名称、可选值及已有订单的回填；验证首次加载和刷新不重播历史订单通知，新的成交仍推送一次。Schwab HTTP 和 WebSocket 请求全部使用虚构响应，无需启动工作台、配置凭据或提交交易。
 
 ```bash
 PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
@@ -87,9 +102,20 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 
 脚本需要访问 TradingView 静态资源站，带内容哈希的库文件缓存在系统临时目录 `workbench-tv-test-cache/`。截图写入 `/tmp/workbench-investment-account-manager.png` 和 `/tmp/workbench-investment-order-ticket.png`。终端 JS 通过 Go embed 编入程序；修改后需重新编译并启动工作台进程，再刷新浏览器。
 
+`investment-page.e2e.cjs` 自行启动使用临时数据库的工作台，模拟已连接的 Schwab 设置并嵌入带状态标记的测试终端。它验证页面铺满/恢复、浏览器全屏/退出、新窗口、手机尺寸和全屏失败后的恢复，并确认显示模式切换不重建图表。使用端口 18138，无需券商凭据；截图写入 `/tmp/workbench-investment-expanded-mobile.png`。
+
+```bash
+go build -o /tmp/workbench-investment-page-test ./cmd/workbench
+PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
+  CHROMIUM_PATH=/usr/bin/chromium \
+  node scripts/investment-page.e2e.cjs
+```
+
+运行前需按上文构建最新前端；`WORKBENCH_BIN` 可指定其他测试程序路径。
+
 ### Schwab 跨站 OAuth 返回
 
-`TestSchwabOAuthBrowser` 启动临时 HTTPS 工作台和不同站点的模拟 Schwab，调用 `schwab-oauth.e2e.cjs` 验证点击 Done、服务端换取令牌、自动返回投资，以及 Strict 会话 Cookie 恢复。它使用真实认证和回调处理器，工作台页面为最小测试页面，不访问真实券商。普通 Go 测试默认跳过此项，显式运行：
+`TestSchwabOAuthBrowser` 启动临时 HTTPS 反向代理、HTTP 工作台后端和不同站点的模拟 Schwab，调用 `schwab-oauth.e2e.cjs` 验证点击 Done、服务端换取令牌、自动返回投资，以及 Strict 会话 Cookie 恢复。它使用真实认证和回调处理器，工作台页面为最小测试页面，不访问真实券商。普通 Go 测试默认跳过此项，显式运行：
 
 ```bash
 WORKBENCH_BROWSER_TEST=1 \

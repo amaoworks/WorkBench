@@ -1,0 +1,6 @@
+# Run Caddy on the host; replace the domain with WORKBENCH_PUBLIC_URL's host.
+workbench.example.com {
+    reverse_proxy 127.0.0.1:8080 {
+        flush_interval -1
+    }
+}

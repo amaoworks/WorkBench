@@ -11,4 +11,8 @@ web/dist/
 
 coverage.out
 /workbench
+/dist/
+/.env
+/.env.*
+!/.env.example
 web/node_modules/.tmp/

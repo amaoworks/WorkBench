@@ -16,6 +16,11 @@ const order = {
   quantity: 2, price: 101, status: "WORKING", enteredTime: new Date().toISOString(),
   orderLegCollection: [{ instruction: "BUY", quantity: 2, instrument: { symbol: "MSFT", assetType: "EQUITY" } }]
 };
+let liveOrder = order;
+const history = [
+  { ...order, orderId: 40, status: "FILLED", filledQuantity: 2 },
+  { ...order, orderId: 41, status: "CANCELED" },
+];
 
 (async () => {
   await mkdir(cache, { recursive: true });
@@ -56,7 +61,7 @@ const order = {
             // Capture references in the test document only; constructor timing and
             // all host callbacks still run through the actual TradingView library.
             assert(body.includes("broker = new Broker(host); return broker;"));
-            body = body.replace("broker = new Broker(host); return broker;", "window.__host = host; broker = new Broker(host); window.__broker = broker; return broker;");
+            body = body.replace("broker = new Broker(host); return broker;", "window.__host = host; window.__orderUpdates = []; const update = host.orderUpdate.bind(host); host.orderUpdate = order => { window.__orderUpdates.push(order); update(order); }; broker = new Broker(host); window.__broker = broker; return broker;");
             assert(body.includes("widget.chartReady().then(function () {});"));
             body = body.replace("widget.chartReady().then(function () {});", "window.__widget = widget;");
           }
@@ -78,7 +83,7 @@ const order = {
           const first = path.endsWith("/A");
           return await route.fulfill({ json: { securitiesAccount: { positions: [{ instrument: { symbol: first ? "AAPL" : "MSFT" }, longQuantity: first ? 7 : 0, shortQuantity: first ? 0 : 3, averagePrice: 123 }] } } });
         }
-        if (path.endsWith("/orders")) return await route.fulfill({ json: path.includes("/A/") ? [order] : [] });
+        if (path.endsWith("/orders")) return await route.fulfill({ json: path.includes("/A/") ? [liveOrder, ...history] : [] });
         if (path.endsWith("/transactions")) return await route.fulfill({ json: [] });
         if (path.endsWith("/instruments")) return await route.fulfill({ json: { instruments: [{ symbol: "AAPL", description: "Apple", assetType: "EQUITY", exchange: "NASDAQ" }] } });
         if (path.endsWith("/pricehistory")) {
@@ -103,6 +108,8 @@ const order = {
     const chart = page.frames().find(frame => frame !== page.mainFrame());
     assert(chart, "TradingView chart iframe missing");
     await chart.getByRole("row").filter({ hasText: "AAPL" }).waitFor();
+    await page.evaluate(() => window.__broker._refresh());
+    assert.deepEqual(await page.evaluate(() => window.__orderUpdates), [], "initial history must not generate order notifications");
     assert.match(await chart.getByRole("row").filter({ hasText: "AAPL" }).innerText(), /7/);
     await chart.getByRole("tab", { name: /^订单(?:\s|$)/ }).click();
     const orderRow = chart.getByRole("row").filter({ hasText: "MSFT" });
@@ -112,6 +119,8 @@ const order = {
     await chart.getByRole("tab", { name: /^持仓/ }).click();
     await page.evaluate(() => window.__broker.setCurrentAccount("B"));
     await chart.getByRole("row").filter({ hasText: "MSFT" }).waitFor();
+    await page.evaluate(() => window.__broker._refresh());
+    assert.deepEqual(await page.evaluate(() => window.__orderUpdates), [], "switching accounts must not replay order notifications");
     assert.equal(await chart.getByRole("row").filter({ hasText: "AAPL" }).count(), 0);
     assert.match(await chart.getByRole("row").filter({ hasText: "MSFT" }).innerText(), /3/);
     const before = calls.filter(call => call.path.endsWith("/accountNumbers")).length;
@@ -155,7 +164,19 @@ const order = {
     assert.equal(await session.inputValue(), "延长时段(7:00-20:00 ET)");
     assert.deepEqual(errors, []);
     await page.screenshot({ path: join(tmpdir(), "workbench-investment-order-ticket.png"), fullPage: true, animations: "disabled" });
-    console.log("PASS: actual TradingView account manager, account switch/reconnect, order ticket labels/options and existing order session; no browser errors or trades.");
+    await chart.getByRole("button", { name: "关闭按钮", exact: true }).click();
+    liveOrder = { ...order, status: "FILLED", filledQuantity: 2 };
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent("ACCT_ACTIVITY", { detail: { content: [{}] } })));
+    await page.waitForFunction(() => window.__orderUpdates.some(order => order.id === "42" && order.status === 2));
+    await page.evaluate(() => window.__broker._refresh());
+    assert.deepEqual(await page.evaluate(() => window.__orderUpdates.map(order => [order.id, order.status])), [["42", 2]], "a new fill must be announced exactly once");
+    await page.reload();
+    await page.waitForFunction(() => window.__broker?.connectionStatus() === 1);
+    await page.evaluate(async () => { await window.__widget.chartReady(); await window.__broker._refresh(); });
+    assert.equal(await page.evaluate(async () => (await window.__broker.ordersHistory()).length), 3);
+    assert.deepEqual(await page.evaluate(() => window.__orderUpdates), [], "reloading must not replay previous fills");
+    assert.deepEqual(errors, []);
+    console.log("PASS: actual TradingView account manager, account switch/reconnect, order ticket, history without replay and live fill notification; no browser errors or trades.");
   } finally {
     await browser.close();
   }

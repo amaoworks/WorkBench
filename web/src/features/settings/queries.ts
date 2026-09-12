@@ -6,7 +6,7 @@ export type AISettings = { enabled: boolean; model: string; baseUrl: string; has
 export type Settings = {
   ai: AISettings;
   appearance: Appearance;
-  deployment: { listenAddress: string; dataPath: string; authMode: "local" | "password"; tls: boolean; allowedHosts: string[] | null };
+  deployment: { listenAddress: string; dataPath: string; authMode: "local" | "password"; publicUrl: string; allowedHosts: string[] | null };
 };
 export function useSettings() {
   return useQuery({ queryKey: ["settings"], queryFn: () => api<Settings>("/api/settings") });

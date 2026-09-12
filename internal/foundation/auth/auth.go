@@ -62,7 +62,7 @@ func New(ctx context.Context, db *sql.DB, cfg Config) (*Service, error) {
 		}
 	case ModePassword:
 		if !loopback && !cfg.PublicHTTPS {
-			return nil, errors.New("password mode on a non-loopback address requires HTTPS")
+			return nil, errors.New("password mode on a non-loopback address requires an HTTPS public URL behind a reverse proxy")
 		}
 	default:
 		return nil, fmt.Errorf("unsupported auth mode %q", cfg.Mode)
@@ -229,6 +229,9 @@ func (s *Service) CSRFTokenHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) Security(next http.Handler) http.Handler {
 	csrf := nosurf.New(next)
+	// HTTPS terminates at the reverse proxy. Use the configured public origin,
+	// never client-controlled Forwarded/X-Forwarded-* headers or the backend TLS state.
+	csrf.SetIsTLSFunc(func(_ *http.Request) bool { return s.publicHTTPS })
 	csrf.SetBaseCookie(http.Cookie{
 		Name: "workbench_csrf", Path: "/", HttpOnly: true,
 		SameSite: http.SameSiteStrictMode, Secure: s.publicHTTPS,

@@ -224,7 +224,10 @@ test('switching accounts discards late responses and clears the previous cache',
 
 test('fill events refresh REST quantities and prices without parsing undocumented event numbers', async t => {
     const filled = { ...rawOrder, status: 'FILLED', filledQuantity: 10, orderActivityCollection: [{ executionLegs: [{ quantity: 4, price: 100 }, { quantity: 6, price: 110 }] }] };
-    const { events, updates } = await setup(t, path => path.includes('/orders?') ? json([filled]) : undefined);
+    let current = rawOrder;
+    const { broker, events, updates } = await setup(t, path => path.includes('/orders?') ? json([current]) : undefined);
+    await broker.orders();
+    current = filled;
     events.dispatchEvent(new CustomEvent('ACCT_ACTIVITY', { detail: { content: [{ '2': 'OrderFillCompleted', '3': JSON.stringify({ SchwabOrderID: 42 }) }] } }));
     await until(() => updates.length > 0);
     assert.equal(updates[0].status, 2);
@@ -233,12 +236,67 @@ test('fill events refresh REST quantities and prices without parsing undocumente
 });
 
 test('an old-account event cannot inject its order into a newly selected account', async t => {
-    const { broker, events, updates, calls } = await setup(t, path => path.startsWith('/trader/v1/accounts/B/orders?') ? json([{ ...rawOrder, orderId: 99 }]) : undefined);
+    let current = [];
+    const { broker, events, updates, calls } = await setup(t, path => path.startsWith('/trader/v1/accounts/B/orders?') ? json(current) : undefined);
     broker.setCurrentAccount('B');
+    await broker.orders();
+    current = [{ ...rawOrder, orderId: 99 }];
     events.dispatchEvent(new CustomEvent('ACCT_ACTIVITY', { detail: { content: [{ '1': '111', '2': 'OrderCreated', '3': { SchwabOrderID: 42 } }] } }));
     await until(() => updates.length > 0);
     assert.deepEqual(updates.map(o => o.id), ['99']);
     assert.ok(!calls.some(call => call.path.startsWith('/trader/v1/accounts/A/orders?')));
+});
+
+test('initial history, polling, account switches and reconnects do not replay order notifications', async t => {
+    const history = ['FILLED', 'CANCELED', 'REJECTED'].map((status, index) => ({ ...rawOrder, orderId: index + 1, status }));
+    const { broker, updates, events, errors } = await setup(t, path => path.includes('/orders?') ? json([rawOrder, ...history]) : undefined);
+    await broker._refresh();
+    assert.deepEqual((await broker.orders()).map(order => order.id), ['42']);
+    assert.equal((await broker.ordersHistory()).length, 3);
+    await broker._refresh();
+    broker.setCurrentAccount('B');
+    await broker._refresh();
+    events.dispatchEvent(new Event('SCHWAB_STREAM_READY'));
+    await broker._ready;
+    await broker._refresh();
+    assert.deepEqual(updates, []);
+    assert.deepEqual(errors, []);
+});
+
+test('new orders, partial fills, price changes and cancellations still publish once', async t => {
+    let current = [{ ...rawOrder, enteredTime: undefined }];
+    const { broker, updates, errors } = await setup(t, path => path.includes('/orders?') ? json(current) : undefined);
+    // Initial library reads and polling share the same notification baseline.
+    await broker.ordersHistory();
+    await broker._refresh();
+    assert.equal(updates.length, 0, 'a generated timestamp is not a change');
+    current = [...current, { ...rawOrder, orderId: 43 }];
+    await broker._refresh();
+    current[1] = { ...current[1], filledQuantity: 3 };
+    await broker._refresh();
+    current[1] = { ...current[1], price: 102 };
+    await broker._refresh();
+    current[1] = { ...current[1], status: 'CANCELED' };
+    await broker._refresh();
+    await broker._refresh();
+    assert.deepEqual(updates.map(order => [order.id, order.status, order.filledQty, order.limitPrice]), [
+        ['43', 6, 0, 100], ['43', 6, 3, 100], ['43', 6, 3, 102], ['43', 1, 3, 102],
+    ]);
+    assert.deepEqual(errors, []);
+});
+
+test('REST readback after a trade is not announced again by the next poll', async t => {
+    const canceled = { ...rawOrder, status: 'CANCELED' };
+    let current = rawOrder;
+    const { broker, updates } = await setup(t, (path, init) => {
+        if (init.method === 'DELETE') { current = canceled; return new Response(null, { status: 204 }); }
+        if (path.includes('/orders?') || path.endsWith('/orders/42')) return json(path.includes('?') ? [current] : current);
+    });
+    await broker.orders();
+    await broker.cancelOrder('42');
+    await broker._refresh();
+    assert.equal(updates.length, 1);
+    assert.equal(updates[0].status, 1);
 });
 
 test('stream reconnection reloads linked accounts after OAuth identity changes', async t => {

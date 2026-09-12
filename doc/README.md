@@ -10,6 +10,7 @@
 | [业务开发指南](business-development.md) | 模块结构、后端装配、前端注册、能力接入与验证 |
 | [接口与契约](contracts.md) | Module、事件、调度、AI、通知、Widget 和 HTTP 入口 |
 | [数据设计](data-model.md) | 表归属、迁移、事务、生成查询、备份与维护 |
+| [部署与发布](deployment.md) | 二进制、Compose、systemd、反向代理、升级与 GitHub Actions |
 | [配置与运行](configuration.md) | 构建、启动参数、设置、开发服务、备份恢复 |
 | [安全边界](security.md) | 当前鉴权、请求保护、凭据和外部服务处理 |
 | [Todo](modules/todo.md) | 待办、分页、提醒、AI Tool 和代码入口 |

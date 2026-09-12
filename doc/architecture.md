@@ -46,7 +46,10 @@ web/src/
   components/ui/               通用界面组件
   shared/                      HTTP 客户端、平台共享 schema、工具
   styles.css                   主题变量与共享样式
-scripts/                       构建、测试与浏览器回归脚本
+deploy/                        systemd、反向代理与 Compose 网络配置
+.github/workflows/             CI 验证与版本标签发布
+Dockerfile / compose.yaml       镜像构建与单实例容器部署
+scripts/                       构建、发布、部署验证与浏览器回归脚本
 doc/                           当前设计和使用开发说明
 sqlc.yaml                      平台和各模块的 SQL 生成配置
 ```
@@ -78,7 +81,7 @@ contracts → 标准库
 
 注册目录先在内存收集并校验，失败时不发布可用目录。模块迁移在注册目录构建前执行，不与全部注册操作组成一个可回滚事务。
 
-`App.Run` 绑定监听地址，启动调度器、事件投递和 HTTP 服务。退出时停止接收请求、关闭投资 WebSocket 和调度，最后关闭数据库并释放锁。
+`App.Run` 绑定 HTTP 监听地址，启动调度器和事件投递。HTTPS 在反向代理处终止，应用以固定外部 URL 配置 Cookie 和来源校验；部署形态与发布流程见[部署与发布](deployment.md)。退出时停止接收请求、关闭投资 WebSocket 和调度，最后关闭数据库并释放锁。
 
 模块代码随程序构建。运行时启停会持久化到数据库，并影响后续模块 HTTP、Job、事件消费者、AI Tool、导航和总览卡片。停用不会删除表、历史数据或布局偏好，也不强制取消已开始的处理。隐藏 Widget 只影响总览展示。
 

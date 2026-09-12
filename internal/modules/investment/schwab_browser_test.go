@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/exec"
@@ -91,7 +92,11 @@ func TestSchwabOAuthBrowser(t *testing.T) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = io.WriteString(w, `<h1>WorkBench</h1><a href="/api/modules/investment/schwab/oauth/login">登录 Schwab</a>`)
 	})
-	server.Config.Handler = service.Security(service.LoadAndSave(mux))
+	// Exercise the deployment topology: HTTPS at the proxy, HTTP at Workbench.
+	backend := httptest.NewServer(service.Security(service.LoadAndSave(mux)))
+	defer backend.Close()
+	target, _ := url.Parse(backend.URL)
+	server.Config.Handler = httputil.NewSingleHostReverseProxy(target)
 	server.StartTLS()
 	defer server.Close()
 
