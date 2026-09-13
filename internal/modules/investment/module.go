@@ -47,6 +47,7 @@ type Module struct {
 	tvProxy    *httputil.ReverseProxy
 	tokenMu    sync.Mutex
 	streamer   *streamer
+	futu       *futuGateway
 	logger     *slog.Logger
 }
 
@@ -74,11 +75,12 @@ func New(deps Dependencies) (*Module, error) {
 	module.tvProxy = newTVProxy(module.tvOrigin)
 	module.tvProxy.ErrorLog = slog.NewLogLogger(deps.Logger.Handler(), slog.LevelError)
 	module.streamer = newStreamer(module)
+	module.futu = newFutuGateway(module)
 	return module, nil
 }
 
 func (m *Module) Manifest() contracts.ModuleManifest {
-	return contracts.ModuleManifest{ID: "investment", Name: "投资", Version: "0.2.0", ContractVersion: 1, Icon: "investment.chart",
+	return contracts.ModuleManifest{ID: "investment", Name: "投资", Version: "0.3.0", ContractVersion: 1, Icon: "investment.chart",
 		Navigation: []contracts.NavigationItem{{Label: "投资", Route: "/investment", PageKey: "investment.overview", Order: 20}}}
 }
 
@@ -97,6 +99,12 @@ func (m *Module) Register(r contracts.ModuleRegistrar) error {
 		r.Handle("GET", "/api/modules/investment/schwab/trader/ws", http.HandlerFunc(m.serveStreamer)),
 		r.Handle("GET", "/api/modules/investment/schwab/marketdata/ws", http.HandlerFunc(m.serveStreamer)),
 		r.Handle("POST", "/api/modules/investment/schwab/marketdata/ws/command", http.HandlerFunc(m.streamerCommand)),
+		r.Handle("GET", "/api/modules/investment/futu", http.HandlerFunc(m.getFutu)),
+		r.Handle("PUT", "/api/modules/investment/futu", http.HandlerFunc(m.saveFutu)),
+		r.Handle("POST", "/api/modules/investment/futu/disconnect", http.HandlerFunc(m.disconnectFutu)),
+		r.Handle("GET", "/api/modules/investment/futu/kline", http.HandlerFunc(m.getFutuKline)),
+		r.Handle("GET", "/api/modules/investment/futu/quote/ws", http.HandlerFunc(m.serveFutuStream)),
+		r.Handle("POST", "/api/modules/investment/futu/quote/ws/command", http.HandlerFunc(m.futuCommand)),
 		r.Widget(contracts.WidgetDefinition{ID: "investment.overview", Module: "investment", SchemaVersion: 1,
 			Title: "投资", WidgetKind: "investment.overview", DataRoute: "/api/modules/investment/schwab", Size: contracts.WidgetMedium, Order: 20}),
 		r.Job(contracts.JobDefinition{ID: "investment.schwab_refresh", Module: "investment", Schedule: contracts.ScheduleSpec{Kind: contracts.ScheduleInterval, Interval: 20 * time.Minute},
@@ -129,7 +137,13 @@ func (m *Module) AssetRoutes() []HTTPRoute {
 }
 
 // ResetStream invalidates existing streams when the module is disabled.
-func (m *Module) ResetStream() { m.streamer.reset() }
+func (m *Module) ResetStream() {
+	m.streamer.reset()
+	m.futu.reset()
+}
 
 // Close releases upgraded connections, which http.Server.Shutdown does not close.
-func (m *Module) Close() { m.streamer.close() }
+func (m *Module) Close() {
+	m.streamer.close()
+	m.futu.close()
+}

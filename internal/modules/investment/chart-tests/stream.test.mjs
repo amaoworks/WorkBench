@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import Datafeed from '../chart/datafeed.js';
 import { SchwabStream } from '../chart/stream.js';
+import { seriesKey } from '../chart/futu.js';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check) { for (let i = 0; i < 100; i++) { if (check()) return; await sleep(10); } assert.fail('condition timed out'); }
@@ -36,7 +37,7 @@ test('bar subscriptions route by symbol and resolution, and stop after unsubscri
     const events = new EventTarget();
     const feed = new Datafeed({ events, stream: { ready: false }, request: async () => new Response('{}') });
     const now = Date.now(), bars = [];
-    feed.latestBars.set('AAPL', new Map([['1', { time: Math.floor(now / 60000) * 60000, open: 100, high: 100, low: 100, close: 100, volume: 1 }]]));
+    feed.latestBars.set(seriesKey('AAPL', 'regular'), new Map([['1', { time: Math.floor(now / 60000) * 60000, open: 100, high: 100, low: 100, close: 100, volume: 1 }]]));
     feed.subscribeBars({ name: 'AAPL' }, '1', bar => bars.push(bar), 'some-random-guid');
     const update = () => events.dispatchEvent(new CustomEvent('LEVELONE_ANY', { detail: { service: 'LEVELONE_EQUITIES', timestamp: now, content: [{ key: 'AAPL', '3': 110, '8': 100 }] } }));
     update();

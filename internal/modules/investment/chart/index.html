@@ -16,22 +16,24 @@
     import Datafeed from "/investment/terminal/datafeed.js";
     import Broker from "/investment/terminal/broker.js";
     import { SchwabStream } from "/investment/terminal/stream.js";
+    import { FutuStream } from "/investment/terminal/futu.js";
 
     const params = new URLSearchParams(location.search);
     const theme = params.get("theme") === "dark" ? "dark" : "light";
     window.ws = new SchwabStream();
+    window.futu = new FutuStream();
     const status = document.getElementById('stream-status');
     window.addEventListener('SCHWAB_STREAM_READY', () => { status.hidden = true; });
     window.addEventListener('SCHWAB_STREAM_CLOSED', () => { status.hidden = false; });
     let broker, widget, disposed = false;
-    const datafeed = new Datafeed({ resetCharts: () => {
+    const datafeed = new Datafeed({ futuStream: window.futu, resetCharts: () => {
       widget.chartReady().then(() => {
         if (disposed || !window.ws.ready) return;
         widget.resetCache();
         for (let i = 0; i < widget.chartsCount(); i++) widget.chart(i).resetData();
       }).catch(() => { status.hidden = false; });
     } });
-    window.addEventListener('pagehide', () => { disposed = true; window.ws.close(); datafeed.destroy(); broker?.destroy(); });
+    window.addEventListener('pagehide', () => { disposed = true; window.ws.close(); window.futu.close(); datafeed.destroy(); broker?.destroy(); });
 
     widget = new tvWidget({
       datafeed,

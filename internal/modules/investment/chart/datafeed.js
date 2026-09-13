@@ -1,13 +1,19 @@
 import { schwabFetch } from './schwab.js';
+import { futuFetch, NIGHT_RESOLUTIONS, isOvernightET, seriesKey, usesFutuTicks, usesSchwabTicks } from './futu.js';
 
 export default class Datafeed {
-    constructor({ request = schwabFetch, events = window, stream = window.ws, resetCharts = () => {} } = {}) {
+    constructor({ request = schwabFetch, futuRequest = futuFetch, events = window, stream = window.ws, futuStream, resetCharts = () => {} } = {}) {
         this.request = request;
+        this.futuRequest = futuRequest;
         this.events = events;
         this.streamReady = stream?.ready === true;
         this.streamEpoch = 0;
         this.SUB = new Map();
+        this.futuSUB = new Map();
         this.resetCharts = resetCharts;
+        this.futuStream = futuStream;
+        this.overlayCache = { enabled: false };
+        this.overlayCachedAt = 0;
 
 
         this.quotesListeners = new Map();
@@ -179,51 +185,37 @@ export default class Datafeed {
                         });
                     }
                     if (this.barListeners?.size > 0) {
-
-                        const symbolCache = this.latestBars.get(symbolKey);
-                        if (!symbolCache) continue;
                         const VOLUME = quote.volume;
                         const LAST_PRICE = quote.rtc ?? quote.lp;
                         if (!Number.isFinite(LAST_PRICE) || LAST_PRICE <= 0 || !Number.isFinite(VOLUME)) continue;
-                        // 1. 全局成交量增量计算（极速，仅算1次）
-                        const prevVolume = this.cumulativeVolumes.get(symbolKey) ?? VOLUME;
-                        const volumeDelta = Math.max(0, VOLUME - prevVolume);
-                        this.cumulativeVolumes.set(symbolKey, VOLUME);
-
-                        // A shared series is updated once, even when several charts subscribe.
                         const updatedBars = new Map();
-                        for (const { symbol, resolution, onTick } of this.barListeners.values()) {
-                            if (symbol !== symbolKey) continue;
-                            if (updatedBars.has(resolution)) {
-                                onTick?.({ ...updatedBars.get(resolution) });
+                        for (const { symbol, resolution, onTick, subsessionId } of this.barListeners.values()) {
+                            if (symbol !== symbolKey || !usesSchwabTicks(subsessionId, timestamp)) continue;
+                            const key = seriesKey(symbolKey, subsessionId);
+                            const symbolCache = this.latestBars.get(key);
+                            if (!symbolCache) continue;
+                            const seriesUpdated = updatedBars.get(key) ?? new Map();
+                            if (seriesUpdated.has(resolution)) {
+                                onTick?.({ ...seriesUpdated.get(resolution) });
                                 continue;
                             }
+                            const prevVolume = this.cumulativeVolumes.get(key) ?? VOLUME;
+                            const volumeDelta = Math.max(0, VOLUME - prevVolume);
+                            this.cumulativeVolumes.set(key, VOLUME);
                             const lastBar = symbolCache.get(resolution);
                             if (!lastBar) continue;
-
-                            // 3. 构建/更新 K 线
                             const bucketTime = getBucketTime(resolution, timestamp);
                             if (!Number.isFinite(bucketTime) || bucketTime < lastBar.time) continue;
                             const isNewBucket = bucketTime > lastBar.time;
-
                             const newBar = isNewBucket ? {
-                                time: bucketTime,
-                                open: LAST_PRICE,
-                                high: LAST_PRICE,
-                                low: LAST_PRICE,
-                                close: LAST_PRICE,
-                                volume: volumeDelta
+                                time: bucketTime, open: LAST_PRICE, high: LAST_PRICE, low: LAST_PRICE, close: LAST_PRICE, volume: volumeDelta
                             } : {
-                                ...lastBar,
-                                high: Math.max(lastBar.high, LAST_PRICE),
-                                low: Math.min(lastBar.low, LAST_PRICE),
-                                close: LAST_PRICE,
-                                volume: lastBar.volume + volumeDelta
+                                ...lastBar, high: Math.max(lastBar.high, LAST_PRICE), low: Math.min(lastBar.low, LAST_PRICE),
+                                close: LAST_PRICE, volume: lastBar.volume + volumeDelta
                             };
-
-                            // 4. 缓存并推送
                             symbolCache.set(resolution, newBar);
-                            updatedBars.set(resolution, newBar);
+                            seriesUpdated.set(resolution, newBar);
+                            updatedBars.set(key, seriesUpdated);
                             onTick?.({ ...newBar });
                         }
                     }
@@ -244,9 +236,54 @@ export default class Datafeed {
             this.queueSubscriptions();
         };
         this.onStreamClosed = () => { this.streamReady = false; this.streamEpoch++; this.SUB.clear(); };
+        this.onFutuKL = (e) => {
+            const item = e.detail;
+            if (!item?.symbol || !item.bar) return;
+            const bar = { ...item.bar };
+            for (const listener of this.barListeners.values()) {
+                if (listener.symbol !== item.symbol || listener.resolution !== item.resolution) continue;
+                if (!usesFutuTicks(listener.subsessionId, bar.time)) continue;
+                const key = seriesKey(item.symbol, listener.subsessionId);
+                const cache = this.latestBars.get(key) ?? this.latestBars.set(key, new Map()).get(key);
+                cache.set(item.resolution, { ...bar });
+                listener.onTick?.({ ...bar });
+            }
+        };
+        this.onFutuQuote = (e) => {
+            const item = e.detail;
+            if (!item?.symbol || !item.quote) return;
+            this.futuOvernight = this.futuOvernight ?? new Map();
+            this.futuOvernight.set(item.symbol, item.quote);
+        };
+        this.onFutuReady = () => {
+            this.futuSUB.clear();
+            for (const listener of this.barListeners.values()) {
+                if (listener.subsessionId === 'night' || listener.subsessionId === '24h') listener.onReset?.();
+            }
+            this.queueFutuSubscriptions();
+        };
         events.addEventListener('LEVELONE_ANY', this.onLevelOne);
         events.addEventListener('SCHWAB_STREAM_READY', this.onStreamReady);
         events.addEventListener('SCHWAB_STREAM_CLOSED', this.onStreamClosed);
+        events.addEventListener('FUTU_KL', this.onFutuKL);
+        events.addEventListener('FUTU_QUOTE', this.onFutuQuote);
+        events.addEventListener('FUTU_STREAM_READY', this.onFutuReady);
+    }
+
+    async ensureFutuOverlay() {
+        const now = Date.now();
+        if (this.overlayCache && now - this.overlayCachedAt < 30_000) return this.overlayCache;
+        try {
+            const response = await this.futuRequest('');
+            const body = await response.json();
+            this.overlayCache = { enabled: body.enabled === true };
+        } catch {
+            this.overlayCache = { enabled: false };
+        }
+        this.overlayCachedAt = now;
+        if (this.overlayCache.enabled) this.futuStream?.start?.();
+        else this.futuStream?.stop?.();
+        return this.overlayCache;
     }
 
     onReady(callback) {
@@ -315,19 +352,24 @@ export default class Datafeed {
     /**
      * 辅助函数 2：为不同资产类型分配专属的交易时段 (Subsessions)
      */
-    getAssetSubsessions(assetType) {
+    getAssetSubsessions(assetType, overlayEnabled = false) {
         switch (assetType) {
             case "EQUITIES":
-            case "OPTIONS":
-                // 股票与股票期权：标准美股时间 (美东时间)
-                return [
+            case "OPTIONS": {
+                const sessions = [
                     { "description": "Regular Trading Hours", "id": "regular", "session": "0930-1600" },
                     { "description": "Extended Trading Hours", "id": "extended", "session": "0400-2000" },
                     { "description": "Premarket", "id": "premarket", "session": "0400-0930" },
                     { "description": "Postmarket", "id": "postmarket", "session": "1600-2000" },
-                    { "description": "Night", "id": "night", "session": "2000-0400" }, // 如果有夜盘券商
-                    { "description": "24h", "id": "24h", "session": "2000-2000" }
                 ];
+                if (overlayEnabled && assetType === "EQUITIES") {
+                    sessions.push(
+                        { "description": "Night", "id": "night", "session": "2000-0400" },
+                        { "description": "24h", "id": "24h", "session": "2000-2000" }
+                    );
+                }
+                return sessions;
+            }
 
             case "FUTURES":
             case "FUTURES_OPTIONS":
@@ -363,9 +405,8 @@ export default class Datafeed {
 
             // 1. 调用提取出的函数获取类型
             const assetType = this.identifyAssetType(cleanSymbol);
-
-            // 2. 调用提取出的函数获取该类型的专属时段列表
-            const subsessions = this.getAssetSubsessions(assetType);
+            const overlay = await this.ensureFutuOverlay();
+            const subsessions = this.getAssetSubsessions(assetType, overlay.enabled);
 
             // 3. 匹配用户请求的时段 (默认 regular)
             const requestedSessionId = (extension && extension.session) ? extension.session : "regular";
@@ -405,54 +446,102 @@ export default class Datafeed {
 
     async getBars(symbolInfo, resolution, periodParams, onResult, onError) {
         const { name, subsession_id } = symbolInfo
+        const session = subsession_id || 'regular';
         const { from, to } = periodParams
         const epoch = this.streamEpoch;
-
-        const barsize = (resolution === "1D" || resolution === "1W" || resolution === "1M") ? ("&frequencyType=" + (resolution === "1D" ? "daily" : resolution === "1W" ? "weekly" : "monthly") + "&frequency=1&periodType=year") : ("&frequencyType=minute&frequency=" + resolution);
-
-        const diffTime = to - from;
-        const expandedFrom = from - Math.floor(diffTime * 0.5);
-        const timeParams = "&startDate=" + (expandedFrom * 1000) + "&endDate=" + (periodParams.to * 1000);
-        const url = "/marketdata/v1/pricehistory?symbol=" + encodeURIComponent(name) + (subsession_id && subsession_id !== "regular" ? "&needExtendedHoursData=true" : "") + barsize + timeParams;
         try {
-            const response = await this.request(url);
-            if (!response.ok) {
-                throw new Error("获取历史数据失败" + name);
+            if (session === 'night') {
+                const overlay = await this.ensureFutuOverlay();
+                if (!overlay.enabled || this.identifyAssetType(name) !== 'EQUITIES' || !NIGHT_RESOLUTIONS.has(resolution)) {
+                    onResult([], { noData: true });
+                    return;
+                }
+                const bars = await this.getFutuNightBars(name, resolution, from, to, epoch);
+                this.seedLatest(name, session, resolution, bars);
+                onResult(bars, { noData: bars.length === 0 });
+                return;
             }
-            const data = await response.json();
-            if (this.destroyed || epoch !== this.streamEpoch) throw new Error('行情连接已变更，请重新读取历史数据');
-            if (!Array.isArray(data.candles)) throw new Error('Schwab 历史数据格式无效');
-            const unique = new Map();
-            for (const item of data.candles) {
-                if (item.datetime == null || !Number.isFinite(Number(item.datetime))) throw new Error('Schwab 历史数据包含无效时间');
-                const timestamp = Number(item.datetime);
-                const time = ['1D', '1W', '1M'].includes(resolution) ? getBucketTime(resolution, timestamp) : timestamp;
-                const bar = { time, open: Number(item.open), high: Number(item.high), low: Number(item.low), close: Number(item.close), volume: Number(item.volume) };
-                if (!Object.values(bar).every(Number.isFinite)) throw new Error('Schwab 历史数据包含无效价格或时间');
-                if (time < to * 1000) unique.set(time, bar);
+            if (session === '24h' && NIGHT_RESOLUTIONS.has(resolution)) {
+                const overlay = await this.ensureFutuOverlay();
+                if (overlay.enabled && this.identifyAssetType(name) === 'EQUITIES') {
+                    const schwab = await this.getSchwabBars(name, resolution, periodParams, epoch, true);
+                    const night = await this.getFutuNightBars(name, resolution, from, to, epoch);
+                    const merged = mergeSessionBars(schwab, night);
+                    this.seedLatest(name, session, resolution, merged);
+                    onResult(merged, { noData: merged.length === 0 });
+                    return;
+                }
             }
-            const bars = [...unique.values()].sort((a, b) => a.time - b.time);
-            if (bars.length) {
-                const symbolCache = this.latestBars.get(name) ?? this.latestBars.set(name, new Map()).get(name);
-                const latest = bars.at(-1), cached = symbolCache.get(resolution);
-                // Reloads after reset need a seed even without firstDataRequest. Older
-                // backfill must never roll back a bar already updated by the live stream.
-                if (!cached || latest.time > cached.time) symbolCache.set(resolution, { ...latest });
-            }
-            const isNoData = bars.length === 0;
-            onResult(bars, { noData: isNoData });
+            const bars = await this.getSchwabBars(name, resolution, periodParams, epoch, session !== 'regular');
+            this.seedLatest(name, session, resolution, bars);
+            onResult(bars, { noData: bars.length === 0 });
         } catch (err) {
-            if (typeof onError === "function") {
-                onError(err);
-            }
+            if (typeof onError === "function") onError(err);
         }
     }
 
-    subscribeBars(symbolInfo, resolution, onTick, listenerGuid, onReset) {
-        this.barListeners.set(listenerGuid, { symbol: symbolInfo.name, resolution, onTick, onReset });
-        this.queueSubscriptions();
+    seedLatest(name, session, resolution, bars) {
+        if (!bars.length) return;
+        const key = seriesKey(name, session);
+        const symbolCache = this.latestBars.get(key) ?? this.latestBars.set(key, new Map()).get(key);
+        const latest = bars.at(-1), cached = symbolCache.get(resolution);
+        if (!cached || latest.time > cached.time) symbolCache.set(resolution, { ...latest });
     }
-    unsubscribeBars(listenerGuid) { this.barListeners.delete(listenerGuid); }
+
+    async getFutuNightBars(name, resolution, from, to, epoch) {
+        const params = new URLSearchParams({ symbol: name, resolution });
+        if (from) params.set('from', String(from));
+        if (to) params.set('to', String(to));
+        const response = await this.futuRequest('/kline?' + params.toString());
+        if (this.destroyed || epoch !== this.streamEpoch) throw new Error('行情连接已变更，请重新读取历史数据');
+        if (!response.ok) throw new Error('获取夜盘数据失败' + name);
+        const data = await response.json();
+        if (!Array.isArray(data.candles)) throw new Error('夜盘历史数据格式无效');
+        return data.candles.map((item) => ({
+            time: Number(item.time), open: Number(item.open), high: Number(item.high),
+            low: Number(item.low), close: Number(item.close), volume: Number(item.volume),
+        })).filter((bar) => Object.values(bar).every(Number.isFinite));
+    }
+
+    async getSchwabBars(name, resolution, periodParams, epoch, extended) {
+        const { from, to } = periodParams;
+        const barsize = (resolution === "1D" || resolution === "1W" || resolution === "1M") ? ("&frequencyType=" + (resolution === "1D" ? "daily" : resolution === "1W" ? "weekly" : "monthly") + "&frequency=1&periodType=year") : ("&frequencyType=minute&frequency=" + resolution);
+        const diffTime = to - from;
+        const expandedFrom = from - Math.floor(diffTime * 0.5);
+        const timeParams = "&startDate=" + (expandedFrom * 1000) + "&endDate=" + (periodParams.to * 1000);
+        const url = "/marketdata/v1/pricehistory?symbol=" + encodeURIComponent(name) + (extended ? "&needExtendedHoursData=true" : "") + barsize + timeParams;
+        const response = await this.request(url);
+        if (!response.ok) throw new Error("获取历史数据失败" + name);
+        const data = await response.json();
+        if (this.destroyed || epoch !== this.streamEpoch) throw new Error('行情连接已变更，请重新读取历史数据');
+        if (!Array.isArray(data.candles)) throw new Error('Schwab 历史数据格式无效');
+        const unique = new Map();
+        for (const item of data.candles) {
+            if (item.datetime == null || !Number.isFinite(Number(item.datetime))) throw new Error('Schwab 历史数据包含无效时间');
+            const timestamp = Number(item.datetime);
+            const time = ['1D', '1W', '1M'].includes(resolution) ? getBucketTime(resolution, timestamp) : timestamp;
+            const bar = { time, open: Number(item.open), high: Number(item.high), low: Number(item.low), close: Number(item.close), volume: Number(item.volume) };
+            if (!Object.values(bar).every(Number.isFinite)) throw new Error('Schwab 历史数据包含无效价格或时间');
+            if (time < to * 1000) unique.set(time, bar);
+        }
+        return [...unique.values()].sort((a, b) => a.time - b.time);
+    }
+
+    subscribeBars(symbolInfo, resolution, onTick, listenerGuid, onReset) {
+        const subsessionId = symbolInfo.subsession_id || 'regular';
+        this.barListeners.set(listenerGuid, { symbol: symbolInfo.name, resolution, onTick, onReset, subsessionId });
+        this.queueSubscriptions();
+        if (subsessionId === 'night' || subsessionId === '24h') this.queueFutuSubscriptions();
+    }
+    unsubscribeBars(listenerGuid) {
+        const listener = this.barListeners.get(listenerGuid);
+        this.barListeners.delete(listenerGuid);
+        if (listener && (listener.subsessionId === 'night' || listener.subsessionId === '24h')) {
+            void this.futuRequest('/quote/ws/command', {
+                method: 'POST', body: JSON.stringify({ command: 'UNSUB', symbol: listener.symbol, resolution: listener.resolution })
+            }).catch(() => {});
+        }
+    }
     unsubscribeQuotes(listenerGuid) { this.quotesListeners.delete(listenerGuid); }
     subscribeQuotes(symbols, fastSymbols, callback, listenerGuid) {
         this.quotesListeners.set(listenerGuid, { symbols: new Set([...symbols, ...fastSymbols]), callback });
@@ -498,14 +587,51 @@ export default class Datafeed {
             }
         }, delay);
     }
+    queueFutuSubscriptions(delay = 0) {
+        if (this.destroyed || this.futuTimer) return;
+        this.futuTimer = setTimeout(async () => {
+            this.futuTimer = undefined;
+            if (this.destroyed) return;
+            await this.ensureFutuOverlay();
+            for (const listener of this.barListeners.values()) {
+                if (listener.subsessionId !== 'night' && listener.subsessionId !== '24h') continue;
+                if (!NIGHT_RESOLUTIONS.has(listener.resolution)) continue;
+                const key = listener.symbol + '\0' + listener.resolution;
+                if (this.futuSUB.has(key)) continue;
+                this.futuSUB.set(key, 'pending');
+                try {
+                    const response = await this.futuRequest('/quote/ws/command', {
+                        method: 'POST', body: JSON.stringify({ command: 'ADD', symbol: listener.symbol, resolution: listener.resolution })
+                    });
+                    if (!response.ok) throw new Error('夜盘订阅失败');
+                    this.futuSUB.set(key, 'subscribed');
+                } catch {
+                    this.futuSUB.delete(key);
+                    this.queueFutuSubscriptions(2000);
+                }
+            }
+        }, delay);
+    }
     destroy() {
         this.destroyed = true;
         clearTimeout(this.subscribeTimer);
+        clearTimeout(this.futuTimer);
         this.events.removeEventListener('LEVELONE_ANY', this.onLevelOne);
         this.events.removeEventListener('SCHWAB_STREAM_READY', this.onStreamReady);
         this.events.removeEventListener('SCHWAB_STREAM_CLOSED', this.onStreamClosed);
+        this.events.removeEventListener('FUTU_KL', this.onFutuKL);
+        this.events.removeEventListener('FUTU_QUOTE', this.onFutuQuote);
+        this.events.removeEventListener('FUTU_STREAM_READY', this.onFutuReady);
+        for (const listener of this.barListeners.values()) {
+            if (listener.subsessionId === 'night' || listener.subsessionId === '24h') {
+                void this.futuRequest('/quote/ws/command', {
+                    method: 'POST', body: JSON.stringify({ command: 'UNSUB', symbol: listener.symbol, resolution: listener.resolution })
+                }).catch(() => {});
+            }
+        }
         this.barListeners.clear();
         this.quotesListeners.clear();
+        this.futuStream?.stop?.();
     }
 
     async getQuotes(symbols, onDataCallback, onErrorCallback) {
@@ -535,6 +661,15 @@ const RESOLUTIONS_MS = {
     '10': 600_000, '15': 900_000, '30': 1_800_000, '60': 3_600_000,
     '120': 7_200_000, '180': 10_800_000, '240': 14_400_000, '480': 28_800_000,
     '1D': 86_400_000
+}
+
+function mergeSessionBars(schwab, night) {
+    const unique = new Map();
+    for (const bar of schwab) {
+        if (!isOvernightET(bar.time)) unique.set(bar.time, bar);
+    }
+    for (const bar of night) unique.set(bar.time, bar);
+    return [...unique.values()].sort((a, b) => a.time - b.time);
 }
 
 function getBucketTime(resolution, timestamp = Date.now()) {

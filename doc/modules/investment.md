@@ -12,6 +12,19 @@
 
 `investment.schwab_refresh` 每二十分钟检查访问令牌；REST 请求和新连接也会按需刷新。令牌刷新后关闭旧流，浏览器自动重新登录连接。断开操作保留应用配置，清除券商令牌。所有券商访问令牌仅在服务端使用，代理不转发浏览器 Cookie。
 
+## 富途夜盘覆盖
+
+Schwab 行情覆盖常规、盘前、盘后和延长时段（约 04:00–20:00 ET），不含美股夜盘（20:00–04:00 ET）。夜盘由本机或 Compose 中的 Futu OpenD 补齐，**只做行情，不接入富途交易**。
+
+在同一设置页填写 OpenD 主机和端口（本机默认 `127.0.0.1:11111`，Compose 服务名 `futu-opend` 时需勾选允许非本机地址），并启用夜盘覆盖。登录仍在 OpenD 完成，工作台不保存牛牛密码。开关关闭后，终端不再显示 Night / 24h 时段。
+
+- Regular / Premarket / Postmarket / Extended：仍只走 Schwab。
+- Night：订阅 + 当前 K 线（不占 7 日历史额度）；周期仅 `1/5/15/30` 分钟。
+- 24h：嘉信 04:00–20:00 与富途夜盘按美东时钟拼接。
+- 向左翻到往日夜盘时，才用 `request_history_kline` 做额度兜底（7 天 100 只标的，同标的 7 天内不重复占额），并写入本地 `investment_futu_bars`。
+
+OpenD 容器封装在仓库根目录 [futu-opend](../../futu-opend/)，可整夹移到独立仓库。Compose 叠加见[部署与发布](../deployment.md)。工作台以 JSON 明文协议连接（`packetEncAlgo=None`），不要把 OpenD `11111` 暴露到公网。
+
 ## 行情与交易
 
 连接后用 iframe 打开 `/investment/terminal`。终端从 Schwab 获取历史与实时行情，读取所选账户的真实多空持仓；订单查询覆盖最近一年。Schwab 没有订单游标，达到单次 3000 条上限时递归拆分时间范围并按订单 ID 去重；无法完整读取时明确报错，不展示被截断的完整列表。
@@ -44,7 +57,7 @@ Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后
 
 ## TradingView 资源
 
-当前 `/charting_library/` 从 `https://trading-terminal.tradingview-widget.com/charting_library/` 同源反代，保存图纸和新闻等依赖外部服务的功能关闭。行情与交易数据来自 Schwab。
+当前 `/charting_library/` 从 `https://trading-terminal.tradingview-widget.com/charting_library/` 同源反代，保存图纸和新闻等依赖外部服务的功能关闭。行情与交易数据来自 Schwab；夜盘覆盖打开时，Night / 24h 的夜盘段来自 Futu OpenD。
 
 这个演示资源接入不等同于取得库的部署授权。TradingView FAQ 区分了 Widgets、Advanced Charts 和 Trading Platform；自托管交易功能需使用获得授权的 Trading Platform 包。参见 [官方 FAQ](https://www.tradingview.com/charting-library-docs/latest/resources/Frequently-Asked-Questions/)。
 
@@ -62,6 +75,12 @@ Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后
 | GET/POST/PUT/DELETE/PATCH | `/api/modules/investment/schwab/marketdata/v1/*` | Market Data REST 代理 |
 | GET | `/api/modules/investment/schwab/trader/ws`、`marketdata/ws` | 浏览器事件连接 |
 | POST | `/api/modules/investment/schwab/marketdata/ws/command` | LEVELONE 服务的 ADD 订阅命令 |
+| GET | `/api/modules/investment/futu` | OpenD 主机、覆盖开关、连接与额度 |
+| PUT | `/api/modules/investment/futu` | 保存 OpenD 连接与覆盖开关 |
+| POST | `/api/modules/investment/futu/disconnect` | 关闭夜盘覆盖并断开 OpenD |
+| GET | `/api/modules/investment/futu/kline` | 夜盘当前窗口及额度兜底历史 |
+| GET | `/api/modules/investment/futu/quote/ws` | 夜盘推送（覆盖关闭时 409，不升级） |
+| POST | `/api/modules/investment/futu/quote/ws/command` | 夜盘 ADD/UNSUB |
 | GET | `/investment/terminal`、`/investment/terminal/*` | 终端 HTML 与适配器 |
 | GET/HEAD | `/charting_library/*` | 图表库静态文件代理 |
 
@@ -69,7 +88,7 @@ Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后
 
 ## 数据、验证与参考
 
-模块只依赖注入的数据库；配置表为 `investment_schwab`。升级迁移移除历史演示表 `investment_quotes` 和 `investment_summary`，旧迁移文件保留。SQL 和 sqlc 生成代码均在模块目录。
+模块只依赖注入的数据库；配置表为 `investment_schwab` 与 `investment_futu`，夜盘 K 线缓存在 `investment_futu_bars`。升级迁移移除历史演示表 `investment_quotes` 和 `investment_summary`，旧迁移文件保留。SQL 和 sqlc 生成代码均在模块目录。
 
 Go 测试覆盖配置、OAuth、代理、连接确认、断线恢复和配置变更竞态；Node 测试直接导入终端 JS，覆盖交易语义、未确认的交易结果、真实持仓、订单时间分段、跨账户异步响应、订阅重放及历史/实时 K 线衔接。`./scripts/test.sh` 执行 sqlc 漂移检查、Go 测试、React/终端 JS lint、Node 测试与生产构建。模拟服务验证不替代真实券商端到端验收。
 

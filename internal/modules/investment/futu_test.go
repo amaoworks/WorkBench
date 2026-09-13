@@ -1,0 +1,128 @@
+package investment
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestFutuSettingsDefaultAndValidation(t *testing.T) {
+	module := openInvestmentModule(t)
+	got := httptest.NewRecorder()
+	module.getFutu(got, httptest.NewRequest(http.MethodGet, "/api/modules/investment/futu", nil))
+	if got.Code != 200 || !strings.Contains(got.Body.String(), `"enabled":false`) || !strings.Contains(got.Body.String(), `"host":"127.0.0.1"`) {
+		t.Fatalf("default: %s", got.Body.String())
+	}
+	bad := httptest.NewRecorder()
+	module.saveFutu(bad, httptest.NewRequest(http.MethodPut, "/api/modules/investment/futu", strings.NewReader(`{"host":"futu-opend","port":11111,"enabled":true,"allowNonLocal":false}`)))
+	if bad.Code != 400 {
+		t.Fatalf("hostname without allow: %d %s", bad.Code, bad.Body.String())
+	}
+	unknown := httptest.NewRecorder()
+	module.saveFutu(unknown, httptest.NewRequest(http.MethodPut, "/api/modules/investment/futu", strings.NewReader(`{"host":"127.0.0.1","port":11111,"enabled":false,"allowNonLocal":false,"allowHistoryKline":true}`)))
+	if unknown.Code != 400 {
+		t.Fatalf("unknown field: %d %s", unknown.Code, unknown.Body.String())
+	}
+}
+
+func TestFutuKlineDisabledConflict(t *testing.T) {
+	module := openInvestmentModule(t)
+	rec := httptest.NewRecorder()
+	module.getFutuKline(rec, httptest.NewRequest(http.MethodGet, "/api/modules/investment/futu/kline?symbol=AAPL&resolution=1", nil))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("disabled kline: %d %s", rec.Code, rec.Body.String())
+	}
+	ws := httptest.NewRecorder()
+	module.serveFutuStream(ws, httptest.NewRequest(http.MethodGet, "/api/modules/investment/futu/quote/ws", nil))
+	if ws.Code != http.StatusConflict {
+		t.Fatalf("disabled ws: %d %s", ws.Code, ws.Body.String())
+	}
+}
+
+func TestFutuKlineUsesCurrentWindowAndHistoryFallback(t *testing.T) {
+	fake := startFakeOpenD(t)
+	host, portStr, _ := strings.Cut(fake.addr(), ":")
+	port, _ := strconv.Atoi(portStr)
+	module := openInvestmentModule(t)
+	save := httptest.NewRecorder()
+	body := `{"host":"` + host + `","port":` + portStr + `,"enabled":true,"allowNonLocal":false}`
+	module.saveFutu(save, httptest.NewRequest(http.MethodPut, "/api/modules/investment/futu", strings.NewReader(body)))
+	if save.Code != 200 {
+		t.Fatalf("save: %d %s", save.Code, save.Body.String())
+	}
+	_ = port
+
+	req := httptest.NewRequest(http.MethodGet, "/api/modules/investment/futu/kline?symbol=AAPL&resolution=1", nil)
+	rec := httptest.NewRecorder()
+	module.getFutuKline(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("kline: %d %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Candles []futuBar `json:"candles"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Candles) != 1 || payload.Candles[0].Close != 101 {
+		t.Fatalf("current window should drop RTH: %+v", payload.Candles)
+	}
+	fake.mu.Lock()
+	hist := fake.historyN
+	fake.mu.Unlock()
+	if hist != 0 {
+		t.Fatalf("current-night request must not burn 3103, got %d", hist)
+	}
+
+	from := time.Date(2026, 1, 14, 20, 0, 0, 0, nyZone).Unix()
+	to := time.Date(2026, 1, 16, 4, 0, 0, 0, nyZone).Unix()
+	rangeURL := "/api/modules/investment/futu/kline?symbol=AAPL&resolution=1&from=" + strconv.FormatInt(from, 10) + "&to=" + strconv.FormatInt(to, 10)
+	rangeRec := httptest.NewRecorder()
+	module.getFutuKline(rangeRec, httptest.NewRequest(http.MethodGet, rangeURL, nil))
+	if rangeRec.Code != 200 {
+		t.Fatalf("range kline: %d %s", rangeRec.Code, rangeRec.Body.String())
+	}
+	if err := json.Unmarshal(rangeRec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Candles) != 2 {
+		t.Fatalf("history fallback should merge previous night: %+v", payload.Candles)
+	}
+	fake.mu.Lock()
+	hist = fake.historyN
+	fake.mu.Unlock()
+	if hist != 1 {
+		t.Fatalf("3103 calls=%d", hist)
+	}
+
+	ten := httptest.NewRecorder()
+	module.getFutuKline(ten, httptest.NewRequest(http.MethodGet, "/api/modules/investment/futu/kline?symbol=AAPL&resolution=10", nil))
+	if ten.Code != 200 || !strings.Contains(ten.Body.String(), `"candles":[]`) {
+		t.Fatalf("resolution 10: %s", ten.Body.String())
+	}
+}
+
+func TestFutuDisconnectStopsOverlay(t *testing.T) {
+	fake := startFakeOpenD(t)
+	_, portStr, _ := strings.Cut(fake.addr(), ":")
+	module := openInvestmentModule(t)
+	save := httptest.NewRecorder()
+	module.saveFutu(save, httptest.NewRequest(http.MethodPut, "/api/modules/investment/futu", strings.NewReader(`{"host":"127.0.0.1","port":`+portStr+`,"enabled":true,"allowNonLocal":false}`)))
+	if save.Code != 200 {
+		t.Fatal(save.Body.String())
+	}
+	off := httptest.NewRecorder()
+	module.disconnectFutu(off, httptest.NewRequest(http.MethodPost, "/api/modules/investment/futu/disconnect", strings.NewReader("{}")))
+	if off.Code != 200 {
+		t.Fatal(off.Body.String())
+	}
+	got := httptest.NewRecorder()
+	module.getFutu(got, httptest.NewRequest(http.MethodGet, "/api/modules/investment/futu", nil))
+	if !strings.Contains(got.Body.String(), `"enabled":false`) {
+		t.Fatal(got.Body.String())
+	}
+}

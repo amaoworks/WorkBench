@@ -4,6 +4,27 @@
 
 package investmentsqlc
 
+type InvestmentFutu struct {
+	ID            int64  `json:"id"`
+	Host          string `json:"host"`
+	Port          int64  `json:"port"`
+	Enabled       int64  `json:"enabled"`
+	AllowNonLocal int64  `json:"allow_non_local"`
+	LastError     string `json:"last_error"`
+	UpdatedAt     int64  `json:"updated_at"`
+}
+
+type InvestmentFutuBar struct {
+	Symbol     string  `json:"symbol"`
+	Resolution string  `json:"resolution"`
+	TimeMs     int64   `json:"time_ms"`
+	Open       float64 `json:"open"`
+	High       float64 `json:"high"`
+	Low        float64 `json:"low"`
+	Close      float64 `json:"close"`
+	Volume     float64 `json:"volume"`
+}
+
 type InvestmentSchwab struct {
 	ID                  int64  `json:"id"`
 	AppKey              string `json:"app_key"`

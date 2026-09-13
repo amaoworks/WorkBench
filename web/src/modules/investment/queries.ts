@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../shared/api";
 import type { Widget } from "../../shared/schema";
-import { schwabSettingsSchema, type SchwabSettingsInput } from "./schema";
+import { futuSettingsSchema, schwabSettingsSchema, type FutuSettingsInput, type SchwabSettingsInput } from "./schema";
 
 export function useInvestmentWidget(widget: Widget) {
   return useQuery({ queryKey: ["widget", widget.id], queryFn: async () => schwabSettingsSchema.parse(await api<unknown>(widget.dataRoute)), refetchInterval: 30_000 });
@@ -21,6 +21,18 @@ export function disconnectSchwab() {
 
 export function refreshSchwabToken() {
   return api("/api/modules/investment/schwab/oauth/refresh", { method: "POST", body: "{}" });
+}
+
+export function useFutuSettings(enabled: boolean) {
+  return useQuery({ queryKey: ["investment", "futu"], enabled, queryFn: async () => futuSettingsSchema.parse(await api<unknown>("/api/modules/investment/futu")), refetchInterval: 30_000 });
+}
+
+export function saveFutuSettings(input: FutuSettingsInput) {
+  return api("/api/modules/investment/futu", { method: "PUT", body: JSON.stringify(input) });
+}
+
+export function disconnectFutu() {
+  return api("/api/modules/investment/futu/disconnect", { method: "POST", body: "{}" });
 }
 
 export function useRefreshInvestment() {

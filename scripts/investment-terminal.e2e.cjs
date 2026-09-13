@@ -68,6 +68,10 @@ const history = [
           return await route.fulfill({ contentType: file.endsWith(".html") ? "text/html" : "text/javascript", body });
         }
         if (path === "/api/auth/csrf") return await route.fulfill({ json: { token: "test-csrf" } });
+        if (path === "/api/modules/investment/futu") {
+          assert.equal(route.request().method(), "GET");
+          return await route.fulfill({ json: { host: "127.0.0.1", port: 11111, enabled: false, allowNonLocal: false, connected: false, qotLogined: false, lastError: "" } });
+        }
         calls.push({ path, method: route.request().method() });
         assert(path.startsWith("/api/modules/investment/schwab/"), "unexpected API route");
         if (path.endsWith("/ws/command")) {

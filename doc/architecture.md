@@ -46,6 +46,7 @@ web/src/
   components/ui/               通用界面组件
   shared/                      HTTP 客户端、平台共享 schema、工具
   styles.css                   主题变量与共享样式
+futu-opend/                    可搬走的 Futu OpenD 容器封装（行情网关，非交易）
 deploy/                        systemd、反向代理与 Compose 网络配置
 .github/workflows/             CI 验证与版本标签发布
 Dockerfile / compose.yaml       镜像构建与单实例容器部署

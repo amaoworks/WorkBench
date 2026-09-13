@@ -18,3 +18,7 @@
 | [Investment](modules/investment.md) | Schwab 行情、持仓、订单和 TradingView 终端 |
 
 根 [README](../README.md) 面向使用和启动，各代码目录中的 README 说明本目录职责。新增或调整功能时更新对应主题及入口链接；不把临时执行计划、完成清单和一次性验收记录作为长期开发依据。
+
+## 待实现计划
+
+- [外部业务模块第一阶段](external-modules-phase-1.md)：按当前需求编写的 AI agent 执行计划，包含接入协议、实施顺序和验收指标。该文档描述待实现目标；完成后将实际行为同步到上面的主题文档。

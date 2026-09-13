@@ -38,6 +38,8 @@
 | Todo / Wallos | `todo_wallos_settings` | 联动配置、密钥、最近成功同步和错误 |
 | Todo / Wallos | `todo_wallos_occurrences` | 外部来源、订阅 ID、付款日期与待办映射 |
 | Investment | `investment_schwab` | App Key/Secret、回调、访问/刷新令牌、streamer 缓存和 OAuth state |
+| Investment | `investment_futu` | OpenD 主机/端口、夜盘覆盖开关、非本机许可和最近错误 |
+| Investment | `investment_futu_bars` | 夜盘 K 线本地缓存（避免重复消耗富途历史额度） |
 
 平台设置可供通用能力使用。例如总览布局由 Dashboard 能力管理，但保存在平台 `workspace_settings`；业务配置使用模块自己的表。
 

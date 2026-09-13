@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<futu_opend>
+    <!-- Bound for Docker/compose so workbench can reach this service by name. -->
+    <ip>0.0.0.0</ip>
+    <api_port>11111</api_port>
+    <push_proto_type>1</push_proto_type>
+    <telnet_ip>0.0.0.0</telnet_ip>
+    <telnet_port>22222</telnet_port>
+    <login_account></login_account>
+    <login_pwd_md5></login_pwd_md5>
+    <lang>chs</lang>
+    <log_level>info</log_level>
+</futu_opend>

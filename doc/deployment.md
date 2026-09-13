@@ -80,7 +80,15 @@ WORKBENCH_PUBLIC_URL=https://workbench.example.com
 WORKBENCH_PASSWORD='填写独立的强密码'
 ```
 
-`WORKBENCH_VERSION` 必须为已发布的版本标签。密码包含 `$`、`#` 等字符时使用单引号，按 Compose 的 `.env` 规则保留字面值；`.env` 已被 Git 和 Docker 构建上下文排除。AI、Wallos、Schwab 等业务配置在工作台设置页面保存。
+`WORKBENCH_VERSION` 必须为已发布的版本标签。密码包含 `$`、`#` 等字符时使用单引号，按 Compose 的 `.env` 规则保留字面值；`.env` 已被 Git 和 Docker 构建上下文排除。AI、Wallos、Schwab、富途 OpenD 等业务配置在工作台设置页面保存。夜盘覆盖需要单独的 OpenD 进程，不要打进 workbench 镜像。可叠加仓库内 [futu-opend](../futu-opend/)（该目录可整体移到独立仓库）：
+
+```bash
+cp futu-opend/.env.example futu-opend/.env
+# 填写 FUTU_ACCOUNT_ID 与密码 MD5
+docker compose -f compose.yaml -f futu-opend/compose.workbench.yaml --env-file futu-opend/.env up -d --build
+```
+
+然后在「设置 → 投资」填写主机 `futu-opend`、端口 `11111`，勾选允许非本机地址并启用夜盘覆盖。首次登录若要求验证码，telnet `127.0.0.1:22222`。
 
 ```bash
 docker compose config --quiet
