@@ -5,7 +5,7 @@
 | `auth/` | local/password 模式、密码与 Session、Host/Origin/CSRF |
 | `database/` | SQLite 生命周期、迁移、备份、文件锁和平台 SQL |
 | `events/` | 事务事件存储、消费者投递、租约与重试 |
-| `modules/` | 注册资源目录、持久化启停、HTTP 门控 |
+| `modules/` | 内置与外部目录、持久化启停、外部控制客户端、同源 HTTP/WS 代理 |
 | `httpapi/` | JSON 请求体校验、响应与错误 |
 | `identity/` | 实体 ID 生成 |
 | `logging/` | JSON 默认输出、等级校验和共享的并发安全动态等级过滤 |

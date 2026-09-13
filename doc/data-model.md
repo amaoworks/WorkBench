@@ -25,7 +25,8 @@
 
 | 归属 | 表 | 保存内容 |
 |---|---|---|
-| 平台模块注册 | `modules` | 模块版本、契约版本、启用状态和时间；含平台 `core` 记录 |
+| 平台模块注册 | `modules` | 模块版本、契约版本、来源 `kind`（builtin/external）、启用意图和时间；含平台 `core` 记录 |
+| 外部模块连接 | `external_modules` | 服务 origin、非本机许可、服务凭据、最后有效 manifest、控制代数、观察状态和脱敏错误 |
 | 可靠事件 | `events_log` | 领域事件、JSON 载荷、可投递时间 |
 | 可靠事件 | `event_deliveries` | 事件/消费者唯一记录、租约、尝试次数和结果 |
 | 鉴权 | `auth_credentials`、`sessions` | 单用户密码哈希、会话数据与到期时间 |
@@ -67,6 +68,8 @@
 
 `core.maintenance` 每 24 小时清理到期 Session，以及创建时间超过 90 天且已读或已归档的通知。当前没有自动清理全部事件、Job 历史、AI 对话或备份文件的通用策略。
 
-在线备份通过 `VACUUM INTO` 创建新数据库，再使用只读连接执行 `PRAGMA integrity_check`；成功后设置文件权限。备份文件保存在数据库同目录的 `backups/`。操作入口和恢复方式见[配置与运行](configuration.md)。
+在线备份通过 `VACUUM INTO` 创建新数据库，再使用只读连接执行 `PRAGMA integrity_check`；成功后设置文件权限。备份文件保存在数据库同目录的 `backups/`。操作入口和恢复方式见[配置与运行](configuration.md)。核心备份包含外部模块的宿主注册数据，不表示已经备份远端业务数据。
+
+外部服务凭据保存在 `external_modules.service_token`，沿用数据库文件权限；API 列表、配置读回、日志和浏览器 URL 都不得出现该值。当前数据库未加密，拥有文件读取权限的主体仍能读取凭据。宿主重启后持久化的健康状态只作历史，重新确认前不开放业务代理。启动同步内置模块时不会覆盖 `kind=external` 的行。
 
 Investment 的 `00003_remove_demo.sql` 移除历史模拟行情和模拟摘要表；已登记的迁移保留，以支持已有工作空间升级。Schwab 凭据不受此迁移影响。

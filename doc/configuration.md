@@ -77,7 +77,7 @@ npm ci
 npm run dev
 ```
 
-Vite 将 `/api`、`/health`、`/oauth/schwab`、`/investment/terminal` 和 `/charting_library` 代理到 `http://127.0.0.1:8080`。浏览器通过 Vite 访问时，后端也会校验浏览器的 Host，因此启动后端时应允许 Vite 实际使用的地址，例如 `-allowed-host localhost:5173 -allowed-host 127.0.0.1:8080`；端口变化时相应调整。前后端联调保持 Origin 与代理保留的 Host 一致。
+Vite 将 `/api`、`/health`、`/modules`、`/oauth/schwab`、`/investment/terminal` 和 `/charting_library` 代理到 `http://127.0.0.1:8080`。浏览器通过 Vite 访问时，后端也会校验浏览器的 Host，因此启动后端时应允许 Vite 实际使用的地址，例如 `-allowed-host localhost:5173 -allowed-host 127.0.0.1:8080`；端口变化时相应调整。前后端联调保持 Origin 与代理保留的 Host 一致。
 
 Schwab OAuth 回调必须使用实际可访问工作台的 HTTPS 入口，例如 `https://workbench.example.com/oauth/schwab`（替换为实际域名和端口），并在工作台和 Schwab Developer Portal 登记相同的完整 URL。默认 HTTP 后端或 Vite 开发地址不能直接用作此回调；先配置 HTTPS 反向代理和 `WORKBENCH_PUBLIC_URL`，并让 `/oauth/schwab` 转发到工作台回调处理器。建议从同一个 HTTPS 入口打开工作台并开始登录。部署在服务器时，`127.0.0.1` 指向用户浏览器所在机器，不能代替服务器地址。
 

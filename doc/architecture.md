@@ -18,12 +18,12 @@ Workbench 是本地优先、单用户的个人工作台。当前采用 Go 模块
 cmd/workbench/                 启动参数、环境变量、信号处理
 internal/
   app/                         依赖装配、平台路由、设置、备份入口
-  contracts/                   Module、Event、Job、AI、Notification、Widget
+  contracts/                   Module、外部协议类型、可选生命周期/路由、Event、Job、AI、Notification、Widget
   foundation/
     auth/                      凭据、Session、Host/Origin/CSRF
     database/                  SQLite、迁移、备份及平台 SQL
     events/                    事务事件存储与投递
-    modules/                   注册目录、持久化启停状态、入口门控
+    modules/                   内置与外部目录、启停门控、外部控制客户端与同源代理
     httpapi/                   JSON 请求与响应
     identity/                  实体 ID
   capabilities/
@@ -50,6 +50,7 @@ futu-opend/                    可搬走的 Futu OpenD 容器封装（行情网�
 deploy/                        systemd、反向代理与 Compose 网络配置
 .github/workflows/             CI 验证与版本标签发布
 Dockerfile / compose.yaml       镜像构建与单实例容器部署
+examples/external-module/      独立进程的外部模块协议示例（不编入核心）
 scripts/                       构建、发布、部署验证与浏览器回归脚本
 doc/                           当前设计和使用开发说明
 sqlc.yaml                      平台和各模块的 SQL 生成配置
@@ -82,9 +83,9 @@ contracts → 标准库
 
 注册目录先在内存收集并校验，失败时不发布可用目录。模块迁移在注册目录构建前执行，不与全部注册操作组成一个可回滚事务。
 
-`App.Run` 绑定 HTTP 监听地址，启动调度器和事件投递。HTTPS 在反向代理处终止，应用以固定外部 URL 配置 Cookie 和来源校验；部署形态与发布流程见[部署与发布](deployment.md)。退出时停止接收请求、关闭投资 WebSocket 和调度，最后关闭数据库并释放锁。
+`App.Run` 绑定 HTTP 监听地址，启动调度器和事件投递。HTTPS 在反向代理处终止，应用以固定外部 URL 配置 Cookie 和来源校验；部署形态与发布流程见[部署与发布](deployment.md)。退出时停止接收请求，遍历内置模块生命周期释放长连接，关闭外部模块探测与代理 WebSocket，再停止调度并关闭数据库。宿主退出不会把外部模块改写为用户停用。
 
-模块代码随程序构建。运行时启停会持久化到数据库，并影响后续模块 HTTP、Job、事件消费者、AI Tool、导航和总览卡片。停用不会删除表、历史数据或布局偏好，也不强制取消已开始的处理。隐藏 Widget 只影响总览展示。
+内置模块代码随程序构建。外部模块按协议接入，运行时登记到可变目录，不改写静态路由表；通用 `/modules/{id}/...` 与 `/api/modules/{id}/proxy/*` 按注册表快照分发。内置启停影响模块 HTTP、Job、事件消费者、AI Tool、导航和总览卡片。外部模块的 `enabled` 是用户期望；业务页面/API/WS 只在当前连接的当前代数确认启用且健康不是 `offline`/`incompatible` 后开放。设置页在停用时仍可访问。停用不会删除表、历史数据或布局偏好。隐藏 Widget 只影响总览展示。
 
 ## 关键协作流程
 
@@ -92,6 +93,6 @@ contracts → 标准库
 - Job 的定义来自代码，数据库保存调度状态和运行记录。支持 cron、interval、once，运行前检查模块状态；恢复时依据 misfire 配置跳过或补跑一次。
 - 通知服务统一保存通知及变更事件。SSE 将变更告知浏览器，浏览器再查询通知数据；它不提供完整事件历史回放。
 - 对话使用 AI Gateway，可调用启用模块注册的 Tool；业务主动生成文本使用 `contracts.TextGenerator`，该接口不执行业务工具。两者共享设置中的 Provider，保存设置后新请求使用新配置。
-- Dashboard 合并模块 Widget 声明和持久化布局，业务 Widget 自己读取数据。平台设置和业务设置分别由 `features/settings` 与模块的设置组件负责。
+- Dashboard 合并模块 Widget 声明和持久化布局，业务 Widget 自己读取数据。平台设置和业务设置分别由 `features/settings` 与模块的设置组件负责。外部模块使用宿主通用 iframe 容器加载远端页面和设置，不注册总览 Widget、Job、事件或 AI Tool。
 
 这些边界描述当前实现。需求变化可以调整架构、契约和模块划分，调整时同时维护代码、迁移、测试和对应文档。

@@ -94,6 +94,12 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 
 测试后停止该服务，再清理本次临时目录。截图写入 `/tmp/workbench-platform-dashboard.png`、`/tmp/workbench-platform-mobile.png` 和 `/tmp/workbench-schwab-settings-mobile.png`。投资使用虚构的应用凭据验证本地设置，不发起真实 OAuth 或券商交易。
 
+### 外部模块
+
+先启动独立示例，再启动工作台，然后运行 `scripts/external-module.e2e.cjs`。需要 `EXAMPLE_URL` 和 `EXAMPLE_TOKEN`。脚本覆盖接入、深链接刷新、命令面板、停用后设置和桌面/移动视口，不连接真实券商。
+
+独立进程哈希检查见 `scripts/external-module-process.sh`。示例启动步骤见 [examples/external-module/README.md](../examples/external-module/README.md)。
+
 ### Wallos 和待办交互
 
 `wallos.e2e.cjs` 自行创建并清理临时数据库及模拟 Wallos 服务，启动指定的工作台程序，覆盖模块设置、密钥不回显、同步去重、完成/删除/重建、弹窗焦点、桌面/移动端布局与停用门控。

@@ -74,6 +74,28 @@ type EventsLog struct {
 	CreatedAt     int64          `json:"created_at"`
 }
 
+type ExternalModule struct {
+	ModuleID           string         `json:"module_id"`
+	RegistrationID     string         `json:"registration_id"`
+	ConnectionRevision int64          `json:"connection_revision"`
+	BaseUrl            string         `json:"base_url"`
+	AllowNonLocal      int64          `json:"allow_non_local"`
+	ServiceToken       string         `json:"service_token"`
+	ProtocolVersion    int64          `json:"protocol_version"`
+	ManifestJson       string         `json:"manifest_json"`
+	Generation         int64          `json:"generation"`
+	ObservedGeneration sql.NullInt64  `json:"observed_generation"`
+	ObservedEnabled    sql.NullInt64  `json:"observed_enabled"`
+	Health             string         `json:"health"`
+	LastError          sql.NullString `json:"last_error"`
+	LastCheckedAt      sql.NullInt64  `json:"last_checked_at"`
+	LastSuccessAt      sql.NullInt64  `json:"last_success_at"`
+	InstanceID         sql.NullString `json:"instance_id"`
+	ConnectionNote     sql.NullString `json:"connection_note"`
+	CreatedAt          int64          `json:"created_at"`
+	UpdatedAt          int64          `json:"updated_at"`
+}
+
 type Module struct {
 	ID              string `json:"id"`
 	Name            string `json:"name"`
@@ -82,6 +104,7 @@ type Module struct {
 	Enabled         int64  `json:"enabled"`
 	InstalledAt     int64  `json:"installed_at"`
 	UpdatedAt       int64  `json:"updated_at"`
+	Kind            string `json:"kind"`
 }
 
 type Notification struct {

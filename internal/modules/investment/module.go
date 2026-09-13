@@ -136,6 +136,24 @@ func (m *Module) AssetRoutes() []HTTPRoute {
 	}
 }
 
+func (m *Module) Routes() []contracts.ProvidedRoute {
+	routes := make([]contracts.ProvidedRoute, 0, 5)
+	for _, route := range m.PublicRoutes() {
+		routes = append(routes, contracts.ProvidedRoute{Method: route.Method, Pattern: route.Pattern, Handler: route.Handler, Class: contracts.RoutePublicCallback})
+	}
+	for _, route := range m.AssetRoutes() {
+		routes = append(routes, contracts.ProvidedRoute{Method: route.Method, Pattern: route.Pattern, Handler: route.Handler, Class: contracts.RouteProtectedAsset})
+	}
+	return routes
+}
+
+func (m *Module) OnEnabledChanged(_ context.Context, enabled bool) error {
+	if !enabled {
+		m.ResetStream()
+	}
+	return nil
+}
+
 // ResetStream invalidates existing streams when the module is disabled.
 func (m *Module) ResetStream() {
 	m.streamer.reset()

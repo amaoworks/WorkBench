@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>外部示例设置</title>
+  <style>
+    :root { color-scheme: light dark; font-family: Inter, "PingFang SC", sans-serif; }
+    body { margin: 0; padding: 8px 0; background: transparent; color: inherit; }
+    label, input, button { font: inherit; }
+    label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+    input { padding: 8px 10px; border-radius: 8px; border: 1px solid #dfe4d8; }
+    button { margin-top: 12px; padding: 8px 12px; border-radius: 8px; border: 0; background: #526b37; color: #fff; }
+    p { font-size: 13px; color: #697262; }
+  </style>
+</head>
+<body>
+  <form id="form">
+    <label>显示名称<input id="label" name="label" maxlength="80" /></label>
+    <button type="submit">保存配置</button>
+    <p id="status" role="status"></p>
+  </form>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const configPrefix = params.get("configPrefix") || "";
+    const status = document.getElementById("status");
+    async function csrf() {
+      const response = await fetch("/api/auth/csrf", { credentials: "same-origin" });
+      const body = await response.json();
+      return body.token;
+    }
+    async function load() {
+      if (!configPrefix) return;
+      const config = await fetch(configPrefix, { credentials: "same-origin" }).then((r) => r.json());
+      document.getElementById("label").value = config.label || "";
+    }
+    document.getElementById("form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      status.textContent = "正在保存…";
+      try {
+        const token = await csrf();
+        const response = await fetch(configPrefix, {
+          method: "PUT", credentials: "same-origin",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
+          body: JSON.stringify({ label: document.getElementById("label").value })
+        });
+        if (!response.ok) throw new Error("保存失败");
+        status.textContent = "配置已保存";
+      } catch (err) {
+        status.textContent = String(err.message || err);
+      }
+    });
+    load();
+  </script>
+</body>
+</html>

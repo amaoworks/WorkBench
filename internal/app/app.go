@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -34,6 +35,13 @@ import (
 	"workbench/internal/webui"
 )
 
+type builtinBinding struct {
+	id        contracts.ModuleID
+	module    contracts.Module
+	routes    contracts.ModuleRouteProvider
+	lifecycle contracts.ModuleLifecycle
+}
+
 type App struct {
 	config        Config
 	logger        *slog.Logger
@@ -54,7 +62,7 @@ type App struct {
 	logging       LoggingSettings
 	gateway       *ai.Gateway
 	textAI        *ai.TextService
-	investment    *investment.Module
+	builtins      []builtinBinding
 }
 
 func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
@@ -99,10 +107,14 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	if err != nil {
 		return fail(err)
 	}
-	registry, err := modules.Initialize(ctx, database, []contracts.Module{todoModule, investmentModule})
+	definitions := []contracts.Module{todoModule, investmentModule}
+	registry, err := modules.InitializeWith(ctx, database, definitions, modules.Options{
+		Logger: logger.With("component", "modules"),
+	})
 	if err != nil {
 		return fail(err)
 	}
+	builtins := bindBuiltinModules(definitions)
 
 	hub := notifications.NewHub()
 	consumers := append(registry.Catalog().Consumers, hub.Consumer())
@@ -152,7 +164,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	application := &App{
 		config: cfg, logger: logger, logLevel: logLevel, database: database, registry: registry,
 		dispatcher: dispatcher, scheduler: scheduled, auth: authService,
-		investment: investmentModule,
+		builtins: builtins,
 	}
 	application.gateway = gateway
 	application.textAI = textAI
@@ -200,14 +212,32 @@ func (a *App) routes(
 		r.Post("/login", a.auth.LoginHandler)
 		r.Post("/logout", a.auth.LogoutHandler)
 	})
-	for _, route := range a.investment.PublicRoutes() {
-		router.Method(route.Method, route.Pattern, route.Handler)
+	for _, binding := range a.builtins {
+		if binding.routes == nil {
+			continue
+		}
+		for _, route := range binding.routes.Routes() {
+			if route.Class == contracts.RoutePublicCallback {
+				router.Method(route.Method, route.Pattern, route.Handler)
+			}
+		}
 	}
 
 	router.Group(func(protected chi.Router) {
 		protected.Use(a.auth.Require)
 		protected.Get("/api/modules", a.listModules)
+		protected.Post("/api/modules/external", a.attachExternal)
+		protected.Delete("/api/modules/external/{id}", a.unregisterExternal)
 		protected.Put("/api/modules/{id}/enabled", a.setModuleEnabled)
+		protected.Put("/api/modules/{id}/connection", a.updateExternalConnection)
+		protected.Post("/api/modules/{id}/refresh", a.refreshExternal)
+		protected.Get("/api/modules/{id}/status", a.getModuleStatus)
+		protected.Get("/api/modules/{id}/config", a.getExternalConfig)
+		protected.Put("/api/modules/{id}/config", a.putExternalConfig)
+		protected.Handle("/modules/{id}/ui/*", a.registry.UIHandler())
+		protected.Method(http.MethodGet, "/modules/{id}/settings/*", a.registry.SettingsHandler())
+		protected.Method(http.MethodHead, "/modules/{id}/settings/*", a.registry.SettingsHandler())
+		protected.Handle("/api/modules/{id}/proxy/*", a.registry.APIProxyHandler())
 		protected.Get("/api/dashboard", dashboardService.ServeHTTP)
 		protected.Get("/api/dashboard/widgets", dashboardService.Catalog)
 		protected.Put("/api/dashboard/layout", dashboardService.Save)
@@ -231,24 +261,40 @@ func (a *App) routes(
 		for _, route := range a.registry.Catalog().Routes {
 			protected.Method(route.Method, route.Pattern, a.registry.Gate(route.Module, route.Handler))
 		}
-		for _, route := range a.investment.AssetRoutes() {
-			protected.Method(route.Method, route.Pattern, a.registry.Gate("investment", route.Handler))
+		for _, binding := range a.builtins {
+			if binding.routes == nil {
+				continue
+			}
+			for _, route := range binding.routes.Routes() {
+				if route.Class == contracts.RoutePublicCallback {
+					continue
+				}
+				protected.Method(route.Method, route.Pattern, a.registry.Gate(binding.id, route.Handler))
+			}
 		}
 	})
 	router.NotFound(ui.ServeHTTP)
 	return router
 }
 
+func bindBuiltinModules(definitions []contracts.Module) []builtinBinding {
+	bindings := make([]builtinBinding, 0, len(definitions))
+	for _, definition := range definitions {
+		binding := builtinBinding{id: definition.Manifest().ID, module: definition}
+		if routes, ok := definition.(contracts.ModuleRouteProvider); ok {
+			binding.routes = routes
+		}
+		if lifecycle, ok := definition.(contracts.ModuleLifecycle); ok {
+			binding.lifecycle = lifecycle
+		}
+		bindings = append(bindings, binding)
+	}
+	return bindings
+}
+
 func (a *App) listModules(w http.ResponseWriter, _ *http.Request) {
-	type moduleInfo struct {
-		contracts.ModuleManifest
-		Enabled bool `json:"enabled"`
-	}
-	items := make([]moduleInfo, 0, len(a.registry.Catalog().Manifests))
-	for _, manifest := range a.registry.Catalog().Manifests {
-		items = append(items, moduleInfo{ModuleManifest: manifest, Enabled: a.registry.IsEnabled(manifest.ID)})
-	}
-	httpapi.Write(w, http.StatusOK, map[string]any{"items": items})
+	w.Header().Set("Cache-Control", "no-store")
+	httpapi.Write(w, http.StatusOK, map[string]any{"items": a.registry.List()})
 }
 
 func (a *App) setModuleEnabled(w http.ResponseWriter, r *http.Request) {
@@ -260,15 +306,127 @@ func (a *App) setModuleEnabled(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := contracts.ModuleID(r.PathValue("id"))
+	if a.registry.IsExternal(id) {
+		result, err := a.registry.SetExternalEnabled(r.Context(), id, *input.Enabled)
+		if err != nil {
+			writeModuleError(w, err)
+			return
+		}
+		status := http.StatusOK
+		if result.Pending {
+			status = http.StatusAccepted
+		}
+		httpapi.Write(w, status, result.Module)
+		return
+	}
 	if err := a.registry.SetEnabled(r.Context(), id, *input.Enabled); err != nil {
 		httpapi.Error(w, http.StatusNotFound, "module_not_found", err.Error())
 		return
 	}
-	if id == "investment" && !*input.Enabled {
-		a.investment.ResetStream()
+	for _, binding := range a.builtins {
+		if binding.id == id && binding.lifecycle != nil {
+			if err := binding.lifecycle.OnEnabledChanged(r.Context(), *input.Enabled); err != nil {
+				a.logger.Error("module lifecycle failed", "component", "modules", "module", id, "error", err)
+			}
+			break
+		}
 	}
 	a.logger.Info("module state changed", "component", "modules", "module", id, "enabled", *input.Enabled)
-	httpapi.Write(w, http.StatusOK, map[string]any{"id": id, "enabled": *input.Enabled})
+	listed, _ := a.registry.GetListed(id)
+	httpapi.Write(w, http.StatusOK, listed)
+}
+
+func (a *App) attachExternal(w http.ResponseWriter, r *http.Request) {
+	var input modules.ConnectionInput
+	if err := httpapi.Decode(w, r, &input, 8192); err != nil {
+		httpapi.Error(w, http.StatusBadRequest, "invalid_request", "连接配置格式不正确")
+		return
+	}
+	listed, err := a.registry.Attach(r.Context(), input)
+	if err != nil {
+		writeModuleError(w, err)
+		return
+	}
+	httpapi.Write(w, http.StatusCreated, listed)
+}
+
+func (a *App) updateExternalConnection(w http.ResponseWriter, r *http.Request) {
+	var input modules.ConnectionInput
+	if err := httpapi.Decode(w, r, &input, 8192); err != nil {
+		httpapi.Error(w, http.StatusBadRequest, "invalid_request", "连接配置格式不正确")
+		return
+	}
+	listed, err := a.registry.UpdateConnection(r.Context(), contracts.ModuleID(r.PathValue("id")), input)
+	if err != nil {
+		writeModuleError(w, err)
+		return
+	}
+	httpapi.Write(w, http.StatusOK, listed)
+}
+
+func (a *App) refreshExternal(w http.ResponseWriter, r *http.Request) {
+	listed, err := a.registry.Refresh(r.Context(), contracts.ModuleID(r.PathValue("id")))
+	if err != nil {
+		writeModuleError(w, err)
+		return
+	}
+	httpapi.Write(w, http.StatusOK, listed)
+}
+
+func (a *App) getModuleStatus(w http.ResponseWriter, r *http.Request) {
+	listed, ok := a.registry.GetListed(contracts.ModuleID(r.PathValue("id")))
+	if !ok {
+		httpapi.Error(w, http.StatusNotFound, "module_not_found", "模块不存在")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpapi.Write(w, http.StatusOK, listed)
+}
+
+func (a *App) getExternalConfig(w http.ResponseWriter, r *http.Request) {
+	body, err := a.registry.GetConfig(r.Context(), contracts.ModuleID(r.PathValue("id")))
+	if err != nil {
+		writeModuleError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
+
+func (a *App) putExternalConfig(w http.ResponseWriter, r *http.Request) {
+	var raw json.RawMessage
+	if err := httpapi.Decode(w, r, &raw, 64<<10); err != nil {
+		httpapi.Error(w, http.StatusBadRequest, "invalid_request", "配置格式不正确")
+		return
+	}
+	body, err := a.registry.PutConfig(r.Context(), contracts.ModuleID(r.PathValue("id")), raw)
+	if err != nil {
+		writeModuleError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
+
+func (a *App) unregisterExternal(w http.ResponseWriter, r *http.Request) {
+	if err := a.registry.Unregister(r.Context(), contracts.ModuleID(r.PathValue("id"))); err != nil {
+		writeModuleError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func writeModuleError(w http.ResponseWriter, err error) {
+	var apiErr *modules.Error
+	if errors.As(err, &apiErr) {
+		httpapi.Error(w, apiErr.Status, apiErr.Code, apiErr.Message)
+		return
+	}
+	httpapi.Error(w, http.StatusInternalServerError, "internal_error", "模块操作失败")
 }
 
 func (a *App) Handler() http.Handler { return a.handler }
@@ -332,7 +490,7 @@ func (a *App) Run(ctx context.Context) error {
 	go func() {
 		serverDone <- a.server.Serve(listener)
 	}()
-	a.logger.Info("workbench started", "component", "app", "address", a.config.ListenAddress, "authMode", a.config.AuthMode, "publicURL", a.config.PublicURL)
+	a.logger.Info("workbench started", "component", "app", "address", listener.Addr().String(), "authMode", a.config.AuthMode, "publicURL", a.config.PublicURL)
 
 	select {
 	case <-ctx.Done():
@@ -350,7 +508,8 @@ func (a *App) Run(ctx context.Context) error {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), a.config.ShutdownGrace)
 	defer cancel()
-	a.investment.Close()
+	a.closeLifecycles()
+	_ = a.registry.Close()
 	serverErr := a.server.Shutdown(shutdownCtx)
 	schedulerErr := a.shutdownScheduler(shutdownCtx)
 	if serverErr == nil && schedulerErr == nil {
@@ -364,11 +523,19 @@ func (a *App) shutdownScheduler(ctx context.Context) error {
 	return a.schedulerErr
 }
 
+func (a *App) closeLifecycles() {
+	for _, binding := range a.builtins {
+		if binding.lifecycle != nil {
+			binding.lifecycle.Close()
+		}
+	}
+}
+
 func (a *App) Close() error {
 	var result error
 	a.closeOnce.Do(func() {
-		a.investment.Close()
-		result = errors.Join(a.shutdownScheduler(context.Background()), a.database.Close())
+		a.closeLifecycles()
+		result = errors.Join(a.registry.Close(), a.shutdownScheduler(context.Background()), a.database.Close())
 	})
 	return result
 }

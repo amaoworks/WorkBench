@@ -1,6 +1,6 @@
 # 外部业务模块第一阶段：设计、执行计划与验收指标
 
-状态：待实现。编写日期：2026-09-13。
+状态：已实现（2026-09-13）。协议与主题文档已按落地代码同步；验收对照见第 9 节。
 
 本文是供 AI agent 执行的阶段计划，描述目标行为，不代表当前代码已经具备这些能力。实现前核对工作区与本文列出的代码入口；实现后的实际接口应同步到现行架构、契约、安全和开发文档。
 
@@ -290,3 +290,35 @@ App 只负责构造内置模块并遍历这些契约。`investment.New(...)` 可
 5. 完成后把本文状态更新为实际进度，并让现行主题文档反映真实实现；本计划不长期替代接口和架构文档。
 
 第一阶段完成后，第二阶段可以沿用这套协议将投资前后端和数据整体迁入独立应用，再安排独立镜像发布与可选的券商接入服务拆分。
+
+## 11. 落地对照（A01–A16）
+
+| 编号 | 状态 | 证据 |
+|---|---|---|
+| A01 | 已实现，Go 独立进程测试已验证 | `TestIndependentExampleProcessAttachTwice`；`scripts/external-module-process.sh` |
+| A02 | 已实现，进程测试已验证 | 仅重启示例子进程后页面标题变化，宿主 Handler 不变 |
+| A03 | 已实现，已验证 | `TestStartupDoesNotClobberExternalOrUseStaleHealth`、`TestRestartReconfirmsEnabledModuleWithoutWaitingProbeInterval`、`TestExternalModuleHTTPAttachEnableConfigAndRestart` |
+| A04 | 已实现，已验证 | `TestEnableTimeoutReturnsPending`、`TestExternalEnablePendingDoesNotLookLikeSuccess` |
+| A05 | 已实现，已验证 | `TestEnableConfirmAndDisableGate`、`TestWebSocketClosedOnDisable` |
+| A06 | 已实现，已验证 | `TestConfigWhileDisabled`；停用后 settings/config 可用、业务 proxy 503 |
+| A07 | 已实现，已验证 | `TestOfflineDisableDoesNotClaimSuccessAndReconcilesAfterRecovery`、`TestIncompatibleDisableRetriesAfterRecovery`；不兼容状态下仍重试停用，业务入口保持关闭 |
+| A08 | 已实现，已验证 | `TestStaleGenerationDoesNotOverwrite`、`TestConcurrentEnableSettlesOnLatestIntent`；需 `go test -race` |
+| A09 | 已实现，已验证 | `TestConnectionUpdateRequiresDisableAndNewToken`、`TestWebSocketRejectsOldConnectionSnapshot`；拨号前、握手后和连接登记时校验注册身份、连接版本及启停代次 |
+| A10 | 已实现，已验证 | `TestProxyAuthBoundsAndCookieStrip`、`TestProxyRejectsUnsafeRedirectAndNonLocal`、`TestExternalAuthCSRFAndBuiltinGuard` |
+| A11 | 已实现，已验证 | `TestDuplicateAndReservedIDsRejected`、`TestUnsupportedProtocolKeepsLastGoodManifest`、`TestFailedPersistDoesNotPublishCatalog` |
+| A12 | 已实现，已验证 | `TestUnregisterRemovesRecordAndDoesNotResurrect` |
+| A13 | 已实现，已验证 | 现有 platform/investment/todo 测试；`TestRuntimePathsDoNotSpecialCaseInvestmentID` |
+| A14 | 已实现，已验证 | `TestAttachUnknownIDShowsNavigationAndDoesNotBlockList`；Registry.Close 取消探测 |
+| A15 | 已实现，已验证 | `TestUpgradePreservesBuiltinEnabled`；列表 JSON 不含 token |
+| A16 | 已实现，浏览器验证已通过 | `scripts/external-module.e2e.cjs` 已使用本机独立示例与 Chromium 实际执行成功；不能用静态存在或 API 测试替代 |
+
+现有投资浏览器脚本若因缺少 Schwab/TradingView 外部资源无法运行，记为跳过并说明原因，不得记为通过。富途功能已在前序提交中保留，不计入本阶段交付。
+
+### 2026-09-13 修复验证
+
+- 不兼容模块离线停用后，恢复服务会自动补发停用指令，且继续保留 incompatible 状态；见 `recovery_test.go`。
+- WebSocket 在拨号前、握手后和登记连接时验证同一注册身份、连接版本、Epoch 与控制 generation，拒绝配置切换前取得的旧快照；保留握手中停用的回归覆盖。
+- `SQLC_BIN=/root/go/bin/sqlc ./scripts/test.sh` 通过，包括 Go 测试、SQLC 一致性、前端 lint、38 项 JavaScript 测试及生产构建。
+- `go test -race ./internal/foundation/modules ./internal/app ./internal/modules/investment` 与示例模块的 `go test -race ./...` 通过。
+- 本机 Chromium 外部模块端到端脚本通过；独立示例启用、停用、解除接入、重新接入和再次启用均返回预期成功状态。
+- 本轮未执行依赖真实券商授权的投资浏览器流程；不能将其算作已验证。

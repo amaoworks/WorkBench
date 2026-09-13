@@ -21,7 +21,7 @@ src/styles.css          主题变量和共享样式
 
 ## 模块注册和缓存
 
-`src/modules/<id>/<id>.module.ts` 声明 pages、widgets、可选 icons 和 settings。Registry 自动收集声明，组件按需加载。后端 `pageKey/widgetKind` 只映射到已编译的本地注册项；Shell 和总览不包含业务组件实现。
+`src/modules/<id>/<id>.module.ts` 声明 pages、widgets、可选 icons 和 settings。Registry 自动收集声明，组件按需加载。后端 `pageKey/widgetKind` 只映射到已编译的本地注册项；Shell 和总览不包含业务组件实现。外部模块不进入该注册表，页面为 `/apps/{id}/{pageName}`，由通用 iframe 容器加载 `/modules/{id}/ui/*` 与设置 `/modules/{id}/settings/*`。未知图标回退到宿主默认图标。
 
 模块设置接收 `{ enabled: boolean }`，停用时不发起业务查询。设置弹窗由平台管理，没有设置组件的模块展示暂无配置内容。
 

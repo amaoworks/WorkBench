@@ -49,6 +49,7 @@ func TestRegistryPersistsEnabledStateAndGatesRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = registry.Close() })
 	if !registry.IsEnabled("todo") {
 		t.Fatal("new module should be enabled")
 	}
@@ -67,6 +68,7 @@ func TestRegistryPersistsEnabledStateAndGatesRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = reloaded.Close() })
 	if reloaded.IsEnabled("todo") {
 		t.Fatal("disabled state was not preserved across initialization")
 	}

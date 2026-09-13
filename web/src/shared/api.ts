@@ -38,5 +38,6 @@ export async function apiResponse(path: string, init: RequestInit = {}): Promise
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 	const response = await apiResponse(path, init);
   if (response.status === 204) return undefined as T;
+  if (response.status === 202) return response.json() as Promise<T>;
   return response.json() as Promise<T>;
 }

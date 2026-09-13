@@ -2,23 +2,66 @@ package modules
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"workbench/internal/contracts"
 	workbenchdb "workbench/internal/foundation/database"
-	"workbench/internal/foundation/database/sqlc"
+	dbsqlc "workbench/internal/foundation/database/sqlc"
 )
 
 const supportedContractVersion = 1
 
 var moduleIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
+
+type Timeouts struct {
+	Control       time.Duration
+	ProbeInterval time.Duration
+	RetryMax      time.Duration
+	MaxProbes     int
+}
+
+func DefaultTimeouts() Timeouts {
+	return Timeouts{
+		Control:       5 * time.Second,
+		ProbeInterval: 30 * time.Second,
+		RetryMax:      30 * time.Second,
+		MaxProbes:     4,
+	}
+}
+
+func (t Timeouts) withDefaults() Timeouts {
+	defaults := DefaultTimeouts()
+	if t.Control <= 0 {
+		t.Control = defaults.Control
+	}
+	if t.ProbeInterval <= 0 {
+		t.ProbeInterval = defaults.ProbeInterval
+	}
+	if t.RetryMax <= 0 {
+		t.RetryMax = defaults.RetryMax
+	}
+	if t.MaxProbes <= 0 {
+		t.MaxProbes = defaults.MaxProbes
+	}
+	return t
+}
+
+type Options struct {
+	Clock      func() time.Time
+	Timeouts   Timeouts
+	HTTPClient *http.Client
+	Logger     *slog.Logger
+}
 
 type Route struct {
 	Module  contracts.ModuleID
@@ -37,13 +80,32 @@ type Catalog struct {
 }
 
 type Registry struct {
-	queries *dbsqlc.Queries
-	catalog Catalog
-	mu      sync.RWMutex
-	enabled map[contracts.ModuleID]bool
+	db       *sql.DB
+	queries  *dbsqlc.Queries
+	catalog  Catalog
+	mu       sync.RWMutex
+	enabled  map[contracts.ModuleID]bool
+	external map[contracts.ModuleID]*externalModule
+
+	clock    func() time.Time
+	timeouts Timeouts
+	client   *http.Client
+	logger   *slog.Logger
+
+	probeSem   chan struct{}
+	bgCtx      context.Context
+	bgCancel   context.CancelFunc
+	wg         sync.WaitGroup
+	closed     atomic.Bool
+	sockets    *socketSet
+	transports *proxyTransports
 }
 
 func Initialize(ctx context.Context, database *workbenchdb.Database, definitions []contracts.Module) (*Registry, error) {
+	return InitializeWith(ctx, database, definitions, Options{})
+}
+
+func InitializeWith(ctx context.Context, database *workbenchdb.Database, definitions []contracts.Module, opts Options) (*Registry, error) {
 	if database == nil {
 		return nil, errors.New("database is required")
 	}
@@ -69,27 +131,93 @@ func Initialize(ctx context.Context, database *workbenchdb.Database, definitions
 	defer tx.Rollback()
 	queries := dbsqlc.New(tx)
 	for _, manifest := range catalog.Manifests {
-		err := queries.UpsertModule(ctx, dbsqlc.UpsertModuleParams{
+		rows, err := queries.UpsertBuiltinModule(ctx, dbsqlc.UpsertBuiltinModuleParams{
 			ID: string(manifest.ID), Name: manifest.Name, Version: manifest.Version,
 			ContractVersion: int64(manifest.ContractVersion), InstalledAt: now, UpdatedAt: now,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("sync module %q: %w", manifest.ID, err)
 		}
+		if rows != 1 {
+			return nil, fmt.Errorf("module id %q conflicts with an external module", manifest.ID)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit module sync: %w", err)
 	}
 
+	clock := opts.Clock
+	if clock == nil {
+		clock = func() time.Time { return time.Now().UTC() }
+	}
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	timeouts := opts.Timeouts.withDefaults()
+	bgCtx, bgCancel := context.WithCancel(context.Background())
 	registry := &Registry{
-		queries: dbsqlc.New(database.SQL()),
-		catalog: catalog,
-		enabled: make(map[contracts.ModuleID]bool, len(catalog.Manifests)),
+		db:         database.SQL(),
+		queries:    dbsqlc.New(database.SQL()),
+		catalog:    catalog,
+		enabled:    make(map[contracts.ModuleID]bool, len(catalog.Manifests)),
+		external:   make(map[contracts.ModuleID]*externalModule),
+		clock:      clock,
+		timeouts:   timeouts,
+		client:     opts.HTTPClient,
+		logger:     logger,
+		probeSem:   make(chan struct{}, timeouts.MaxProbes),
+		bgCtx:      bgCtx,
+		bgCancel:   bgCancel,
+		sockets:    newSocketSet(),
+		transports: newProxyTransports(),
 	}
 	if err := registry.reloadEnabled(ctx); err != nil {
+		bgCancel()
 		return nil, err
 	}
+	if err := registry.loadExternals(ctx); err != nil {
+		bgCancel()
+		return nil, err
+	}
+	registry.wg.Add(1)
+	go registry.probeLoop()
 	return registry, nil
+}
+
+func (r *Registry) Close() error {
+	if r == nil {
+		return nil
+	}
+	if !r.closed.CompareAndSwap(false, true) {
+		return nil
+	}
+	if r.bgCancel != nil {
+		r.bgCancel()
+	}
+	r.sockets.closeAll()
+	r.transports.closeAll()
+	r.wg.Wait()
+	return nil
+}
+
+func (r *Registry) SetTimeouts(t Timeouts) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.timeouts = t.withDefaults()
+}
+
+func (r *Registry) currentTimeouts() Timeouts {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.timeouts
+}
+
+func (r *Registry) now() time.Time {
+	if r.clock != nil {
+		return r.clock()
+	}
+	return time.Now().UTC()
 }
 
 type moduleMigration struct {
@@ -183,7 +311,57 @@ func (r *Registry) Catalog() Catalog { return r.catalog }
 func (r *Registry) IsEnabled(id contracts.ModuleID) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.enabled[id]
+	if enabled, ok := r.enabled[id]; ok {
+		return enabled
+	}
+	if ext, ok := r.external[id]; ok {
+		return ext.rec.Enabled
+	}
+	return false
+}
+
+func (r *Registry) IsExternal(id contracts.ModuleID) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.external[id]
+	return ok
+}
+
+func (r *Registry) IsBuiltin(id contracts.ModuleID) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.enabled[id]
+	return ok
+}
+
+func (r *Registry) List() []ListedModule {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	items := make([]ListedModule, 0, len(r.catalog.Manifests)+len(r.external))
+	for _, manifest := range r.catalog.Manifests {
+		items = append(items, listedBuiltin(manifest, r.enabled[manifest.ID]))
+	}
+	for _, ext := range r.external {
+		items = append(items, ext.listed())
+	}
+	slices.SortFunc(items, func(a, b ListedModule) int {
+		return strings.Compare(string(a.ID), string(b.ID))
+	})
+	return items
+}
+
+func (r *Registry) GetListed(id contracts.ModuleID) (ListedModule, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if ext, ok := r.external[id]; ok {
+		return ext.listed(), true
+	}
+	for _, manifest := range r.catalog.Manifests {
+		if manifest.ID == id {
+			return listedBuiltin(manifest, r.enabled[id]), true
+		}
+	}
+	return ListedModule{}, false
 }
 
 func (r *Registry) SetEnabled(ctx context.Context, id contracts.ModuleID, enabled bool) error {
@@ -224,6 +402,9 @@ func (r *Registry) reloadEnabled(ctx context.Context) error {
 	states := make(map[contracts.ModuleID]bool, len(known))
 	for _, row := range rows {
 		id := contracts.ModuleID(row.ID)
+		if row.Kind == "external" || id == reservedModuleID {
+			continue
+		}
 		if _, exists := known[id]; exists {
 			states[id] = row.Enabled != 0
 		}

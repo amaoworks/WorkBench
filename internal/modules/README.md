@@ -9,4 +9,4 @@
 
 `module.go` 聚焦构造、Manifest、迁移声明和注册，其余职责按需拆到同包文件；`migrations/`、`query/`、`sqlc/` 属于各业务。模块不能直接 import 其他业务、能力实现或 app，通过 contracts 和构造注入协作，不读写其他业务的表。
 
-`architecture_test.go` 检查后端业务 import 边界。新增模块结构、能力接入和前端注册见[业务开发指南](../../doc/business-development.md)。
+`architecture_test.go` 检查后端业务 import 边界。`external_isolation_test.go` 检查独立示例子模块不得导入 `workbench/internal`，核心也不得导入示例。新增模块结构、能力接入和前端注册见[业务开发指南](../../doc/business-development.md)。外部协议示例见 [examples/external-module](../../examples/external-module/README.md)。

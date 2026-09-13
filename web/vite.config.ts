@@ -10,7 +10,8 @@ export default defineConfig({
       "/health": "http://127.0.0.1:8080",
       "/oauth/schwab": "http://127.0.0.1:8080",
       "/investment/terminal": "http://127.0.0.1:8080",
-      "/charting_library": "http://127.0.0.1:8080"
+      "/charting_library": "http://127.0.0.1:8080",
+      "/modules": { target: "http://127.0.0.1:8080", ws: true }
     }
   },
   build: {

@@ -170,10 +170,12 @@ func TestUpgradeTodoOnlyWorkspacePreservesDataAndAddsDefaultWidget(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := module.Create(ctx, todo.CreateTask{Title: "Old workspace task"}); err != nil {
+	if err := registry.SetEnabled(ctx, "todo", false); err != nil {
+		_ = registry.Close()
 		t.Fatal(err)
 	}
-	if err := registry.SetEnabled(ctx, "todo", false); err != nil {
+	_ = registry.Close()
+	if _, err := module.Create(ctx, todo.CreateTask{Title: "Old workspace task"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.SQL().Exec(`INSERT INTO workspace_settings(section,value) VALUES('dashboard','[{"id":"todo.summary","visible":false,"size":"large","order":0}]')`); err != nil {

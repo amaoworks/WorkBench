@@ -7,15 +7,293 @@ package dbsqlc
 
 import (
 	"context"
+	"database/sql"
 )
 
+const deleteExternalModuleRow = `-- name: DeleteExternalModuleRow :execrows
+DELETE FROM modules WHERE id = ? AND kind = 'external'
+`
+
+func (q *Queries) DeleteExternalModuleRow(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteExternalModuleRow, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const getExternalModule = `-- name: GetExternalModule :one
+SELECT
+    m.id, m.name, m.version, m.enabled, m.installed_at, m.updated_at,
+    e.registration_id, e.connection_revision, e.base_url, e.allow_non_local, e.service_token,
+    e.protocol_version, e.manifest_json, e.generation, e.observed_generation, e.observed_enabled,
+    e.health, e.last_error, e.last_checked_at, e.last_success_at, e.instance_id, e.connection_note,
+    e.created_at, e.updated_at
+FROM external_modules e
+JOIN modules m ON m.id = e.module_id
+WHERE m.id = ?
+`
+
+type GetExternalModuleRow struct {
+	ID                 string         `json:"id"`
+	Name               string         `json:"name"`
+	Version            string         `json:"version"`
+	Enabled            int64          `json:"enabled"`
+	InstalledAt        int64          `json:"installed_at"`
+	UpdatedAt          int64          `json:"updated_at"`
+	RegistrationID     string         `json:"registration_id"`
+	ConnectionRevision int64          `json:"connection_revision"`
+	BaseUrl            string         `json:"base_url"`
+	AllowNonLocal      int64          `json:"allow_non_local"`
+	ServiceToken       string         `json:"service_token"`
+	ProtocolVersion    int64          `json:"protocol_version"`
+	ManifestJson       string         `json:"manifest_json"`
+	Generation         int64          `json:"generation"`
+	ObservedGeneration sql.NullInt64  `json:"observed_generation"`
+	ObservedEnabled    sql.NullInt64  `json:"observed_enabled"`
+	Health             string         `json:"health"`
+	LastError          sql.NullString `json:"last_error"`
+	LastCheckedAt      sql.NullInt64  `json:"last_checked_at"`
+	LastSuccessAt      sql.NullInt64  `json:"last_success_at"`
+	InstanceID         sql.NullString `json:"instance_id"`
+	ConnectionNote     sql.NullString `json:"connection_note"`
+	CreatedAt          int64          `json:"created_at"`
+	UpdatedAt_2        int64          `json:"updated_at_2"`
+}
+
+func (q *Queries) GetExternalModule(ctx context.Context, id string) (GetExternalModuleRow, error) {
+	row := q.db.QueryRowContext(ctx, getExternalModule, id)
+	var i GetExternalModuleRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Version,
+		&i.Enabled,
+		&i.InstalledAt,
+		&i.UpdatedAt,
+		&i.RegistrationID,
+		&i.ConnectionRevision,
+		&i.BaseUrl,
+		&i.AllowNonLocal,
+		&i.ServiceToken,
+		&i.ProtocolVersion,
+		&i.ManifestJson,
+		&i.Generation,
+		&i.ObservedGeneration,
+		&i.ObservedEnabled,
+		&i.Health,
+		&i.LastError,
+		&i.LastCheckedAt,
+		&i.LastSuccessAt,
+		&i.InstanceID,
+		&i.ConnectionNote,
+		&i.CreatedAt,
+		&i.UpdatedAt_2,
+	)
+	return i, err
+}
+
+const getModule = `-- name: GetModule :one
+SELECT id, name, version, contract_version, enabled, installed_at, updated_at, kind
+FROM modules WHERE id = ?
+`
+
+func (q *Queries) GetModule(ctx context.Context, id string) (Module, error) {
+	row := q.db.QueryRowContext(ctx, getModule, id)
+	var i Module
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Version,
+		&i.ContractVersion,
+		&i.Enabled,
+		&i.InstalledAt,
+		&i.UpdatedAt,
+		&i.Kind,
+	)
+	return i, err
+}
+
+const insertExternalModule = `-- name: InsertExternalModule :exec
+INSERT INTO external_modules(
+    module_id, registration_id, connection_revision, base_url, allow_non_local, service_token,
+    protocol_version, manifest_json, generation, observed_generation, observed_enabled, health,
+    last_error, last_checked_at, last_success_at, instance_id, connection_note, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`
+
+type InsertExternalModuleParams struct {
+	ModuleID           string         `json:"module_id"`
+	RegistrationID     string         `json:"registration_id"`
+	ConnectionRevision int64          `json:"connection_revision"`
+	BaseUrl            string         `json:"base_url"`
+	AllowNonLocal      int64          `json:"allow_non_local"`
+	ServiceToken       string         `json:"service_token"`
+	ProtocolVersion    int64          `json:"protocol_version"`
+	ManifestJson       string         `json:"manifest_json"`
+	Generation         int64          `json:"generation"`
+	ObservedGeneration sql.NullInt64  `json:"observed_generation"`
+	ObservedEnabled    sql.NullInt64  `json:"observed_enabled"`
+	Health             string         `json:"health"`
+	LastError          sql.NullString `json:"last_error"`
+	LastCheckedAt      sql.NullInt64  `json:"last_checked_at"`
+	LastSuccessAt      sql.NullInt64  `json:"last_success_at"`
+	InstanceID         sql.NullString `json:"instance_id"`
+	ConnectionNote     sql.NullString `json:"connection_note"`
+	CreatedAt          int64          `json:"created_at"`
+	UpdatedAt          int64          `json:"updated_at"`
+}
+
+func (q *Queries) InsertExternalModule(ctx context.Context, arg InsertExternalModuleParams) error {
+	_, err := q.db.ExecContext(ctx, insertExternalModule,
+		arg.ModuleID,
+		arg.RegistrationID,
+		arg.ConnectionRevision,
+		arg.BaseUrl,
+		arg.AllowNonLocal,
+		arg.ServiceToken,
+		arg.ProtocolVersion,
+		arg.ManifestJson,
+		arg.Generation,
+		arg.ObservedGeneration,
+		arg.ObservedEnabled,
+		arg.Health,
+		arg.LastError,
+		arg.LastCheckedAt,
+		arg.LastSuccessAt,
+		arg.InstanceID,
+		arg.ConnectionNote,
+		arg.CreatedAt,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
+const insertModule = `-- name: InsertModule :exec
+INSERT INTO modules(id, name, version, contract_version, enabled, installed_at, updated_at, kind)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`
+
+type InsertModuleParams struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Version         string `json:"version"`
+	ContractVersion int64  `json:"contract_version"`
+	Enabled         int64  `json:"enabled"`
+	InstalledAt     int64  `json:"installed_at"`
+	UpdatedAt       int64  `json:"updated_at"`
+	Kind            string `json:"kind"`
+}
+
+func (q *Queries) InsertModule(ctx context.Context, arg InsertModuleParams) error {
+	_, err := q.db.ExecContext(ctx, insertModule,
+		arg.ID,
+		arg.Name,
+		arg.Version,
+		arg.ContractVersion,
+		arg.Enabled,
+		arg.InstalledAt,
+		arg.UpdatedAt,
+		arg.Kind,
+	)
+	return err
+}
+
+const listExternalModules = `-- name: ListExternalModules :many
+SELECT
+    m.id, m.name, m.version, m.enabled, m.installed_at, m.updated_at,
+    e.registration_id, e.connection_revision, e.base_url, e.allow_non_local, e.service_token,
+    e.protocol_version, e.manifest_json, e.generation, e.observed_generation, e.observed_enabled,
+    e.health, e.last_error, e.last_checked_at, e.last_success_at, e.instance_id, e.connection_note,
+    e.created_at, e.updated_at
+FROM external_modules e
+JOIN modules m ON m.id = e.module_id
+ORDER BY m.id
+`
+
+type ListExternalModulesRow struct {
+	ID                 string         `json:"id"`
+	Name               string         `json:"name"`
+	Version            string         `json:"version"`
+	Enabled            int64          `json:"enabled"`
+	InstalledAt        int64          `json:"installed_at"`
+	UpdatedAt          int64          `json:"updated_at"`
+	RegistrationID     string         `json:"registration_id"`
+	ConnectionRevision int64          `json:"connection_revision"`
+	BaseUrl            string         `json:"base_url"`
+	AllowNonLocal      int64          `json:"allow_non_local"`
+	ServiceToken       string         `json:"service_token"`
+	ProtocolVersion    int64          `json:"protocol_version"`
+	ManifestJson       string         `json:"manifest_json"`
+	Generation         int64          `json:"generation"`
+	ObservedGeneration sql.NullInt64  `json:"observed_generation"`
+	ObservedEnabled    sql.NullInt64  `json:"observed_enabled"`
+	Health             string         `json:"health"`
+	LastError          sql.NullString `json:"last_error"`
+	LastCheckedAt      sql.NullInt64  `json:"last_checked_at"`
+	LastSuccessAt      sql.NullInt64  `json:"last_success_at"`
+	InstanceID         sql.NullString `json:"instance_id"`
+	ConnectionNote     sql.NullString `json:"connection_note"`
+	CreatedAt          int64          `json:"created_at"`
+	UpdatedAt_2        int64          `json:"updated_at_2"`
+}
+
+func (q *Queries) ListExternalModules(ctx context.Context) ([]ListExternalModulesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listExternalModules)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListExternalModulesRow{}
+	for rows.Next() {
+		var i ListExternalModulesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Version,
+			&i.Enabled,
+			&i.InstalledAt,
+			&i.UpdatedAt,
+			&i.RegistrationID,
+			&i.ConnectionRevision,
+			&i.BaseUrl,
+			&i.AllowNonLocal,
+			&i.ServiceToken,
+			&i.ProtocolVersion,
+			&i.ManifestJson,
+			&i.Generation,
+			&i.ObservedGeneration,
+			&i.ObservedEnabled,
+			&i.Health,
+			&i.LastError,
+			&i.LastCheckedAt,
+			&i.LastSuccessAt,
+			&i.InstanceID,
+			&i.ConnectionNote,
+			&i.CreatedAt,
+			&i.UpdatedAt_2,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listModuleStates = `-- name: ListModuleStates :many
-SELECT id, enabled FROM modules ORDER BY id
+SELECT id, enabled, kind FROM modules ORDER BY id
 `
 
 type ListModuleStatesRow struct {
 	ID      string `json:"id"`
 	Enabled int64  `json:"enabled"`
+	Kind    string `json:"kind"`
 }
 
 func (q *Queries) ListModuleStates(ctx context.Context) ([]ListModuleStatesRow, error) {
@@ -27,7 +305,7 @@ func (q *Queries) ListModuleStates(ctx context.Context) ([]ListModuleStatesRow, 
 	items := []ListModuleStatesRow{}
 	for rows.Next() {
 		var i ListModuleStatesRow
-		if err := rows.Scan(&i.ID, &i.Enabled); err != nil {
+		if err := rows.Scan(&i.ID, &i.Enabled, &i.Kind); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -59,17 +337,178 @@ func (q *Queries) SetModuleEnabled(ctx context.Context, arg SetModuleEnabledPara
 	return result.RowsAffected()
 }
 
-const upsertModule = `-- name: UpsertModule :exec
-INSERT INTO modules(id, name, version, contract_version, enabled, installed_at, updated_at)
-VALUES (?, ?, ?, ?, 1, ?, ?)
+const updateExternalConnection = `-- name: UpdateExternalConnection :exec
+UPDATE external_modules SET
+    connection_revision = ?,
+    base_url = ?,
+    allow_non_local = ?,
+    service_token = ?,
+    protocol_version = ?,
+    manifest_json = ?,
+    observed_generation = NULL,
+    observed_enabled = NULL,
+    health = 'unknown',
+    last_error = NULL,
+    instance_id = NULL,
+    connection_note = ?,
+    updated_at = ?
+WHERE module_id = ?
+`
+
+type UpdateExternalConnectionParams struct {
+	ConnectionRevision int64          `json:"connection_revision"`
+	BaseUrl            string         `json:"base_url"`
+	AllowNonLocal      int64          `json:"allow_non_local"`
+	ServiceToken       string         `json:"service_token"`
+	ProtocolVersion    int64          `json:"protocol_version"`
+	ManifestJson       string         `json:"manifest_json"`
+	ConnectionNote     sql.NullString `json:"connection_note"`
+	UpdatedAt          int64          `json:"updated_at"`
+	ModuleID           string         `json:"module_id"`
+}
+
+func (q *Queries) UpdateExternalConnection(ctx context.Context, arg UpdateExternalConnectionParams) error {
+	_, err := q.db.ExecContext(ctx, updateExternalConnection,
+		arg.ConnectionRevision,
+		arg.BaseUrl,
+		arg.AllowNonLocal,
+		arg.ServiceToken,
+		arg.ProtocolVersion,
+		arg.ManifestJson,
+		arg.ConnectionNote,
+		arg.UpdatedAt,
+		arg.ModuleID,
+	)
+	return err
+}
+
+const updateExternalGeneration = `-- name: UpdateExternalGeneration :exec
+UPDATE external_modules SET generation = ?, updated_at = ? WHERE module_id = ?
+`
+
+type UpdateExternalGenerationParams struct {
+	Generation int64  `json:"generation"`
+	UpdatedAt  int64  `json:"updated_at"`
+	ModuleID   string `json:"module_id"`
+}
+
+func (q *Queries) UpdateExternalGeneration(ctx context.Context, arg UpdateExternalGenerationParams) error {
+	_, err := q.db.ExecContext(ctx, updateExternalGeneration, arg.Generation, arg.UpdatedAt, arg.ModuleID)
+	return err
+}
+
+const updateExternalManifest = `-- name: UpdateExternalManifest :exec
+UPDATE external_modules SET
+    protocol_version = ?,
+    manifest_json = ?,
+    health = ?,
+    last_error = ?,
+    last_checked_at = ?,
+    last_success_at = ?,
+    updated_at = ?
+WHERE module_id = ?
+`
+
+type UpdateExternalManifestParams struct {
+	ProtocolVersion int64          `json:"protocol_version"`
+	ManifestJson    string         `json:"manifest_json"`
+	Health          string         `json:"health"`
+	LastError       sql.NullString `json:"last_error"`
+	LastCheckedAt   sql.NullInt64  `json:"last_checked_at"`
+	LastSuccessAt   sql.NullInt64  `json:"last_success_at"`
+	UpdatedAt       int64          `json:"updated_at"`
+	ModuleID        string         `json:"module_id"`
+}
+
+func (q *Queries) UpdateExternalManifest(ctx context.Context, arg UpdateExternalManifestParams) error {
+	_, err := q.db.ExecContext(ctx, updateExternalManifest,
+		arg.ProtocolVersion,
+		arg.ManifestJson,
+		arg.Health,
+		arg.LastError,
+		arg.LastCheckedAt,
+		arg.LastSuccessAt,
+		arg.UpdatedAt,
+		arg.ModuleID,
+	)
+	return err
+}
+
+const updateExternalObserved = `-- name: UpdateExternalObserved :exec
+UPDATE external_modules SET
+    observed_generation = ?,
+    observed_enabled = ?,
+    health = ?,
+    last_error = ?,
+    last_checked_at = ?,
+    last_success_at = ?,
+    instance_id = ?,
+    updated_at = ?
+WHERE module_id = ?
+`
+
+type UpdateExternalObservedParams struct {
+	ObservedGeneration sql.NullInt64  `json:"observed_generation"`
+	ObservedEnabled    sql.NullInt64  `json:"observed_enabled"`
+	Health             string         `json:"health"`
+	LastError          sql.NullString `json:"last_error"`
+	LastCheckedAt      sql.NullInt64  `json:"last_checked_at"`
+	LastSuccessAt      sql.NullInt64  `json:"last_success_at"`
+	InstanceID         sql.NullString `json:"instance_id"`
+	UpdatedAt          int64          `json:"updated_at"`
+	ModuleID           string         `json:"module_id"`
+}
+
+func (q *Queries) UpdateExternalObserved(ctx context.Context, arg UpdateExternalObservedParams) error {
+	_, err := q.db.ExecContext(ctx, updateExternalObserved,
+		arg.ObservedGeneration,
+		arg.ObservedEnabled,
+		arg.Health,
+		arg.LastError,
+		arg.LastCheckedAt,
+		arg.LastSuccessAt,
+		arg.InstanceID,
+		arg.UpdatedAt,
+		arg.ModuleID,
+	)
+	return err
+}
+
+const updateModuleIdentity = `-- name: UpdateModuleIdentity :exec
+UPDATE modules SET name = ?, version = ?, updated_at = ? WHERE id = ? AND kind = ?
+`
+
+type UpdateModuleIdentityParams struct {
+	Name      string `json:"name"`
+	Version   string `json:"version"`
+	UpdatedAt int64  `json:"updated_at"`
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+}
+
+func (q *Queries) UpdateModuleIdentity(ctx context.Context, arg UpdateModuleIdentityParams) error {
+	_, err := q.db.ExecContext(ctx, updateModuleIdentity,
+		arg.Name,
+		arg.Version,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.Kind,
+	)
+	return err
+}
+
+const upsertBuiltinModule = `-- name: UpsertBuiltinModule :execrows
+INSERT INTO modules(id, name, version, contract_version, enabled, installed_at, updated_at, kind)
+VALUES (?, ?, ?, ?, 1, ?, ?, 'builtin')
 ON CONFLICT(id) DO UPDATE SET
     name = excluded.name,
     version = excluded.version,
     contract_version = excluded.contract_version,
     updated_at = excluded.updated_at
+WHERE modules.kind = 'builtin'
 `
 
-type UpsertModuleParams struct {
+type UpsertBuiltinModuleParams struct {
 	ID              string `json:"id"`
 	Name            string `json:"name"`
 	Version         string `json:"version"`
@@ -78,8 +517,8 @@ type UpsertModuleParams struct {
 	UpdatedAt       int64  `json:"updated_at"`
 }
 
-func (q *Queries) UpsertModule(ctx context.Context, arg UpsertModuleParams) error {
-	_, err := q.db.ExecContext(ctx, upsertModule,
+func (q *Queries) UpsertBuiltinModule(ctx context.Context, arg UpsertBuiltinModuleParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, upsertBuiltinModule,
 		arg.ID,
 		arg.Name,
 		arg.Version,
@@ -87,5 +526,8 @@ func (q *Queries) UpsertModule(ctx context.Context, arg UpsertModuleParams) erro
 		arg.InstalledAt,
 		arg.UpdatedAt,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

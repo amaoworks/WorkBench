@@ -312,6 +312,14 @@ html[data-motion="reduced"] *, html[data-motion="reduced"] *::before, html[data-
 .module-settings-header p { margin-top: 4px; font-size: 13px; color: var(--muted); }
 .module-settings-body { padding: 20px; }
 .module-settings-notice { margin-bottom: 16px; padding: 12px; border-radius: 8px; background: var(--soft); color: var(--muted); font-size: 13px; }
+.module-settings-dialog.is-external { width: min(720px, calc(100% - 32px)); }
+.external-module-frame { width: 100%; min-height: 70vh; border: 0; background: transparent; }
+.external-attach, .external-connect { display: grid; gap: 12px; padding: 16px 0 24px; border-bottom: 1px solid var(--border); width: 100%; }
+@media (max-width: 600px) {
+  .module-settings-dialog, .module-settings-dialog.is-external { width: calc(100% - 16px); max-height: calc(100dvh - 16px); }
+  .external-module-frame { min-height: 60vh; }
+  .module-actions { width: 100%; justify-content: flex-end; flex-wrap: wrap; }
+}
 .layout-row select { width: 80px; }
 .settings-tabs { overflow-x: auto; overflow-y: hidden; }
 .settings-tabs > button { white-space: nowrap; }

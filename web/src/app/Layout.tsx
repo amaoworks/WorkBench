@@ -18,6 +18,7 @@ const NotificationsPage = lazy(() => import("../features/notifications/Notificat
 const SettingsPage = lazy(() => import("../features/settings/SettingsPage"));
 
 import { pageRegistry, iconRegistry } from "../modules/registry";
+import { ExternalPage } from "./ExternalPage";
 
 export function Layout() {
   const modules = useModules();
@@ -76,6 +77,7 @@ export function Layout() {
               <Route path="notifications" element={<NotificationsPage />} />
               <Route path="settings" element={<SettingsPage />} />
               {navigation.map((item) => { const Page = pageRegistry[item.pageKey]; return Page ? <Route key={item.pageKey} path={item.route.replace(/^\//, "")} element={<Page />} /> : null; })}
+              <Route path="apps/:moduleId/:pageName" element={<ExternalPage />} />
               <Route path="*" element={<UnknownPage />} />
             </Routes>
           </Suspense>

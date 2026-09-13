@@ -14,7 +14,14 @@ Register(ModuleRegistrar) error
 
 Manifest 声明 ID、显示名称、业务版本、契约版本、图标和导航。当前契约版本为 1。`Migrations` 提供本模块的 `fs.FS` 和目录；`Register` 调用 `Handle`、`Consume`、`Job`、`Tool`、`Widget` 声明资源。
 
-资源声明含模块归属，名称以模块 ID 为前缀，注册时检查有效性和重复项。App 负责构造模块与所需服务。当前注册表在构建程序时确定，模块开关不会加载额外代码。
+资源声明含模块归属，名称以模块 ID 为前缀，注册时检查有效性和重复项。App 负责构造模块与所需服务。内置注册表在构建程序时确定；外部模块通过 HTTP 协议在运行时接入，见下文。
+
+可选契约：
+
+- [ModuleLifecycle](../internal/contracts/lifecycle.go)：`OnEnabledChanged`、`Close`。无后台资源的模块可以不实现。App 遍历该接口，不再按模块 ID 分支。
+- [ModuleRouteProvider](../internal/contracts/lifecycle.go)：额外声明公共回调或受保护静态入口。公共回调必须显式标注，不会因为普通业务注册而匿名开放。
+
+外部协议类型在 [external.go](../internal/contracts/external.go)，`protocolVersion` 当前为 1，与内置 `contractVersion` 分开。远端管理路径为 `/_workbench/manifest|status|state|config`。
 
 ## 事件、调度和通知
 
@@ -55,8 +62,17 @@ JSON 错误使用 `code`、`message`，并可含 `details`、`requestId`，定�
 | GET | `/health/live`、`/health/ready` | 存活、数据库就绪 |
 | GET | `/api/auth/status`、`/api/auth/csrf` | 登录状态、CSRF token |
 | POST | `/api/auth/login`、`/api/auth/logout` | 登录、退出 |
-| GET | `/api/modules` | 模块描述与状态 |
-| PUT | `/api/modules/{id}/enabled` | 保存 `{ enabled }` |
+| GET | `/api/modules` | 合并内置与外部目录（含 `kind`），只返回缓存状态 |
+| POST | `/api/modules/external` | 校验连接并接入外部模块，成功 201 |
+| PUT | `/api/modules/{id}/enabled` | 保存 `{ enabled }`；外部模块确认后 200，意图已保存等待确认时 202 |
+| PUT | `/api/modules/{id}/connection` | 更新外部连接；要求已停用，更换 origin 须重新提供凭据 |
+| POST | `/api/modules/{id}/refresh` | 有界刷新外部 manifest/状态 |
+| GET | `/api/modules/{id}/status` | 已缓存状态 |
+| GET / PUT | `/api/modules/{id}/config` | 外部业务配置，停用时仍可用 |
+| DELETE | `/api/modules/external/{id}` | 解除外部接入（已停用且已确认，或不曾启用） |
+| GET | `/modules/{id}/ui/*` | 外部业务页面代理，需已启用并确认 |
+| GET / HEAD | `/modules/{id}/settings/*` | 外部设置页代理，停用时可用 |
+| * | `/api/modules/{id}/proxy/*` | 外部业务 API/WebSocket 代理，需已启用并确认 |
 | GET | `/api/dashboard`、`/api/dashboard/widgets` | 可见卡片、完整卡片目录 |
 | PUT / DELETE | `/api/dashboard/layout` | 保存 `{ items }` / 恢复默认布局 |
 | GET | `/api/notifications` | 支持 unread、limit、cursor 的列表 |
@@ -72,6 +88,6 @@ JSON 错误使用 `code`、`message`，并可含 `details`、`requestId`，定�
 | PUT | `/api/settings/password` | 验证当前密码并修改 |
 | POST | `/api/system/backup` | 创建服务端备份，返回文件名 |
 
-除健康检查和鉴权入口外，上述平台 API 经过登录校验；local 模式免登录。Host、Origin 和 CSRF 保护由外层中间件处理，local 模式也保留请求保护。业务 API 另外经过模块启停门控，停用时返回 HTTP 503 和 `module_disabled`。
+除健康检查和鉴权入口外，上述平台 API 经过登录校验；local 模式免登录。Host、Origin 和 CSRF 保护由外层中间件处理，local 模式也保留请求保护。业务 API 另外经过模块启停门控，停用时返回 HTTP 503 和 `module_disabled`。外部业务代理还要求当前连接的当前代数已确认启用，且健康不是 `offline` 或 `incompatible`。
 
 业务 HTTP、资源标识和字段说明见 [Todo](modules/todo.md)、[Wallos](modules/todo-wallos.md) 和 [Investment](modules/investment.md)。

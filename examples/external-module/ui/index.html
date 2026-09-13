@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>外部示例</title>
+  <style>
+    :root { color-scheme: light dark; font-family: Inter, "PingFang SC", sans-serif; }
+    body { margin: 0; padding: 24px; background: var(--bg, #f5f6f1); color: var(--fg, #292e26); }
+    body.dark { --bg: #171b15; --fg: #e6ebdf; }
+    h1 { font-size: 22px; margin: 0 0 8px; }
+    p { color: #697262; }
+    body.dark p { color: #a4af9b; }
+    .card { border: 1px solid #dfe4d8; border-radius: 10px; padding: 16px; background: #fffefa; }
+    body.dark .card { border-color: #394232; background: #20261c; }
+  </style>
+</head>
+<body>
+  <h1 id="title">外部示例</h1>
+  <p id="subtitle">独立进程页面，由 Workbench 同源 iframe 嵌入。</p>
+  <div class="card">
+    <p>计数：<strong id="count">0</strong> · 任务：<span id="running">未启动</span></p>
+    <p id="config"></p>
+  </div>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const apiPrefix = params.get("apiPrefix") || "";
+    const configPrefix = params.get("configPrefix") || "";
+    const title = document.getElementById("title");
+    title.textContent = params.get("title") || "外部示例";
+    function applyTheme(theme) {
+      document.body.classList.toggle("dark", theme === "dark");
+    }
+    applyTheme(params.get("theme") || "light");
+    window.addEventListener("message", (event) => {
+      if (event.origin !== location.origin || event.source !== window.parent) return;
+      if (event.data && event.data.type === "workbench.theme") applyTheme(event.data.theme);
+    });
+    async function load() {
+      if (apiPrefix) {
+        const counter = await fetch(apiPrefix + "/counter", { credentials: "same-origin" }).then((r) => r.json()).catch(() => null);
+        if (counter) {
+          document.getElementById("count").textContent = String(counter.value ?? 0);
+          document.getElementById("running").textContent = counter.running ? "运行中" : "已停止";
+        }
+      }
+      if (configPrefix) {
+        const config = await fetch(configPrefix, { credentials: "same-origin" }).then((r) => r.json()).catch(() => null);
+        if (config && config.label) document.getElementById("config").textContent = "配置：" + config.label;
+      }
+    }
+    load();
+    if (apiPrefix) {
+      const stream = new WebSocket((location.protocol === "https:" ? "wss:" : "ws:") + "//" + location.host + apiPrefix + "/stream");
+      stream.addEventListener("message", (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          document.getElementById("count").textContent = String(data.value ?? 0);
+          document.getElementById("running").textContent = data.running ? "运行中" : "已停止";
+        } catch {}
+      });
+    }
+  </script>
+</body>
+</html>
