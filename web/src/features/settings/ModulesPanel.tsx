@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { api, apiResponse } from "../../shared/api";
 import type { ExternalModule, WorkbenchModule } from "../../shared/schema";
@@ -35,8 +35,7 @@ export function ModulesPanel() {
   if (modules.isPending) return <Skeleton className="h-32" />;
   if (modules.isError) return <p role="alert">模块加载失败：{modules.error.message}</p>;
   return <div className="studio-form">
-    <div className="control-heading"><div><h3>业务模块</h3><p>停用后隐藏页面和总览，数据会保留。外部模块可在不停用宿主的情况下接入。</p></div></div>
-    <AttachForm onAttached={refresh} />
+    <div className="control-heading"><div><h3>业务模块</h3><p>管理项目已注册的业务模块。停用后隐藏页面和总览卡片，数据会保留。</p></div></div>
     {modules.data.items.map((module) => <div key={module.id} className="module-row">
       <div>
         <h3>{module.name}</h3>
@@ -60,28 +59,6 @@ function moduleStatus(module: WorkbenchModule) {
   if (module.health === "offline") return "已停用 · 服务不可达";
   if (module.health === "incompatible") return "协议不兼容";
   return module.enabled ? "已启用" : "已停用";
-}
-
-function AttachForm({ onAttached }: { onAttached: () => Promise<void> }) {
-  const [baseUrl, setBaseUrl] = useState("");
-  const [serviceToken, setServiceToken] = useState("");
-  const [allowNonLocal, setAllowNonLocal] = useState(false);
-  const attach = useMutation({
-    mutationFn: () => api("/api/modules/external", { method: "POST", body: JSON.stringify({ baseUrl, serviceToken, allowNonLocal }) }),
-    onSuccess: async () => { setBaseUrl(""); setServiceToken(""); toast.success("已接入外部模块"); await onAttached(); },
-    onError: (err) => toast.error(err.message)
-  });
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    attach.mutate();
-  }
-  return <form onSubmit={submit} className="external-attach">
-    <h3>接入外部服务</h3>
-    <label className="studio-field"><span>服务地址</span><input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="http://127.0.0.1:8091" required /></label>
-    <label className="studio-field"><span>服务凭据</span><input type="password" autoComplete="new-password" value={serviceToken} onChange={(event) => setServiceToken(event.target.value)} required /></label>
-    <label className="check-option"><input type="checkbox" checked={allowNonLocal} onChange={(event) => setAllowNonLocal(event.target.checked)} />允许非本机地址</label>
-    <Button type="submit" disabled={attach.isPending}>{attach.isPending ? "正在接入…" : "接入"}</Button>
-  </form>;
 }
 
 function ExternalActions({ module, onChange }: { module: ExternalModule; onChange: () => Promise<void> }) {

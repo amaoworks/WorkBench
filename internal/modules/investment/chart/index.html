@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>投资终端</title>
   <style>
-    html, body, #tv_chart_container { margin: 0; height: 100%; background: #131722; }
+    html, body, #tv_chart_container { margin: 0; height: 100%; background: var(--terminal-background, #fff); }
   </style>
 </head>
 <body>
@@ -17,6 +17,7 @@
     import Broker from "/investment/terminal/broker.js";
     import { SchwabStream } from "/investment/terminal/stream.js";
     import { FutuStream } from "/investment/terminal/futu.js";
+    import { bindTheme } from "/investment/terminal/theme.js";
 
     const params = new URLSearchParams(location.search);
     const theme = params.get("theme") === "dark" ? "dark" : "light";
@@ -24,8 +25,11 @@
     window.futu = new FutuStream();
     const status = document.getElementById('stream-status');
     window.addEventListener('SCHWAB_STREAM_READY', () => { status.hidden = true; });
-    window.addEventListener('SCHWAB_STREAM_CLOSED', () => { status.hidden = false; });
-    let broker, widget, disposed = false;
+    window.addEventListener('SCHWAB_STREAM_CLOSED', () => {
+      status.hidden = false;
+      window.parent.postMessage({ type: 'workbench.schwab.status_changed' }, location.origin);
+    });
+    let broker, widget, unbindTheme, disposed = false;
     const datafeed = new Datafeed({ futuStream: window.futu, resetCharts: () => {
       widget.chartReady().then(() => {
         if (disposed || !window.ws.ready) return;
@@ -33,7 +37,7 @@
         for (let i = 0; i < widget.chartsCount(); i++) widget.chart(i).resetData();
       }).catch(() => { status.hidden = false; });
     } });
-    window.addEventListener('pagehide', () => { disposed = true; window.ws.close(); window.futu.close(); datafeed.destroy(); broker?.destroy(); });
+    window.addEventListener('pagehide', () => { disposed = true; unbindTheme?.(); window.ws.close(); window.futu.close(); datafeed.destroy(); broker?.destroy(); });
 
     widget = new tvWidget({
       datafeed,
@@ -68,7 +72,7 @@
         }
       }
     });
-    widget.chartReady().then(function () {});
+    unbindTheme = bindTheme(widget, theme);
   </script>
 </body>
 </html>

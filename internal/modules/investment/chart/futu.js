@@ -92,7 +92,7 @@ export class FutuStream {
                 return;
             }
             const body = await response.clone().json().catch(() => ({}));
-            if (!body.enabled) {
+            if (!body.enabled || !body.overnightEnabled) {
                 this.wanted = false;
                 return;
             }

@@ -17,12 +17,9 @@ go build -o /tmp/workbench-example-external ./examples/external-module
 /tmp/workbench-example-external -listen 127.0.0.1:8091 -token example-token
 ```
 
-保持 Workbench 已在运行。打开设置 → 业务模块 → 接入外部服务：
+当前版本只从项目代码和文件注册新业务模块，已移除设置页的网址接入入口及 `POST /api/modules/external`。本示例保留用于旧工作空间外部模块的兼容测试。
 
-- 服务地址：`http://127.0.0.1:8091`
-- 服务凭据：`example-token`
-
-接入后默认停用。启用后打开 `/apps/demo_external/overview`，设置页可在停用时继续保存配置。
+已有 `demo_external` 注册记录的工作空间仍可启停、修改设置并访问 `/apps/demo_external/overview`。Go 兼容测试通过内部 `Registry.Attach` 建立 fixture，不提供运行时注册新模块的公开入口。
 
 ## 测试参数
 

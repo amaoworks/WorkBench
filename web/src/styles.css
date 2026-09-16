@@ -60,7 +60,6 @@ input, textarea { accent-color: var(--brand); }
 .focus-ring:focus-visible, :is(button, a, input, textarea, summary, [role="tabpanel"]):focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
 .workbench-shell { background: var(--canvas); color: var(--ink); }
 .brand-mark { display: grid; place-items: center; width: 34px; height: 34px; flex-shrink: 0; background: var(--brand); color: var(--on-brand); border-radius: 10px; }
-.brand-period { color: var(--brand); }
 .workspace-logo { height: 64px; }
 .workspace-nav-link { color: var(--muted); margin-bottom: 4px; min-height: 42px; }
 .workspace-nav-link:hover { background: var(--soft); color: var(--ink); }

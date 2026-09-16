@@ -3,13 +3,14 @@ set -eu
 
 OPEND_DIR=${FUTU_OPEND_DIR:-/opt/FutuOpenD}
 DATA_DIR=${FUTU_OPEND_DATA:-/home/futu/.com.futunn.FutuOpenD}
-VER=${FUTU_OPEND_VER:-10.10.7008}
+VER=${FUTU_OPEND_VER:-10.9.6908}
 IP=${FUTU_OPEND_IP:-0.0.0.0}
 PORT=${FUTU_OPEND_PORT:-11111}
 TELNET_PORT=${FUTU_OPEND_TELNET_PORT:-22222}
 LANG=${FUTU_LANG:-chs}
 LOG_LEVEL=${FUTU_LOG_LEVEL:-info}
 
+if [ -z "${FUTU_LOGIN_CONFIG:-}" ]; then
 if [ -z "${FUTU_ACCOUNT_ID:-}" ]; then
     echo "FUTU_ACCOUNT_ID is required" >&2
     exit 1
@@ -29,15 +30,17 @@ if [ "${#FUTU_ACCOUNT_PWD_MD5}" -ne 32 ]; then
     exit 1
 fi
 
+fi
+
 mkdir -p "$OPEND_DIR" "$DATA_DIR"
 cd "$OPEND_DIR"
 
-if [ ! -x "$OPEND_DIR/FutuOpenD" ]; then
+if [ ! -x "$OPEND_DIR/FutuOpenD" ] || [ "$(cat "$OPEND_DIR/.workbench-version" 2>/dev/null || true)" != "$VER" ]; then
     echo "OpenD binary missing; downloading $VER"
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' EXIT
     downloaded=
-    for dist in Ubuntu16.04 Ubuntu18.04; do
+    for dist in Ubuntu18.04; do
         name="Futu_OpenD_${VER}_${dist}.tar.gz"
         url="https://softwaredownload.futunn.com/${name}"
         echo "trying $url"
@@ -56,10 +59,16 @@ if [ ! -x "$OPEND_DIR/FutuOpenD" ]; then
         exit 1
     fi
     chmod +x "$OPEND_DIR/FutuOpenD"
+    printf '%s' "$VER" > "$OPEND_DIR/.workbench-version"
     rm -rf "$tmp"
     trap - EXIT
 fi
 
+if [ -n "${FUTU_LOGIN_CONFIG:-}" ]; then
+    exec python3 /usr/local/bin/manage-opend
+fi
+
+umask 077
 cfg=$(mktemp)
 sed \
     -e "s|<ip>.*</ip>|<ip>${IP}</ip>|" \
@@ -73,4 +82,4 @@ sed \
     /opt/template/FutuOpenD.xml.template > "$cfg"
 
 echo "starting FutuOpenD on ${IP}:${PORT} (telnet ${TELNET_PORT} for 2FA if prompted)"
-exec "$OPEND_DIR/FutuOpenD" -cfg_file="$cfg"
+exec "$OPEND_DIR/FutuOpenD" -no_monitor=1 -cfg_file="$cfg"

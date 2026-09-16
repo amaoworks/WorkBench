@@ -103,10 +103,19 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 		return fail(err)
 	}
 	textAI := ai.NewTextService()
-	investmentModule, err := investment.New(investment.Dependencies{DB: database.SQL(), Logger: logger.With("component", "investment")})
+	if cfg.FutuRuntimeDir == "" {
+		cfg.FutuRuntimeDir = filepath.Join(filepath.Dir(cfg.DataPath), "futu-opend")
+	}
+	investmentModule, err := investment.New(investment.Dependencies{DB: database.SQL(), Logger: logger.With("component", "investment"), FutuConfigDir: cfg.FutuConfigDir, FutuRuntimeDir: cfg.FutuRuntimeDir, FutuOpenDBinary: cfg.FutuOpenDBinary, FutuOpenDAddress: cfg.FutuOpenDAddress, FutuAllowNonLocal: cfg.FutuAllowNonLocal})
 	if err != nil {
 		return fail(err)
 	}
+	ready := false
+	defer func() {
+		if !ready {
+			investmentModule.Close()
+		}
+	}()
 	definitions := []contracts.Module{todoModule, investmentModule}
 	registry, err := modules.InitializeWith(ctx, database, definitions, modules.Options{
 		Logger: logger.With("component", "modules"),
@@ -179,6 +188,11 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 		WriteTimeout: 0, IdleTimeout: 2 * time.Minute,
 		ErrorLog: slog.NewLogLogger(logger.With("component", "http").Handler(), slog.LevelError),
 	}
+	if err := investmentModule.OnEnabledChanged(ctx, registry.IsEnabled("investment")); err != nil {
+		_ = scheduled.Shutdown(context.Background())
+		return fail(fmt.Errorf("restore OpenD service: %w", err))
+	}
+	ready = true
 	logger.Debug("workspace initialized", "component", "app", "modules", len(registry.Catalog().Manifests))
 	return application, nil
 }
@@ -226,7 +240,6 @@ func (a *App) routes(
 	router.Group(func(protected chi.Router) {
 		protected.Use(a.auth.Require)
 		protected.Get("/api/modules", a.listModules)
-		protected.Post("/api/modules/external", a.attachExternal)
 		protected.Delete("/api/modules/external/{id}", a.unregisterExternal)
 		protected.Put("/api/modules/{id}/enabled", a.setModuleEnabled)
 		protected.Put("/api/modules/{id}/connection", a.updateExternalConnection)
@@ -334,20 +347,6 @@ func (a *App) setModuleEnabled(w http.ResponseWriter, r *http.Request) {
 	a.logger.Info("module state changed", "component", "modules", "module", id, "enabled", *input.Enabled)
 	listed, _ := a.registry.GetListed(id)
 	httpapi.Write(w, http.StatusOK, listed)
-}
-
-func (a *App) attachExternal(w http.ResponseWriter, r *http.Request) {
-	var input modules.ConnectionInput
-	if err := httpapi.Decode(w, r, &input, 8192); err != nil {
-		httpapi.Error(w, http.StatusBadRequest, "invalid_request", "连接配置格式不正确")
-		return
-	}
-	listed, err := a.registry.Attach(r.Context(), input)
-	if err != nil {
-		writeModuleError(w, err)
-		return
-	}
-	httpapi.Write(w, http.StatusCreated, listed)
 }
 
 func (a *App) updateExternalConnection(w http.ResponseWriter, r *http.Request) {

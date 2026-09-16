@@ -12,17 +12,22 @@ import (
 )
 
 type Config struct {
-	ListenAddress string
-	DataPath      string
-	AuthMode      auth.Mode
-	Password      string
-	PublicURL     string
-	AllowedHosts  []string
-	OpenAIAPIKey  string
-	OpenAIBaseURL string
-	OpenAIModel   string
-	ShutdownGrace time.Duration
-	LogLevel      string
+	ListenAddress     string
+	DataPath          string
+	AuthMode          auth.Mode
+	Password          string
+	PublicURL         string
+	AllowedHosts      []string
+	OpenAIAPIKey      string
+	OpenAIBaseURL     string
+	OpenAIModel       string
+	ShutdownGrace     time.Duration
+	LogLevel          string
+	FutuConfigDir     string
+	FutuRuntimeDir    string
+	FutuOpenDBinary   string
+	FutuOpenDAddress  string
+	FutuAllowNonLocal bool
 }
 
 func DefaultConfig() (Config, error) {

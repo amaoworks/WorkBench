@@ -1,54 +1,44 @@
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "../../components/ui/Button";
-import { disconnectFutu, saveFutuSettings, useFutuSettings, useRefreshInvestment } from "./queries";
+import { saveFutuSettings, useFutuSettings, useRefreshInvestment } from "./queries";
 import type { FutuSettings as Settings } from "./schema";
 
 export default function FutuSettings({ enabled }: { enabled: boolean }) {
   const settings = useFutuSettings(enabled);
   if (!enabled) return null;
-  if (settings.isPending) return <p role="status">正在读取富途 OpenD 配置…</p>;
+  if (settings.isPending) return <p role="status">正在读取富途牛牛设置…</p>;
   if (settings.isError) return <p role="alert" className="text-danger">{settings.error.message}</p>;
-  return <FutuForm initial={settings.data} />;
+  const { enabled: active, account, hasPassword, managed } = settings.data;
+  return <FutuForm key={JSON.stringify([active, account, hasPassword, managed])} initial={settings.data} />;
 }
 
 function FutuForm({ initial }: { initial: Settings }) {
-  const [form, setForm] = useState({
-    host: initial.host, port: String(initial.port), enabled: initial.enabled, allowNonLocal: initial.allowNonLocal
-  });
-  const [dirty, setDirty] = useState(false);
-  const change = (patch: Partial<typeof form>) => { setForm((value) => ({ ...value, ...patch })); setDirty(true); };
+  const [enabled, setEnabled] = useState(initial.enabled);
+  const [account, setAccount] = useState(initial.account);
+  const [password, setPassword] = useState("");
+  const [clearPassword, setClearPassword] = useState(false);
+  const dirty = enabled !== initial.enabled || account !== initial.account || password !== "" || clearPassword;
   const refresh = useRefreshInvestment();
   const save = useMutation({
-    mutationFn: () => saveFutuSettings({
-      host: form.host.trim(), port: Number(form.port), enabled: form.enabled, allowNonLocal: form.allowNonLocal
-    }),
-    onSuccess: () => { setDirty(false); refresh(); toast.success("富途 OpenD 配置已保存"); },
+    mutationFn: () => saveFutuSettings({ enabled, account, password, clearPassword }),
+    onSuccess: async () => { setPassword(""); setClearPassword(false); await refresh(); toast.success(enabled ? "富途牛牛启动请求已提交" : "富途牛牛配置已保存"); },
     onError: (error) => toast.error(error.message)
   });
-  const disconnect = useMutation({
-    mutationFn: disconnectFutu,
-    onSuccess: () => { refresh(); toast.success("已关闭夜盘覆盖"); },
-    onError: (error) => toast.error(error.message)
-  });
-  function submit(event: FormEvent) { event.preventDefault(); save.mutate(); }
-  const busy = save.isPending || disconnect.isPending;
-  return <form onSubmit={submit} className="space-y-4">
-    <h3 className="font-medium">富途夜盘（OpenD）</h3>
-    <p className="text-xs text-[var(--muted)]">只接入行情，不接入交易。历史 K 线优先嘉信；夜盘当前窗口走订阅，往日夜盘才用富途历史额度兜底。开关关闭后图表不再显示 Night / 24h。</p>
-    <fieldset disabled={busy} className="space-y-4">
-      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.enabled} onChange={(e) => change({ enabled: e.target.checked })} />启用夜盘覆盖</label>
-      <label className="block text-sm">OpenD 主机<input required value={form.host} onChange={(e) => change({ host: e.target.value })} autoComplete="off" className="ui-input mt-1 w-full" /></label>
-      <label className="block text-sm">OpenD 端口<input required type="number" min={1} max={65535} value={form.port} onChange={(e) => change({ port: e.target.value })} className="ui-input mt-1 w-full" /></label>
-      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.allowNonLocal} onChange={(e) => change({ allowNonLocal: e.target.checked })} />允许非本机地址（Docker 服务名如 futu-opend）</label>
+  return <form onSubmit={(event) => { event.preventDefault(); save.mutate(); }} className="space-y-4">
+    <h3 className="font-medium">富途牛牛</h3>
+    <fieldset disabled={save.isPending} className="form-fields">
+      <label className="check-option"><input type="checkbox" checked={enabled} disabled={!initial.managed && !enabled} onChange={(event) => { setEnabled(event.target.checked); if (event.target.checked) setClearPassword(false); }} />启用富途牛牛</label>
+        <label className="studio-field"><span>富途牛牛账号</span><input autoComplete="username" value={account} onChange={(event) => setAccount(event.target.value)} placeholder="牛牛号、手机号或邮箱" maxLength={256} required={enabled} /></label>
+        <label className="studio-field"><span>登录密码 <span className="field-meta">{initial.hasPassword && !clearPassword ? "已保存 · 留空保留" : "尚未设置"}</span></span><input type="password" autoComplete="new-password" value={password} onChange={(event) => { setPassword(event.target.value); setClearPassword(false); }} maxLength={1024} required={enabled && (!initial.hasPassword || account !== initial.account)} placeholder={initial.hasPassword ? "输入新密码以替换" : "输入富途牛牛登录密码"} /><small>保存后用于 OpenD 登录，不会回显。首次登录可能需要在 OpenD 完成短信或设备验证。</small></label>
+        {initial.hasPassword && <label className="check-option"><input type="checkbox" checked={clearPassword} onChange={(event) => { setClearPassword(event.target.checked); if (event.target.checked) { setPassword(""); setEnabled(false); } }} />清除已保存密码并停用富途牛牛</label>}
     </fieldset>
-    {initial.connected && <p className="text-xs text-[var(--muted)]">已连接 OpenD{initial.qotLogined ? "，行情已登录" : "，等待行情登录"}{initial.historyRemain != null ? `，历史额度剩余 ${initial.historyRemain}` : ""}。</p>}
-    {initial.lastError && <p role="alert" className="text-sm text-danger">最近错误：{initial.lastError}</p>}
-    <div className="flex flex-wrap gap-2">
-      <Button disabled={busy}>{save.isPending ? "保存中…" : "保存配置"}</Button>
-      <Button type="button" variant="secondary" disabled={busy || !initial.enabled} onClick={() => disconnect.mutate()}>关闭覆盖</Button>
-    </div>
-    {dirty && <p className="text-xs text-[var(--muted)]">保存后终端才会按新开关显示或隐藏 Night / 24h。</p>}
+    {!initial.managed && <p role="status" className="text-sm text-[var(--muted)]">{initial.hasPassword ? "账号密码已保存。" : "账号密码可先保存。"}当前部署尚未接入富途牛牛登录服务（OpenD），因此无法启用。</p>}
+    {initial.enabled && <p role="status" className="text-sm text-[var(--muted)]">{initial.connected ? (initial.qotLogined ? "富途牛牛已连接，行情已登录" : "富途牛牛服务已启动，等待行情登录；首次登录可能需要短信或设备验证") : ({ installing: "首次启用，正在下载并安装富途牛牛服务…", starting: "正在启动富途牛牛服务…", running: "富途牛牛服务已启动，正在连接行情…", stopping: "正在停止富途牛牛服务…", error: "富途牛牛服务启动失败", stopped: "富途牛牛服务已停止", external: "正在等待富途牛牛服务连接…" }[initial.serviceState])}</p>}
+    {initial.serviceError && <p role="alert" className="text-sm text-danger">{initial.serviceError}</p>}
+    {!initial.serviceError && initial.lastError && <p role="alert" className="text-sm text-danger">行情连接尚未就绪，将自动重试。</p>}
+    <p className="form-note">停用富途牛牛会同时关闭夜盘行情。重新启用富途牛牛后，需再次手动开启夜盘。</p>
+    <div className="form-actions">{dirty && <span className="unsaved-label">有未保存的修改</span>}<Button disabled={save.isPending || (!dirty && initial.serviceState !== "error")}>{save.isPending ? "保存中…" : (!dirty && initial.serviceState === "error" ? "重试启动" : "保存富途牛牛配置")}</Button></div>
   </form>;
 }

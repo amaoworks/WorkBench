@@ -8,15 +8,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
         tar \
-        libssl1.1 \
+        python3 \
+        zlib1g \
         libstdc++6 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -r futu && useradd -r -g futu -m -d /home/futu futu \
-    && mkdir -p /opt/template /opt/FutuOpenD /home/futu/.com.futunn.FutuOpenD \
-    && chown -R futu:futu /opt/FutuOpenD /home/futu
+    && groupadd -g 65532 workbench && usermod -a -G workbench futu \
+    && mkdir -p /opt/template /opt/FutuOpenD /home/futu/.com.futunn.FutuOpenD /run/workbench-futu \
+    && chown -R futu:futu /opt/FutuOpenD /home/futu \
+    && chown 65532:65532 /run/workbench-futu \
+    && chmod 0750 /run/workbench-futu
 
 COPY FutuOpenD.xml.template /opt/template/FutuOpenD.xml.template
 COPY start.sh /usr/local/bin/start-opend
+COPY manage.py /usr/local/bin/manage-opend
 RUN chmod 0755 /usr/local/bin/start-opend
 
 USER futu

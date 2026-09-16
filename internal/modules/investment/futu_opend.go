@@ -52,7 +52,7 @@ const (
 )
 
 var (
-	errFutuTradeForbidden = errors.New("富途交易协议已禁用")
+	errFutuTradeForbidden = errors.New("富途牛牛交易协议已禁用")
 	errFutuProtoForbidden = errors.New("不允许的 OpenD 协议")
 	errOverlayOff         = errors.New("夜盘覆盖未启用")
 	errOpendClosed        = errors.New("OpenD 连接已关闭")

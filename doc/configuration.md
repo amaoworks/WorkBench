@@ -31,6 +31,11 @@ Go 版本以 [go.mod](../go.mod) 为准，当前为 1.27.1。前端使用 Node.j
 | `-data` | `WORKBENCH_DATA` | 用户目录下的 `.workbench/data.db` |
 | `-log-level` | `WORKBENCH_LOG_LEVEL` | `info`；可选 `debug`、`info`、`warn`、`error`，工作空间已保存的日志等级优先 |
 | `-auth` | `WORKBENCH_AUTH` | `local`；可选 `password` |
+| `-futu-opend-address` | `WORKBENCH_FUTU_OPEND_ADDRESS` | OpenD 的 TCP 主机与端口，默认 `127.0.0.1:11111`；仅在部署配置中管理 |
+| `-futu-allow-non-local` | `WORKBENCH_FUTU_ALLOW_NON_LOCAL` | 是否允许非本机 OpenD 地址，默认 `false` |
+| `-futu-config-dir` | `WORKBENCH_FUTU_CONFIG_DIR` | 与配套 OpenD 共享的登录配置目录；账号密码在投资设置中填写 |
+| `-futu-runtime-dir` | `WORKBENCH_FUTU_RUNTIME_DIR` | 原生 OpenD 私有运行目录，默认数据库同级 `futu-opend`；首次启用自动下载安装 |
+| `-futu-opend-binary` | `WORKBENCH_FUTU_OPEND_BINARY` | 已安装的兼容 OpenD 程序路径；留空使用自动安装的 10.9.6908 |
 | `-public-url` | `WORKBENCH_PUBLIC_URL` | 空；反代部署填写完整 HTTPS 来源，例如 `https://workbench.example.com`，可带端口、不可带子路径 |
 | `-allowed-host` | `WORKBENCH_ALLOWED_HOSTS` | 参数可重复，环境变量用逗号分隔；存在参数时替代环境列表 |
 | — | `WORKBENCH_PASSWORD` | 仅在密码模式尚无凭据时用于初始化 |

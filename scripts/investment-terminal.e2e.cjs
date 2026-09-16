@@ -62,8 +62,8 @@ const history = [
             // all host callbacks still run through the actual TradingView library.
             assert(body.includes("broker = new Broker(host); return broker;"));
             body = body.replace("broker = new Broker(host); return broker;", "window.__host = host; window.__orderUpdates = []; const update = host.orderUpdate.bind(host); host.orderUpdate = order => { window.__orderUpdates.push(order); update(order); }; broker = new Broker(host); window.__broker = broker; return broker;");
-            assert(body.includes("widget.chartReady().then(function () {});"));
-            body = body.replace("widget.chartReady().then(function () {});", "window.__widget = widget;");
+            assert(body.includes("unbindTheme = bindTheme(widget, theme);"));
+            body = body.replace("unbindTheme = bindTheme(widget, theme);", "unbindTheme = bindTheme(widget, theme); window.__widget = widget;");
           }
           return await route.fulfill({ contentType: file.endsWith(".html") ? "text/html" : "text/javascript", body });
         }
@@ -112,6 +112,19 @@ const history = [
     const chart = page.frames().find(frame => frame !== page.mainFrame());
     assert(chart, "TradingView chart iframe missing");
     await chart.getByRole("row").filter({ hasText: "AAPL" }).waitFor();
+    await page.evaluate(() => {
+      window.__originalWidget = window.__widget;
+      window.__originalSymbol = window.__widget.activeChart().symbol();
+      window.__originalResolution = window.__widget.activeChart().resolution();
+    });
+    for (const theme of ["dark", "light", "dark", "light", "dark", "light"]) {
+      await page.evaluate(value => window.postMessage({ type: "workbench.theme", theme: value }, location.origin), theme);
+      await page.waitForFunction(value => window.__widget.getTheme() === value && document.documentElement.style.colorScheme === value, theme);
+      assert.equal(await chart.evaluate(() => document.documentElement.classList.contains("theme-dark")), theme === "dark");
+      assert.equal(await page.evaluate(() => window.__widget === window.__originalWidget), true);
+      assert.equal(await page.evaluate(() => window.__widget.activeChart().symbol() === window.__originalSymbol), true);
+      assert.equal(await page.evaluate(() => window.__widget.activeChart().resolution() === window.__originalResolution), true);
+    }
     await page.evaluate(() => window.__broker._refresh());
     assert.deepEqual(await page.evaluate(() => window.__orderUpdates), [], "initial history must not generate order notifications");
     assert.match(await chart.getByRole("row").filter({ hasText: "AAPL" }).innerText(), /7/);
@@ -180,7 +193,7 @@ const history = [
     assert.equal(await page.evaluate(async () => (await window.__broker.ordersHistory()).length), 3);
     assert.deepEqual(await page.evaluate(() => window.__orderUpdates), [], "reloading must not replay previous fills");
     assert.deepEqual(errors, []);
-    console.log("PASS: actual TradingView account manager, account switch/reconnect, order ticket, history without replay and live fill notification; no browser errors or trades.");
+    console.log("PASS: actual TradingView theme changes with chart preservation, account manager, account switch/reconnect, order ticket, history without replay and live fill notification; no browser errors or trades.");
   } finally {
     await browser.close();
   }

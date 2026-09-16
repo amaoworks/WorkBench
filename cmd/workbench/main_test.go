@@ -75,3 +75,20 @@ func TestHealthcheckUsesHTTPAndPublicHost(t *testing.T) {
 		t.Fatal("redirect passed healthcheck")
 	}
 }
+
+func TestFutuDeploymentConfiguration(t *testing.T) {
+	env := map[string]string{"WORKBENCH_FUTU_OPEND_ADDRESS": "futu-opend:11112", "WORKBENCH_FUTU_ALLOW_NON_LOCAL": "true"}
+	getenv := func(key string) string { return env[key] }
+	opt, err := parseOptions(nil, getenv, io.Discard)
+	if err != nil || opt.config.FutuOpenDAddress != "futu-opend:11112" || !opt.config.FutuAllowNonLocal {
+		t.Fatal("Futu deployment environment not applied", err)
+	}
+	opt, err = parseOptions([]string{"-futu-opend-address", "127.0.0.1:11113", "-futu-allow-non-local=false"}, getenv, io.Discard)
+	if err != nil || opt.config.FutuOpenDAddress != "127.0.0.1:11113" || opt.config.FutuAllowNonLocal {
+		t.Fatal("Futu flags did not override deployment environment", err)
+	}
+	env["WORKBENCH_FUTU_ALLOW_NON_LOCAL"] = "invalid"
+	if _, err := parseOptions(nil, getenv, io.Discard); err == nil {
+		t.Fatal("invalid deployment boolean accepted")
+	}
+}

@@ -26,6 +26,7 @@ ARG BUILD_DATE=unknown
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     GOOS=$TARGETOS GOARCH=$TARGETARCH OUTPUT=/out/workbench ./scripts/compile.sh
 RUN mkdir -p /runtime/data /runtime/tmp && chmod 0700 /runtime/data && chmod 1777 /runtime/tmp
+RUN mkdir -p /runtime/run/workbench-futu && chmod 0750 /runtime/run/workbench-futu
 
 FROM scratch AS runtime
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt

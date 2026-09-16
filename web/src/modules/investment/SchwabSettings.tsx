@@ -31,7 +31,7 @@ function SchwabForm({ initial }: { initial: Settings }) {
   const token = useMutation({
     mutationFn: refreshSchwabToken,
     onSuccess: () => { refresh(); toast.success("访问令牌已刷新"); },
-    onError: (error) => toast.error(error.message)
+    onError: (error) => { refresh(); toast.error(error.message); }
   });
   function submit(event: FormEvent) { event.preventDefault(); save.mutate(); }
   const busy = save.isPending || disconnect.isPending || token.isPending;
@@ -43,12 +43,13 @@ function SchwabForm({ initial }: { initial: Settings }) {
       <label className="block text-sm">OAuth 回调地址<input type="url" required value={form.callbackUrl} onChange={(e) => change({ callbackUrl: e.target.value })} placeholder="https://workbench.example.com/oauth/schwab" className="ui-input mt-1 w-full" /></label>
     </fieldset>
     {initial.connected && <p className="text-xs text-[var(--muted)]">已连接{initial.tokenExpiresAt ? `，访问令牌到期 ${new Date(initial.tokenExpiresAt).toLocaleString()}` : ""}。</p>}
-    {!initial.connected && initial.hasAppSecret && <p className="text-xs text-[var(--muted)]">配置已保存，尚未完成 OAuth 授权。</p>}
+    {initial.reauthorizationRequired && <p role="alert" className="text-sm text-danger">Schwab 授权已失效。请点击“重新授权”，完成后自动恢复连接。</p>}
+    {!initial.connected && !initial.reauthorizationRequired && initial.hasAppSecret && <p className="text-xs text-[var(--muted)]">配置已保存，尚未完成 OAuth 授权。</p>}
     {initial.callbackUrl && !initial.callbackUrl.startsWith("https://") && <p role="alert" className="text-sm text-danger">已保存的回调地址不是 HTTPS，请修正后再登录 Schwab。</p>}
-    {initial.lastError && <p role="alert" className="text-sm text-danger">最近错误：{initial.lastError}</p>}
+    {initial.lastError && !initial.reauthorizationRequired && <p role="alert" className="text-sm text-danger">最近错误：{initial.lastError}</p>}
     <div className="flex flex-wrap gap-2">
       <Button disabled={busy}>{save.isPending ? "保存中…" : "保存配置"}</Button>
-      <Button type="button" variant="secondary" disabled={busy || dirty || !initial.hasAppSecret || !initial.callbackUrl.startsWith("https://")} onClick={() => { window.location.href = "/api/modules/investment/schwab/oauth/login"; }}>登录 Schwab</Button>
+      <Button type="button" variant={initial.reauthorizationRequired ? "primary" : "secondary"} disabled={busy || dirty || !initial.hasAppSecret || !initial.callbackUrl.startsWith("https://")} onClick={() => { window.location.href = "/api/modules/investment/schwab/oauth/login"; }}>{initial.reauthorizationRequired ? "重新授权" : "登录 Schwab"}</Button>
       <Button type="button" variant="secondary" disabled={busy || dirty || !initial.connected} onClick={() => token.mutate()}>{token.isPending ? "刷新中…" : "刷新令牌"}</Button>
       <Button type="button" variant="secondary" disabled={busy || !initial.connected} onClick={() => disconnect.mutate()}>断开</Button>
     </div>

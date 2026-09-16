@@ -12,11 +12,15 @@
 
 `investment.schwab_refresh` 每二十分钟检查访问令牌；REST 请求和新连接也会按需刷新。令牌刷新后关闭旧流，浏览器自动重新登录连接。断开操作保留应用配置，清除券商令牌。所有券商访问令牌仅在服务端使用，代理不转发浏览器 Cookie。
 
+刷新时确认令牌失效（`invalid_grant`，或 `invalid_client` 明确指出 refresh token 无效、过期或撤销）会持久保存 `reauthorizationRequired=true`，清除失效令牌并关闭旧连接。投资页、总览卡片及设置页显示「Schwab 授权已失效」和「重新授权」入口；点击后进入现有 OAuth 流程，只有成功回调才恢复已连接状态。终端断开会通知父页立即读取状态，其他页面的状态轮询作为补充。此机制处理实际失效，不发送提前到期提醒。
+
+网络错误、429、5xx 和普通应用认证错误保留原授权，在页面显示可读错误，允许重试；原始 OAuth 错误正文不会回显。REST 返回 401 时仅对该请求使用的访问令牌检查刷新，迟到的旧请求不会改变新授权，也不会自动重放原业务请求。定时任务不再重复尝试已确认失效的刷新令牌。
+
 ## 富途夜盘覆盖
 
 Schwab 行情覆盖常规、盘前、盘后和延长时段（约 04:00–20:00 ET），不含美股夜盘（20:00–04:00 ET）。夜盘由本机或 Compose 中的 Futu OpenD 补齐，**只做行情，不接入富途交易**。
 
-在同一设置页填写 OpenD 主机和端口（本机默认 `127.0.0.1:11111`，Compose 服务名 `futu-opend` 时需勾选允许非本机地址），并启用夜盘覆盖。登录仍在 OpenD 完成，工作台不保存牛牛密码。开关关闭后，终端不再显示 Night / 24h 时段。
+在「设置 → 业务模块 → 投资设置」集中管理 Schwab、富途牛牛和夜盘。Linux x86_64 原生部署在保存账号密码并启用富途牛牛后，自动下载、校验并启动 OpenD；页面显示进程状态和行情登录状态，失败可重试。容器部署可使用配套 OpenD。停用富途牛牛会关闭夜盘，重新启用不会自动恢复夜盘。主机、端口和非本机许可由部署配置管理，不在设置页面或账号保存 API 中修改。兼容版本与首次登录验证见 [OpenD 部署说明](../../futu-opend/README.md)。密码和登录摘要不回显。
 
 - Regular / Premarket / Postmarket / Extended：仍只走 Schwab。
 - Night：订阅 + 当前 K 线（不占 7 日历史额度）；周期仅 `1/5/15/30` 分钟。
@@ -65,7 +69,7 @@ Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| GET | `/api/modules/investment/schwab` | 应用配置、是否已保存 Secret/令牌及最近错误 |
+| GET | `/api/modules/investment/schwab` | 应用配置、连接状态、`reauthorizationRequired` 及最近错误 |
 | PUT | `/api/modules/investment/schwab` | 保存 `appKey`、`appSecret`、`callbackUrl` |
 | POST | `/api/modules/investment/schwab/disconnect` | 清除令牌和连接 |
 | GET | `/api/modules/investment/schwab/oauth/login` | 跳转到 Schwab 授权页 |
@@ -75,9 +79,9 @@ Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后
 | GET/POST/PUT/DELETE/PATCH | `/api/modules/investment/schwab/marketdata/v1/*` | Market Data REST 代理 |
 | GET | `/api/modules/investment/schwab/trader/ws`、`marketdata/ws` | 浏览器事件连接 |
 | POST | `/api/modules/investment/schwab/marketdata/ws/command` | LEVELONE 服务的 ADD 订阅命令 |
-| GET | `/api/modules/investment/futu` | OpenD 主机、覆盖开关、连接与额度 |
-| PUT | `/api/modules/investment/futu` | 保存 OpenD 连接与覆盖开关 |
-| POST | `/api/modules/investment/futu/disconnect` | 关闭夜盘覆盖并断开 OpenD |
+| GET/PUT | `/api/modules/investment/futu` | Futu 账号密码、服务开关与连接状态 |
+| POST | `/api/modules/investment/futu/disconnect` | 停用 Futu，同时关闭夜盘 |
+| GET/PUT | `/api/modules/investment/overnight` | 独立夜盘开关，启用前校验 Futu 依赖 |
 | GET | `/api/modules/investment/futu/kline` | 夜盘当前窗口及额度兜底历史 |
 | GET | `/api/modules/investment/futu/quote/ws` | 夜盘推送（覆盖关闭时 409，不升级） |
 | POST | `/api/modules/investment/futu/quote/ws/command` | 夜盘 ADD/UNSUB |

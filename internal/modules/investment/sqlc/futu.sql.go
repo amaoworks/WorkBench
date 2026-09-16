@@ -10,17 +10,20 @@ import (
 )
 
 const getFutu = `-- name: GetFutu :one
-SELECT host, port, enabled, allow_non_local, last_error, updated_at
+SELECT host, port, enabled, overnight_enabled, allow_non_local, last_error, updated_at, account, password_md5
 FROM investment_futu WHERE id = 1
 `
 
 type GetFutuRow struct {
-	Host          string `json:"host"`
-	Port          int64  `json:"port"`
-	Enabled       int64  `json:"enabled"`
-	AllowNonLocal int64  `json:"allow_non_local"`
-	LastError     string `json:"last_error"`
-	UpdatedAt     int64  `json:"updated_at"`
+	Host             string `json:"host"`
+	Port             int64  `json:"port"`
+	Enabled          int64  `json:"enabled"`
+	OvernightEnabled int64  `json:"overnight_enabled"`
+	AllowNonLocal    int64  `json:"allow_non_local"`
+	LastError        string `json:"last_error"`
+	UpdatedAt        int64  `json:"updated_at"`
+	Account          string `json:"account"`
+	PasswordMd5      string `json:"password_md5"`
 }
 
 func (q *Queries) GetFutu(ctx context.Context) (GetFutuRow, error) {
@@ -30,9 +33,12 @@ func (q *Queries) GetFutu(ctx context.Context) (GetFutuRow, error) {
 		&i.Host,
 		&i.Port,
 		&i.Enabled,
+		&i.OvernightEnabled,
 		&i.AllowNonLocal,
 		&i.LastError,
 		&i.UpdatedAt,
+		&i.Account,
+		&i.PasswordMd5,
 	)
 	return i, err
 }
@@ -107,24 +113,30 @@ func (q *Queries) OldestFutuBarTime(ctx context.Context, arg OldestFutuBarTimePa
 }
 
 const upsertFutu = `-- name: UpsertFutu :exec
-INSERT INTO investment_futu(id, host, port, enabled, allow_non_local, last_error, updated_at)
-VALUES (1, ?, ?, ?, ?, ?, ?)
+INSERT INTO investment_futu(id, host, port, enabled, overnight_enabled, allow_non_local, last_error, updated_at, account, password_md5)
+VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     host = excluded.host,
     port = excluded.port,
     enabled = excluded.enabled,
+    overnight_enabled = excluded.overnight_enabled,
     allow_non_local = excluded.allow_non_local,
     last_error = excluded.last_error,
-    updated_at = excluded.updated_at
+    updated_at = excluded.updated_at,
+    account = excluded.account,
+    password_md5 = excluded.password_md5
 `
 
 type UpsertFutuParams struct {
-	Host          string `json:"host"`
-	Port          int64  `json:"port"`
-	Enabled       int64  `json:"enabled"`
-	AllowNonLocal int64  `json:"allow_non_local"`
-	LastError     string `json:"last_error"`
-	UpdatedAt     int64  `json:"updated_at"`
+	Host             string `json:"host"`
+	Port             int64  `json:"port"`
+	Enabled          int64  `json:"enabled"`
+	OvernightEnabled int64  `json:"overnight_enabled"`
+	AllowNonLocal    int64  `json:"allow_non_local"`
+	LastError        string `json:"last_error"`
+	UpdatedAt        int64  `json:"updated_at"`
+	Account          string `json:"account"`
+	PasswordMd5      string `json:"password_md5"`
 }
 
 func (q *Queries) UpsertFutu(ctx context.Context, arg UpsertFutuParams) error {
@@ -132,9 +144,12 @@ func (q *Queries) UpsertFutu(ctx context.Context, arg UpsertFutuParams) error {
 		arg.Host,
 		arg.Port,
 		arg.Enabled,
+		arg.OvernightEnabled,
 		arg.AllowNonLocal,
 		arg.LastError,
 		arg.UpdatedAt,
+		arg.Account,
+		arg.PasswordMd5,
 	)
 	return err
 }

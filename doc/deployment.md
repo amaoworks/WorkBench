@@ -83,12 +83,11 @@ WORKBENCH_PASSWORD='填写独立的强密码'
 `WORKBENCH_VERSION` 必须为已发布的版本标签。密码包含 `$`、`#` 等字符时使用单引号，按 Compose 的 `.env` 规则保留字面值；`.env` 已被 Git 和 Docker 构建上下文排除。AI、Wallos、Schwab、富途 OpenD 等业务配置在工作台设置页面保存。夜盘覆盖需要单独的 OpenD 进程，不要打进 workbench 镜像。可叠加仓库内 [futu-opend](../futu-opend/)（该目录可整体移到独立仓库）：
 
 ```bash
-cp futu-opend/.env.example futu-opend/.env
-# 填写 FUTU_ACCOUNT_ID 与密码 MD5
-docker compose -f compose.yaml -f futu-opend/compose.workbench.yaml --env-file futu-opend/.env up -d --build
+# 使用上面已经配置工作台版本与 HTTPS 地址的根目录 .env
+docker compose -f compose.yaml -f futu-opend/compose.workbench.yaml --env-file .env up -d --build
 ```
 
-然后在「设置 → 投资」填写主机 `futu-opend`、端口 `11111`，勾选允许非本机地址并启用夜盘覆盖。首次登录若要求验证码，telnet `127.0.0.1:22222`。
+在「设置 → 业务模块 → 投资设置」填写 Futu 账号和登录密码，保存并启用 Futu，然后单独启用夜盘。主机、端口和非本机许可已由配套 Compose 配置；独立部署使用 `WORKBENCH_FUTU_OPEND_ADDRESS`、`WORKBENCH_FUTU_ALLOW_NON_LOCAL`。需要使用支持共享登录配置的当前工作台镜像和配套 OpenD 镜像。首次登录若要求验证码，telnet `127.0.0.1:22222`。独立 OpenD 与账号保留规则见 [OpenD 部署说明](../futu-opend/README.md)。
 
 ```bash
 docker compose config --quiet

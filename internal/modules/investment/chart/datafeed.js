@@ -276,7 +276,7 @@ export default class Datafeed {
         try {
             const response = await this.futuRequest('');
             const body = await response.json();
-            this.overlayCache = { enabled: body.enabled === true };
+            this.overlayCache = { enabled: body.enabled === true && body.overnightEnabled === true };
         } catch {
             this.overlayCache = { enabled: false };
         }
@@ -592,7 +592,8 @@ export default class Datafeed {
         this.futuTimer = setTimeout(async () => {
             this.futuTimer = undefined;
             if (this.destroyed) return;
-            await this.ensureFutuOverlay();
+            const overlay = await this.ensureFutuOverlay();
+            if (!overlay.enabled || this.destroyed) return;
             for (const listener of this.barListeners.values()) {
                 if (listener.subsessionId !== 'night' && listener.subsessionId !== '24h') continue;
                 if (!NIGHT_RESOLUTIONS.has(listener.resolution)) continue;

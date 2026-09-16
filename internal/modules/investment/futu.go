@@ -25,32 +25,57 @@ const (
 )
 
 type futuRecord struct {
-	Host          string
-	Port          int
-	Enabled       bool
-	AllowNonLocal bool
-	LastError     string
-	UpdatedAt     time.Time
+	Host             string
+	Port             int
+	Enabled          bool
+	OvernightEnabled bool
+	Account          string
+	PasswordMD5      string
+	AllowNonLocal    bool
+	LastError        string
+	UpdatedAt        time.Time
 }
 
 type futuSettingsView struct {
-	Host          string `json:"host"`
-	Port          int    `json:"port"`
-	Enabled       bool   `json:"enabled"`
-	AllowNonLocal bool   `json:"allowNonLocal"`
-	Connected     bool   `json:"connected"`
-	QotLogined    bool   `json:"qotLogined"`
-	LastError     string `json:"lastError"`
-	SubUsed       int    `json:"subUsed,omitempty"`
-	SubRemain     int    `json:"subRemain,omitempty"`
-	HistoryRemain int    `json:"historyRemain,omitempty"`
+	Enabled          bool   `json:"enabled"`
+	OvernightEnabled bool   `json:"overnightEnabled"`
+	Account          string `json:"account"`
+	HasPassword      bool   `json:"hasPassword"`
+	Managed          bool   `json:"managed"`
+	ServiceState     string `json:"serviceState"`
+	ServiceError     string `json:"serviceError"`
+	Connected        bool   `json:"connected"`
+	QotLogined       bool   `json:"qotLogined"`
+	LastError        string `json:"lastError"`
+	SubUsed          int    `json:"subUsed,omitempty"`
+	SubRemain        int    `json:"subRemain,omitempty"`
+	HistoryRemain    int    `json:"historyRemain,omitempty"`
 }
 
 type futuSettingsInput struct {
-	Host          string `json:"host"`
-	Port          int    `json:"port"`
 	Enabled       bool   `json:"enabled"`
-	AllowNonLocal bool   `json:"allowNonLocal"`
+	Account       string `json:"account"`
+	Password      string `json:"password"`
+	ClearPassword bool   `json:"clearPassword"`
+}
+
+func (m *Module) futuConnection() (string, int, error) {
+	address := m.deps.FutuOpenDAddress
+	if address == "" {
+		address = "127.0.0.1:11111"
+	}
+	host, portText, err := net.SplitHostPort(address)
+	if err != nil {
+		return "", 0, errors.New("富途牛牛 OpenD 地址必须为主机:端口")
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		return "", 0, errors.New("富途牛牛 OpenD 端口必须为数字")
+	}
+	if err := validateOpenDAddr(host, port, m.deps.FutuAllowNonLocal); err != nil {
+		return "", 0, err
+	}
+	return host, port, nil
 }
 
 func (m *Module) loadFutu(ctx context.Context) (futuRecord, error) {
@@ -58,22 +83,33 @@ func (m *Module) loadFutu(ctx context.Context) (futuRecord, error) {
 	if err != nil {
 		return futuRecord{}, err
 	}
+	host, port, err := m.futuConnection()
+	if err != nil {
+		return futuRecord{}, err
+	}
 	return futuRecord{
-		Host: row.Host, Port: int(row.Port), Enabled: row.Enabled != 0,
-		AllowNonLocal: row.AllowNonLocal != 0, LastError: row.LastError, UpdatedAt: unixMilli(row.UpdatedAt),
+		Host: host, Port: port, Enabled: row.Enabled != 0,
+		OvernightEnabled: row.OvernightEnabled != 0,
+		Account:          row.Account, PasswordMD5: row.PasswordMd5,
+		AllowNonLocal: m.deps.FutuAllowNonLocal, LastError: row.LastError, UpdatedAt: unixMilli(row.UpdatedAt),
 	}, nil
 }
 
 func (m *Module) storeFutu(ctx context.Context, rec futuRecord) error {
-	enabled, allow := int64(0), int64(0)
+	enabled, allow, overnight := int64(0), int64(0), int64(0)
 	if rec.Enabled {
 		enabled = 1
 	}
 	if rec.AllowNonLocal {
 		allow = 1
 	}
+	if rec.Enabled && rec.OvernightEnabled {
+		overnight = 1
+	}
 	return m.queries.UpsertFutu(ctx, investmentsqlc.UpsertFutuParams{
 		Host: rec.Host, Port: int64(rec.Port), Enabled: enabled, AllowNonLocal: allow,
+		OvernightEnabled: overnight,
+		Account:          rec.Account, PasswordMd5: rec.PasswordMD5,
 		LastError: rec.LastError, UpdatedAt: m.now().UTC().UnixMilli(),
 	})
 }
@@ -81,21 +117,36 @@ func (m *Module) storeFutu(ctx context.Context, rec futuRecord) error {
 func (m *Module) getFutu(w http.ResponseWriter, r *http.Request) {
 	rec, err := m.loadFutu(r.Context())
 	if err != nil {
-		httpapi.Error(w, http.StatusInternalServerError, "futu_settings_failed", "无法读取富途配置")
+		httpapi.Error(w, http.StatusInternalServerError, "futu_settings_failed", "无法读取富途牛牛配置")
 		return
 	}
 	view := futuSettingsView{
-		Host: rec.Host, Port: rec.Port, Enabled: rec.Enabled, AllowNonLocal: rec.AllowNonLocal, LastError: rec.LastError,
+		Enabled: rec.Enabled, LastError: rec.LastError,
+		OvernightEnabled: rec.Enabled && rec.OvernightEnabled,
+		Account:          rec.Account, HasPassword: rec.PasswordMD5 != "", Managed: m.futuManaged(),
+		ServiceState: "external",
 	}
-	if rec.Enabled {
+	if m.opend != nil {
+		view.ServiceState, view.ServiceError = m.opend.status()
+	}
+	if rec.Enabled && (m.opend == nil || view.ServiceState == "running") {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 		if client, err := m.futu.ensure(ctx); err == nil {
-			view.Connected = true
-			view.QotLogined, _ = client.globalState(ctx)
-			view.SubUsed, view.SubRemain, _ = client.subInfo(ctx)
-			view.HistoryRemain, _, _ = client.historyQuota(ctx)
+			if loggedIn, err := client.globalState(ctx); err == nil {
+				view.Connected, view.QotLogined = true, loggedIn
+				view.LastError = ""
+				view.SubUsed, view.SubRemain, _ = client.subInfo(ctx)
+				view.HistoryRemain, _, _ = client.historyQuota(ctx)
+			} else {
+				view.LastError = err.Error()
+			}
+		} else {
+			view.LastError = err.Error()
 		}
+	}
+	if view.ServiceError != "" {
+		view.LastError = view.ServiceError
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpapi.Write(w, http.StatusOK, view)
@@ -104,42 +155,65 @@ func (m *Module) getFutu(w http.ResponseWriter, r *http.Request) {
 func (m *Module) saveFutu(w http.ResponseWriter, r *http.Request) {
 	var input futuSettingsInput
 	if httpapi.Decode(w, r, &input, maxFutuSettingsBytes) != nil {
-		httpapi.Error(w, http.StatusBadRequest, "invalid_request", "无效的富途配置")
+		httpapi.Error(w, http.StatusBadRequest, "invalid_request", "无效的富途牛牛配置")
 		return
 	}
-	if err := validateOpenDAddr(input.Host, input.Port, input.AllowNonLocal); err != nil {
-		httpapi.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+	m.futu.connectMu.Lock()
+	rec, err := m.loadFutu(r.Context())
+	if err != nil {
+		m.futu.connectMu.Unlock()
+		httpapi.Error(w, http.StatusInternalServerError, "futu_settings_failed", "无法读取富途牛牛配置")
 		return
 	}
-	rec := futuRecord{Host: strings.TrimSpace(input.Host), Port: input.Port, Enabled: input.Enabled, AllowNonLocal: input.AllowNonLocal}
+	old := rec
+	rec.Enabled = input.Enabled
+	rec.OvernightEnabled = rec.Enabled && rec.OvernightEnabled
+	rec.LastError = ""
+	if err := m.applyFutuLogin(&rec, input); err != nil {
+		m.futu.connectMu.Unlock()
+		httpapi.Error(w, 400, "invalid_request", err.Error())
+		return
+	}
+	if err := m.publishFutuLogin(rec); err != nil {
+		m.futu.connectMu.Unlock()
+		httpapi.Error(w, 500, "futu_login_failed", "无法更新 OpenD 登录配置，请检查共享目录权限")
+		return
+	}
 	if err := m.storeFutu(r.Context(), rec); err != nil {
-		httpapi.Error(w, http.StatusInternalServerError, "futu_settings_failed", "无法保存富途配置")
+		_ = m.publishFutuLogin(old)
+		m.futu.connectMu.Unlock()
+		httpapi.Error(w, http.StatusInternalServerError, "futu_settings_failed", "无法保存富途牛牛配置")
 		return
 	}
 	m.futu.reset()
-	if rec.Enabled {
-		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
-		defer cancel()
-		if _, err := m.futu.ensure(ctx); err != nil {
-			_ = m.storeFutu(r.Context(), futuRecord{Host: rec.Host, Port: rec.Port, Enabled: rec.Enabled, AllowNonLocal: rec.AllowNonLocal, LastError: err.Error()})
-		}
-	}
+	m.syncOpenD(rec)
+	m.futu.connectMu.Unlock()
 	m.getFutu(w, r)
 }
 
 func (m *Module) disconnectFutu(w http.ResponseWriter, r *http.Request) {
+	m.futu.connectMu.Lock()
+	defer m.futu.connectMu.Unlock()
 	rec, err := m.loadFutu(r.Context())
 	if err != nil {
-		httpapi.Error(w, http.StatusInternalServerError, "futu_settings_failed", "无法读取富途配置")
+		httpapi.Error(w, http.StatusInternalServerError, "futu_settings_failed", "无法读取富途牛牛配置")
 		return
 	}
+	old := rec
 	rec.Enabled = false
+	rec.OvernightEnabled = false
 	rec.LastError = ""
+	if err := m.publishFutuLogin(rec); err != nil {
+		httpapi.Error(w, 500, "futu_login_failed", "无法更新 OpenD 登录配置")
+		return
+	}
 	if err := m.storeFutu(r.Context(), rec); err != nil {
-		httpapi.Error(w, http.StatusInternalServerError, "futu_settings_failed", "无法保存富途配置")
+		_ = m.publishFutuLogin(old)
+		httpapi.Error(w, http.StatusInternalServerError, "futu_settings_failed", "无法保存富途牛牛配置")
 		return
 	}
 	m.futu.reset()
+	m.syncOpenD(rec)
 	httpapi.Write(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -197,7 +271,7 @@ func parseKlineRange(fromS, toS string) (fromMs, toMs int64, err error) {
 
 func (m *Module) serveFutuStream(w http.ResponseWriter, r *http.Request) {
 	rec, err := m.loadFutu(r.Context())
-	if err != nil || !rec.Enabled {
+	if err != nil || !rec.Enabled || !rec.OvernightEnabled {
 		httpapi.Error(w, http.StatusConflict, "futu_disabled", "夜盘覆盖未启用")
 		return
 	}
@@ -336,19 +410,48 @@ func (g *futuGateway) removeLocked(client *futuWSClient) {
 }
 
 func (g *futuGateway) ensure(ctx context.Context) (*opendClient, error) {
+	return g.ensureConnection(ctx, false)
+}
+
+func (g *futuGateway) ensureOverlay(ctx context.Context) (*opendClient, error) {
+	return g.ensureConnection(ctx, true)
+}
+
+func (g *futuGateway) ensureConnection(ctx context.Context, requireOvernight bool) (*opendClient, error) {
 	g.connectMu.Lock()
 	defer g.connectMu.Unlock()
+	if !g.module.moduleEnabled {
+		return nil, errors.New("投资模块未启用")
+	}
 	rec, err := g.module.loadFutu(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if !rec.Enabled {
+		if requireOvernight {
+			return nil, errOverlayOff
+		}
+		return nil, errors.New("富途牛牛未启用")
+	}
+	if requireOvernight && !rec.OvernightEnabled {
 		return nil, errOverlayOff
+	}
+	if g.module.opend != nil {
+		if state, _ := g.module.opend.status(); state != "running" {
+			return nil, errors.New("富途牛牛服务尚未启动")
+		}
 	}
 	if err := validateOpenDAddr(rec.Host, rec.Port, rec.AllowNonLocal); err != nil {
 		return nil, err
 	}
 	g.mu.Lock()
+	if g.client != nil {
+		select {
+		case <-g.client.stop:
+			g.closeLocked()
+		default:
+		}
+	}
 	existing, closed := g.client, g.closed
 	generation := g.generation
 	g.mu.Unlock()
@@ -364,7 +467,6 @@ func (g *futuGateway) ensure(ctx context.Context) (*opendClient, error) {
 	}
 	client, err := dialOpend(ctx, net.JoinHostPort(rec.Host, strconv.Itoa(rec.Port)), "workbench-"+id)
 	if err != nil {
-		_ = g.module.storeFutu(ctx, futuRecord{Host: rec.Host, Port: rec.Port, Enabled: rec.Enabled, AllowNonLocal: rec.AllowNonLocal, LastError: err.Error()})
 		return nil, err
 	}
 	client.onKL = g.broadcastKL
@@ -373,16 +475,23 @@ func (g *futuGateway) ensure(ctx context.Context) (*opendClient, error) {
 	defer g.mu.Unlock()
 	if g.closed || g.generation != generation {
 		client.close()
-		return nil, errors.New("富途配置已变更，请重试")
+		return nil, errors.New("富途牛牛配置已变更，请重试")
 	}
 	g.client = client
-	g.module.logger.Info("Futu OpenD connected")
-	_ = g.module.storeFutu(ctx, futuRecord{Host: rec.Host, Port: rec.Port, Enabled: rec.Enabled, AllowNonLocal: rec.AllowNonLocal, LastError: ""})
+	go func() {
+		<-client.stop
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		if g.client == client {
+			g.closeLocked()
+		}
+	}()
+	g.module.logger.Info("富途牛牛OpenD connected")
 	return client, nil
 }
 
 func (g *futuGateway) addWS(ctx context.Context, client *futuWSClient) error {
-	if _, err := g.ensure(ctx); err != nil {
+	if _, err := g.ensureOverlay(ctx); err != nil {
 		return err
 	}
 	g.mu.Lock()
@@ -436,7 +545,7 @@ func (g *futuGateway) addSub(ctx context.Context, symbol, resolution string) err
 	if !ok {
 		return nil
 	}
-	client, err := g.ensure(ctx)
+	client, err := g.ensureOverlay(ctx)
 	if err != nil {
 		return err
 	}
@@ -452,7 +561,7 @@ func (g *futuGateway) releaseSub(ctx context.Context, symbol, resolution string)
 	if !ok {
 		return nil
 	}
-	client, err := g.ensure(ctx)
+	client, err := g.ensureOverlay(ctx)
 	if err != nil {
 		return err
 	}
@@ -525,7 +634,7 @@ func (g *futuGateway) kline(ctx context.Context, symbol, resolution string, from
 	if !ok {
 		return []futuBar{}, nil
 	}
-	client, err := g.ensure(ctx)
+	client, err := g.ensureOverlay(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -557,7 +666,7 @@ func (g *futuGateway) kline(ctx context.Context, symbol, resolution string, from
 		return nil, err
 	}
 	if err := g.maybeHistory(ctx, client, symbol, resolution, klType, fromMs); err != nil {
-		g.module.logger.Warn("Futu history fallback skipped", "errorType", fmt.Sprintf("%T", err))
+		g.module.logger.Warn("富途牛牛history fallback skipped", "errorType", fmt.Sprintf("%T", err))
 	}
 	return g.loadBars(ctx, symbol, resolution, fromMs, toMs)
 }

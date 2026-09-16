@@ -96,9 +96,23 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 
 ### 外部模块
 
-先启动独立示例，再启动工作台，然后运行 `scripts/external-module.e2e.cjs`。需要 `EXAMPLE_URL` 和 `EXAMPLE_TOKEN`。脚本覆盖接入、深链接刷新、命令面板、停用后设置和桌面/移动视口，不连接真实券商。
+`scripts/external-module.e2e.cjs` 仅用于已经保存 `demo_external` 注册记录的旧测试工作空间，覆盖深链接刷新、命令面板、停用后设置和桌面/移动视口；不再尝试网址接入，缺少旧记录时明确失败。旧记录 fixture 与独立进程兼容由 Go 测试中的 `Registry.Attach` 建立。
 
-独立进程哈希检查见 `scripts/external-module-process.sh`。示例启动步骤见 [examples/external-module/README.md](../examples/external-module/README.md)。
+`scripts/external-module-process.sh` 验证公开网址注册返回 404、未创建模块以及宿主文件哈希保持不变。示例启动步骤见 [examples/external-module/README.md](../examples/external-module/README.md)。
+
+### Futu 与夜盘设置
+
+`futu-settings.e2e.cjs` 自行启动临时工作空间，验证网址注册已移除、Futu 账号密码保存与不回显、夜盘依赖及停用联动、Futu 设置归属投资模块、部署地址不能在页面修改，以及桌面/手机布局。使用虚构凭据和未连接的本机 OpenD，不登录真实券商。
+
+```bash
+go build -o /tmp/workbench-futu-e2e-bin ./cmd/workbench
+PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
+  CHROMIUM_PATH=/usr/bin/chromium \
+  node scripts/futu-settings.e2e.cjs
+PYTHONDONTWRITEBYTECODE=1 python3 futu-opend/manage_test.py
+```
+
+先按上文构建前端。`WORKBENCH_BIN` 可指定测试程序；`WORKBENCH_TEST_MANAGED=false` 验证原生模式从页面启停模拟 OpenD 并回收进程，默认验证共享目录模式。截图写入 `/tmp/workbench-investment-futu-{managed,native}-{1440,390}.png`。Python 测试单独验证配套 OpenD 的配置更换与进程启停。
 
 ### Wallos 和待办交互
 
@@ -116,7 +130,7 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 
 ### 投资账户管理器
 
-`investment-terminal.e2e.cjs` 在 Chromium 中加载仓库内的终端代码和实际 TradingView 库，验证账户初始化、持仓与订单渲染、订单标的跳转、账户切换及断线重连；打开原生下单面板，检查有效期/交易时段的名称、可选值及已有订单的回填；验证首次加载和刷新不重播历史订单通知，新的成交仍推送一次。Schwab HTTP 和 WebSocket 请求全部使用虚构响应，无需启动工作台、配置凭据或提交交易。
+`investment-terminal.e2e.cjs` 在 Chromium 中加载仓库内的终端代码和实际 TradingView 库，验证连续切换主题后图表颜色、实例、标的和周期，以及账户初始化、持仓与订单渲染、订单标的跳转、账户切换及断线重连；打开原生下单面板，检查有效期/交易时段的名称、可选值及已有订单的回填；验证首次加载和刷新不重播历史订单通知，新的成交仍推送一次。Schwab HTTP 和 WebSocket 请求全部使用虚构响应，无需启动工作台、配置凭据或提交交易。
 
 ```bash
 PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
@@ -126,7 +140,7 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 
 脚本需要访问 TradingView 静态资源站，带内容哈希的库文件缓存在系统临时目录 `workbench-tv-test-cache/`。截图写入 `/tmp/workbench-investment-account-manager.png` 和 `/tmp/workbench-investment-order-ticket.png`。终端 JS 通过 Go embed 编入程序；修改后需重新编译并启动工作台进程，再刷新浏览器。
 
-`investment-page.e2e.cjs` 自行启动使用临时数据库的工作台，模拟已连接的 Schwab 设置并嵌入带状态标记的测试终端。它验证页面铺满/恢复、浏览器全屏/退出、新窗口、手机尺寸和全屏失败后的恢复，并确认显示模式切换不重建图表。使用端口 18138，无需券商凭据；截图写入 `/tmp/workbench-investment-expanded-mobile.png`。
+`investment-page.e2e.cjs` 自行启动使用临时数据库的工作台，模拟已连接的 Schwab 设置并嵌入带状态标记的测试终端。它验证连续切换主题、图表加载中切换和跟随系统时的颜色同步，以及页面铺满/恢复、浏览器全屏/退出、新窗口、手机尺寸和全屏失败后的恢复，并确认主题和显示模式切换不重建图表。使用端口 18138，无需券商凭据；截图写入 `/tmp/workbench-investment-expanded-mobile.png`。
 
 ```bash
 go build -o /tmp/workbench-investment-page-test ./cmd/workbench
@@ -138,6 +152,18 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 运行前需按上文构建最新前端；`WORKBENCH_BIN` 可指定其他测试程序路径。
 
 ### Schwab 跨站 OAuth 返回
+
+`schwab-reauthorization.e2e.cjs` 自行启动端口 18139 的临时工作空间，模拟连接故障、授权失效和 OAuth 页面，验证连接错误可重试、失效提示及时出现且刷新后保留、手机铺满布局、设置及总览入口，以及重新授权后恢复投资终端。无需券商账号；后端失效分类、持久状态、401 刷新和不重放交易由 `schwab_auth_test.go` 使用本机模拟服务验证。
+
+```bash
+npm --prefix web run build
+go build -o workbench ./cmd/workbench
+PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
+  CHROMIUM_PATH=/usr/bin/chromium \
+  node scripts/schwab-reauthorization.e2e.cjs
+```
+
+`WORKBENCH_BIN` 可指定其他测试程序；手机截图写入 `/tmp/workbench-schwab-reauthorization-mobile.png`。
 
 `TestSchwabOAuthBrowser` 启动临时 HTTPS 反向代理、HTTP 工作台后端和不同站点的模拟 Schwab，调用 `schwab-oauth.e2e.cjs` 验证点击 Done、服务端换取令牌、自动返回投资，以及 Strict 会话 Cookie 恢复。它使用真实认证和回调处理器，工作台页面为最小测试页面，不访问真实券商。普通 Go 测试默认跳过此项，显式运行：
 

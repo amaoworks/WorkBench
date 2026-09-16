@@ -11,22 +11,23 @@ import (
 
 const getSchwab = `-- name: GetSchwab :one
 SELECT app_key, app_secret, callback_url, access_token, refresh_token, token_expires_at,
-    streamer_info, oauth_state, oauth_state_expires_at, last_error, updated_at
+    streamer_info, oauth_state, oauth_state_expires_at, last_error, updated_at, reauthorization_required
 FROM investment_schwab WHERE id = 1
 `
 
 type GetSchwabRow struct {
-	AppKey              string `json:"app_key"`
-	AppSecret           string `json:"app_secret"`
-	CallbackUrl         string `json:"callback_url"`
-	AccessToken         string `json:"access_token"`
-	RefreshToken        string `json:"refresh_token"`
-	TokenExpiresAt      int64  `json:"token_expires_at"`
-	StreamerInfo        string `json:"streamer_info"`
-	OauthState          string `json:"oauth_state"`
-	OauthStateExpiresAt int64  `json:"oauth_state_expires_at"`
-	LastError           string `json:"last_error"`
-	UpdatedAt           int64  `json:"updated_at"`
+	AppKey                  string `json:"app_key"`
+	AppSecret               string `json:"app_secret"`
+	CallbackUrl             string `json:"callback_url"`
+	AccessToken             string `json:"access_token"`
+	RefreshToken            string `json:"refresh_token"`
+	TokenExpiresAt          int64  `json:"token_expires_at"`
+	StreamerInfo            string `json:"streamer_info"`
+	OauthState              string `json:"oauth_state"`
+	OauthStateExpiresAt     int64  `json:"oauth_state_expires_at"`
+	LastError               string `json:"last_error"`
+	UpdatedAt               int64  `json:"updated_at"`
+	ReauthorizationRequired int64  `json:"reauthorization_required"`
 }
 
 func (q *Queries) GetSchwab(ctx context.Context) (GetSchwabRow, error) {
@@ -44,6 +45,7 @@ func (q *Queries) GetSchwab(ctx context.Context) (GetSchwabRow, error) {
 		&i.OauthStateExpiresAt,
 		&i.LastError,
 		&i.UpdatedAt,
+		&i.ReauthorizationRequired,
 	)
 	return i, err
 }
@@ -51,8 +53,8 @@ func (q *Queries) GetSchwab(ctx context.Context) (GetSchwabRow, error) {
 const upsertSchwab = `-- name: UpsertSchwab :exec
 INSERT INTO investment_schwab(
     id, app_key, app_secret, callback_url, access_token, refresh_token, token_expires_at,
-    streamer_info, oauth_state, oauth_state_expires_at, last_error, updated_at
-) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    streamer_info, oauth_state, oauth_state_expires_at, last_error, updated_at, reauthorization_required
+) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     app_key = excluded.app_key,
     app_secret = excluded.app_secret,
@@ -64,21 +66,23 @@ ON CONFLICT(id) DO UPDATE SET
     oauth_state = excluded.oauth_state,
     oauth_state_expires_at = excluded.oauth_state_expires_at,
     last_error = excluded.last_error,
-    updated_at = excluded.updated_at
+    updated_at = excluded.updated_at,
+    reauthorization_required = excluded.reauthorization_required
 `
 
 type UpsertSchwabParams struct {
-	AppKey              string `json:"app_key"`
-	AppSecret           string `json:"app_secret"`
-	CallbackUrl         string `json:"callback_url"`
-	AccessToken         string `json:"access_token"`
-	RefreshToken        string `json:"refresh_token"`
-	TokenExpiresAt      int64  `json:"token_expires_at"`
-	StreamerInfo        string `json:"streamer_info"`
-	OauthState          string `json:"oauth_state"`
-	OauthStateExpiresAt int64  `json:"oauth_state_expires_at"`
-	LastError           string `json:"last_error"`
-	UpdatedAt           int64  `json:"updated_at"`
+	AppKey                  string `json:"app_key"`
+	AppSecret               string `json:"app_secret"`
+	CallbackUrl             string `json:"callback_url"`
+	AccessToken             string `json:"access_token"`
+	RefreshToken            string `json:"refresh_token"`
+	TokenExpiresAt          int64  `json:"token_expires_at"`
+	StreamerInfo            string `json:"streamer_info"`
+	OauthState              string `json:"oauth_state"`
+	OauthStateExpiresAt     int64  `json:"oauth_state_expires_at"`
+	LastError               string `json:"last_error"`
+	UpdatedAt               int64  `json:"updated_at"`
+	ReauthorizationRequired int64  `json:"reauthorization_required"`
 }
 
 func (q *Queries) UpsertSchwab(ctx context.Context, arg UpsertSchwabParams) error {
@@ -94,6 +98,7 @@ func (q *Queries) UpsertSchwab(ctx context.Context, arg UpsertSchwabParams) erro
 		arg.OauthStateExpiresAt,
 		arg.LastError,
 		arg.UpdatedAt,
+		arg.ReauthorizationRequired,
 	)
 	return err
 }

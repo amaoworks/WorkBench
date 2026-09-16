@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import Datafeed from '../chart/datafeed.js';
-import { isOvernightET, seriesKey } from '../chart/futu.js';
+import { FutuStream, isOvernightET, seriesKey } from '../chart/futu.js';
 
 const timestamp = Date.parse('2026-09-10T14:30:00Z');
 const nightTime = Date.parse('2026-01-15T02:00:00Z'); // 21:00 EST
@@ -33,7 +33,7 @@ test('night and regular live bars do not clobber each other', async (t) => {
         request: async () => json([candle]),
         futuRequest: async (path) => {
             if (String(path).startsWith('/kline')) return json([{ time: nightTime, open: 200, high: 200, low: 200, close: 200, volume: 5 }]);
-            if (String(path) === '') return new Response(JSON.stringify({ enabled: true }));
+            if (String(path) === '') return new Response(JSON.stringify({ enabled: true, overnightEnabled: true }));
             return new Response('{}');
         },
     });
@@ -62,7 +62,7 @@ test('night 10-minute history is noData and does not call kline', async (t) => {
     const feed = new Datafeed({
         events: new EventTarget(), stream: { ready: false },
         request: async () => json([candle]),
-        futuRequest: async (path) => { futuCalls.push(path); return new Response(JSON.stringify({ enabled: true })); },
+        futuRequest: async (path) => { futuCalls.push(path); return new Response(JSON.stringify({ enabled: true, overnightEnabled: true })); },
     });
     t.after(() => feed.destroy());
     const { metadata } = await history(feed, { name: 'AAPL', subsession_id: 'night' }, '10');
@@ -75,7 +75,7 @@ test('24h 10-minute stays on Schwab', async (t) => {
     const feed = new Datafeed({
         events: new EventTarget(), stream: { ready: false },
         request: async () => json([candle]),
-        futuRequest: async (path) => { futuCalls.push(path); return new Response(JSON.stringify({ enabled: true })); },
+        futuRequest: async (path) => { futuCalls.push(path); return new Response(JSON.stringify({ enabled: true, overnightEnabled: true })); },
     });
     t.after(() => feed.destroy());
     const { bars } = await history(feed, { name: 'AAPL', subsession_id: '24h' }, '10');
@@ -89,4 +89,23 @@ test('isOvernightET uses America/New_York including DST', () => {
     assert.equal(isOvernightET(Date.parse('2026-11-01T05:00:00Z')), true);
     assert.equal(isOvernightET(Date.parse('2026-11-01T06:00:00Z')), true);
     assert.equal(isOvernightET(Date.parse('2026-03-08T08:00:00Z')), false);
+});
+
+test('night data and stream require both provider and business switches', async (t) => {
+    for (const [enabled, overnightEnabled] of [[false, false], [true, false], [false, true]]) {
+        const calls = [];
+        const status = async () => new Response(JSON.stringify({ enabled, overnightEnabled }));
+        const feed = new Datafeed({ events: new EventTarget(), stream: { ready: false }, futuRequest: async (path) => { calls.push(path); return status(); } });
+        t.after(() => feed.destroy());
+        const result = await history(feed, { name: 'AAPL', subsession_id: 'night' });
+        assert.equal(result.metadata.noData, true);
+        assert.deepEqual(calls, ['']);
+        let sockets = 0;
+        const stream = new FutuStream({ events: new EventTarget(), status, socket: () => { sockets++; return {}; } });
+        stream.wanted = true;
+        await stream.connect();
+        assert.equal(sockets, 0);
+        assert.equal(stream.wanted, false);
+        stream.close();
+    }
 });

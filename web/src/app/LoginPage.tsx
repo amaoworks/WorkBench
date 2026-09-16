@@ -16,7 +16,7 @@ export function LoginPage() {
   return (
     <main className="login-page">
       <Card className="login-card">
-        <div className="login-brand"><div className="brand-mark"><Aperture size={22} /></div><span>Workbench<span className="brand-period">.</span></span></div>
+        <div className="login-brand"><div className="brand-mark"><Aperture size={22} /></div><span>Workbench</span></div>
         <h1>欢迎回来</h1>
         <p>登录你的个人工作空间。</p>
         <form onSubmit={submit} className="mt-6 space-y-4">

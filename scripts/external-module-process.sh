@@ -2,14 +2,14 @@
 set -eu
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-scratch=${SCRATCH:-/tmp/grok-goal-23cc8853dd88/implementer}
+scratch=${SCRATCH:-$(mktemp -d /tmp/workbench-external-rejected.XXXXXX)}
 mkdir -p "$scratch"
 host_bin=$scratch/workbench-a01
 example_bin=$scratch/example-a01
 log=$scratch/a01-a02-process.log
 
 cd "$repo_root"
-# Host is built once; later attach runs reuse the same binary.
+# URL registration must stay unavailable; existing-module compatibility is covered by Go tests.
 go build -o "$host_bin" ./cmd/workbench
 go build -C examples/external-module -o "$example_bin" .
 host_hash=$(sha256sum "$host_bin" | awk '{print $1}')
@@ -64,8 +64,8 @@ run_once() {
     echo "host_hash_after=$after_hash ui_hash_after=$after_ui"
     echo "list=$list"
   } | tee -a "$log"
-  if [ "$attach" != "201" ]; then
-    echo "attach failed" | tee -a "$log"
+  if [ "$attach" != "404" ]; then
+    echo "URL registration was not rejected" | tee -a "$log"
     cat "$data/attach.json" 2>/dev/null | tee -a "$log" || true
     kill "$host_pid" "$example_pid" 2>/dev/null || true
     wait "$host_pid" "$example_pid" 2>/dev/null || true
@@ -77,8 +77,8 @@ run_once() {
     wait "$host_pid" "$example_pid" 2>/dev/null || true
     return 1
   fi
-  if ! printf '%s' "$list" | grep -q '"kind":"external"'; then
-    echo "module missing from list" | tee -a "$log"
+  if printf '%s' "$list" | grep -q '"kind":"external"'; then
+    echo "unregistered module appeared in list" | tee -a "$log"
     kill "$host_pid" "$example_pid" 2>/dev/null || true
     wait "$host_pid" "$example_pid" 2>/dev/null || true
     return 1
@@ -89,4 +89,4 @@ run_once() {
 
 run_once 1
 run_once 2
-echo "A01/A02 process check passed" | tee -a "$log"
+echo "URL registration rejection check passed" | tee -a "$log"

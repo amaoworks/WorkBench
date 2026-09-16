@@ -1,17 +1,20 @@
 -- name: GetFutu :one
-SELECT host, port, enabled, allow_non_local, last_error, updated_at
+SELECT host, port, enabled, overnight_enabled, allow_non_local, last_error, updated_at, account, password_md5
 FROM investment_futu WHERE id = 1;
 
 -- name: UpsertFutu :exec
-INSERT INTO investment_futu(id, host, port, enabled, allow_non_local, last_error, updated_at)
-VALUES (1, ?, ?, ?, ?, ?, ?)
+INSERT INTO investment_futu(id, host, port, enabled, overnight_enabled, allow_non_local, last_error, updated_at, account, password_md5)
+VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     host = excluded.host,
     port = excluded.port,
     enabled = excluded.enabled,
+    overnight_enabled = excluded.overnight_enabled,
     allow_non_local = excluded.allow_non_local,
     last_error = excluded.last_error,
-    updated_at = excluded.updated_at;
+    updated_at = excluded.updated_at,
+    account = excluded.account,
+    password_md5 = excluded.password_md5;
 
 -- name: ListFutuBars :many
 SELECT symbol, resolution, time_ms, open, high, low, close, volume

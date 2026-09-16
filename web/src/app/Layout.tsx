@@ -4,6 +4,7 @@ import { NavLink, Route, Routes } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../shared/api";
 import { cn } from "../shared/cn";
+import { ThemeContext } from "../shared/theme";
 import { Button } from "../components/ui/Button";
 import { Skeleton } from "../components/ui/States";
 import { useModules } from "./queries";
@@ -54,9 +55,10 @@ export function Layout() {
   }, []);
   const navigation = useMemo(() => modules.data?.items.filter((item) => item.enabled).flatMap((item) => item.navigation.map((nav) => ({ ...nav, icon: item.icon }))).sort((a, b) => a.order - b.order) ?? [], [modules.data]);
   return (
+    <ThemeContext.Provider value={dark ? "dark" : "light"}>
     <div className="workbench-shell min-h-screen">
       <aside className={cn("workspace-sidebar fixed inset-y-0 left-0 z-20 flex flex-col border-r border-[var(--border)] bg-[var(--surface)] transition-[width]", collapsed ? "w-16" : "w-56")}>
-        <div className="workspace-logo flex h-20 items-center gap-3 px-4"><div className="brand-mark"><Aperture size={23} strokeWidth={1.5} /></div>{!collapsed && <span className="sidebar-label font-semibold tracking-tight">Workbench<span className="brand-period">.</span></span>}</div>
+        <div className="workspace-logo flex h-20 items-center gap-3 px-4"><div className="brand-mark"><Aperture size={23} strokeWidth={1.5} /></div>{!collapsed && <span className="sidebar-label font-semibold tracking-tight">Workbench</span>}</div>
         <nav className="flex-1 space-y-1 p-2" aria-label="主导航">
           <SideLink to="/" icon={LayoutDashboard} label="总览" collapsed={collapsed} />
           {navigation.map((item) => { const Icon = iconRegistry[item.icon] ?? CheckSquare2; return <SideLink key={item.pageKey} to={item.route} icon={Icon} label={item.label} collapsed={collapsed} />; })}
@@ -86,6 +88,7 @@ export function Layout() {
       <CommandPalette open={commandOpen} onOpenChange={setCommandOpen} navigation={navigation} />
       <AIPanel open={aiOpen} onClose={() => setAIOpen(false)} />
     </div>
+    </ThemeContext.Provider>
   );
 }
 

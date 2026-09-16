@@ -5,13 +5,16 @@
 package investmentsqlc
 
 type InvestmentFutu struct {
-	ID            int64  `json:"id"`
-	Host          string `json:"host"`
-	Port          int64  `json:"port"`
-	Enabled       int64  `json:"enabled"`
-	AllowNonLocal int64  `json:"allow_non_local"`
-	LastError     string `json:"last_error"`
-	UpdatedAt     int64  `json:"updated_at"`
+	ID               int64  `json:"id"`
+	Host             string `json:"host"`
+	Port             int64  `json:"port"`
+	Enabled          int64  `json:"enabled"`
+	AllowNonLocal    int64  `json:"allow_non_local"`
+	LastError        string `json:"last_error"`
+	UpdatedAt        int64  `json:"updated_at"`
+	OvernightEnabled int64  `json:"overnight_enabled"`
+	Account          string `json:"account"`
+	PasswordMd5      string `json:"password_md5"`
 }
 
 type InvestmentFutuBar struct {
@@ -26,16 +29,17 @@ type InvestmentFutuBar struct {
 }
 
 type InvestmentSchwab struct {
-	ID                  int64  `json:"id"`
-	AppKey              string `json:"app_key"`
-	AppSecret           string `json:"app_secret"`
-	CallbackUrl         string `json:"callback_url"`
-	AccessToken         string `json:"access_token"`
-	RefreshToken        string `json:"refresh_token"`
-	TokenExpiresAt      int64  `json:"token_expires_at"`
-	StreamerInfo        string `json:"streamer_info"`
-	OauthState          string `json:"oauth_state"`
-	OauthStateExpiresAt int64  `json:"oauth_state_expires_at"`
-	LastError           string `json:"last_error"`
-	UpdatedAt           int64  `json:"updated_at"`
+	ID                      int64  `json:"id"`
+	AppKey                  string `json:"app_key"`
+	AppSecret               string `json:"app_secret"`
+	CallbackUrl             string `json:"callback_url"`
+	AccessToken             string `json:"access_token"`
+	RefreshToken            string `json:"refresh_token"`
+	TokenExpiresAt          int64  `json:"token_expires_at"`
+	StreamerInfo            string `json:"streamer_info"`
+	OauthState              string `json:"oauth_state"`
+	OauthStateExpiresAt     int64  `json:"oauth_state_expires_at"`
+	LastError               string `json:"last_error"`
+	UpdatedAt               int64  `json:"updated_at"`
+	ReauthorizationRequired int64  `json:"reauthorization_required"`
 }

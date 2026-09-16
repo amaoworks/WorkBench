@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -57,6 +58,15 @@ func parseOptions(args []string, getenv func(string) string, output io.Writer) (
 	var mode string
 	flags.StringVar(&opt.config.ListenAddress, "listen", envDefault("WORKBENCH_LISTEN", config.ListenAddress), "HTTP listen address")
 	flags.StringVar(&opt.config.DataPath, "data", envDefault("WORKBENCH_DATA", config.DataPath), "SQLite database path")
+	flags.StringVar(&opt.config.FutuConfigDir, "futu-config-dir", getenv("WORKBENCH_FUTU_CONFIG_DIR"), "shared directory for managed Futu OpenD login configuration")
+	flags.StringVar(&opt.config.FutuRuntimeDir, "futu-runtime-dir", getenv("WORKBENCH_FUTU_RUNTIME_DIR"), "private OpenD runtime directory (defaults beside the database)")
+	flags.StringVar(&opt.config.FutuOpenDBinary, "futu-opend-binary", getenv("WORKBENCH_FUTU_OPEND_BINARY"), "installed OpenD executable (otherwise downloaded on first enable)")
+	flags.StringVar(&opt.config.FutuOpenDAddress, "futu-opend-address", envDefault("WORKBENCH_FUTU_OPEND_ADDRESS", "127.0.0.1:11111"), "Futu OpenD TCP host:port (deployment configuration)")
+	allowFutuNonLocal, err := strconv.ParseBool(envDefault("WORKBENCH_FUTU_ALLOW_NON_LOCAL", "false"))
+	if err != nil {
+		return options{}, errors.New("WORKBENCH_FUTU_ALLOW_NON_LOCAL must be true or false")
+	}
+	flags.BoolVar(&opt.config.FutuAllowNonLocal, "futu-allow-non-local", allowFutuNonLocal, "allow a non-loopback Futu OpenD host")
 	flags.StringVar(&mode, "auth", envDefault("WORKBENCH_AUTH", string(config.AuthMode)), "authentication mode: local or password")
 	flags.StringVar(&opt.config.PublicURL, "public-url", getenv("WORKBENCH_PUBLIC_URL"), "browser-facing HTTPS origin served by a reverse proxy")
 	flags.StringVar(&opt.config.LogLevel, "log-level", envDefault("WORKBENCH_LOG_LEVEL", config.LogLevel), "initial log level: debug, info, warn or error (saved settings take precedence)")

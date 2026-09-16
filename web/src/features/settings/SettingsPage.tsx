@@ -21,7 +21,7 @@ export default function SettingsPage() {
   const settings = useSettings();
   const [params, setParams] = useSearchParams();
   const selected = params.get("tab");
-  const active = sections.some((section) => section.id === selected) ? selected : "ai";
+  const active = sections.some((section) => section.id === selected) ? selected : "modules";
   function selectTab(id: string) {
     setParams((current) => { const next = new URLSearchParams(current); next.set("tab", id); return next; }, { replace: true, preventScrollReset: true });
   }

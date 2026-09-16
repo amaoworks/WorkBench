@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"html"
 	"io"
 	"net/http"
@@ -29,27 +28,31 @@ const (
 	maxSchwabTokenBytes = 1 << 20
 )
 
+var errSchwabReauthorizationRequired = errors.New("Schwab 授权已失效，请重新授权后继续使用行情、持仓和交易功能。")
+
 type schwabRecord struct {
-	AppKey              string
-	AppSecret           string
-	CallbackURL         string
-	AccessToken         string
-	RefreshToken        string
-	TokenExpiresAt      time.Time
-	StreamerInfo        string
-	OAuthState          string
-	OAuthStateExpiresAt time.Time
-	LastError           string
-	UpdatedAt           time.Time
+	AppKey                  string
+	AppSecret               string
+	CallbackURL             string
+	AccessToken             string
+	RefreshToken            string
+	TokenExpiresAt          time.Time
+	StreamerInfo            string
+	OAuthState              string
+	OAuthStateExpiresAt     time.Time
+	LastError               string
+	UpdatedAt               time.Time
+	ReauthorizationRequired bool
 }
 
 type schwabSettingsView struct {
-	AppKey         string     `json:"appKey"`
-	CallbackURL    string     `json:"callbackUrl"`
-	HasAppSecret   bool       `json:"hasAppSecret"`
-	Connected      bool       `json:"connected"`
-	TokenExpiresAt *time.Time `json:"tokenExpiresAt,omitempty"`
-	LastError      string     `json:"lastError"`
+	AppKey                  string     `json:"appKey"`
+	CallbackURL             string     `json:"callbackUrl"`
+	HasAppSecret            bool       `json:"hasAppSecret"`
+	Connected               bool       `json:"connected"`
+	TokenExpiresAt          *time.Time `json:"tokenExpiresAt,omitempty"`
+	LastError               string     `json:"lastError"`
+	ReauthorizationRequired bool       `json:"reauthorizationRequired"`
 }
 
 type schwabSettingsInput struct {
@@ -78,16 +81,22 @@ func (m *Module) loadSchwab(ctx context.Context) (schwabRecord, error) {
 		TokenExpiresAt: unixMilli(row.TokenExpiresAt), StreamerInfo: row.StreamerInfo,
 		OAuthState: row.OauthState, OAuthStateExpiresAt: unixMilli(row.OauthStateExpiresAt),
 		LastError: row.LastError, UpdatedAt: unixMilli(row.UpdatedAt),
+		ReauthorizationRequired: row.ReauthorizationRequired != 0,
 	}, nil
 }
 
 func (m *Module) storeSchwab(ctx context.Context, rec schwabRecord) error {
+	var reauthorizationRequired int64
+	if rec.ReauthorizationRequired {
+		reauthorizationRequired = 1
+	}
 	return m.queries.UpsertSchwab(ctx, investmentsqlc.UpsertSchwabParams{
 		AppKey: rec.AppKey, AppSecret: rec.AppSecret, CallbackUrl: rec.CallbackURL,
 		AccessToken: rec.AccessToken, RefreshToken: rec.RefreshToken,
 		TokenExpiresAt: timeUnixMilli(rec.TokenExpiresAt), StreamerInfo: rec.StreamerInfo,
 		OauthState: rec.OAuthState, OauthStateExpiresAt: timeUnixMilli(rec.OAuthStateExpiresAt),
 		LastError: rec.LastError, UpdatedAt: m.now().UTC().UnixMilli(),
+		ReauthorizationRequired: reauthorizationRequired,
 	})
 }
 
@@ -106,8 +115,9 @@ func (m *Module) getSchwab(w http.ResponseWriter, r *http.Request) {
 func (rec schwabRecord) view() schwabSettingsView {
 	view := schwabSettingsView{
 		AppKey: rec.AppKey, CallbackURL: rec.CallbackURL,
-		HasAppSecret: rec.AppSecret != "", Connected: rec.RefreshToken != "",
-		LastError: rec.LastError,
+		HasAppSecret: rec.AppSecret != "", Connected: rec.RefreshToken != "" && !rec.ReauthorizationRequired,
+		LastError:               rec.LastError,
+		ReauthorizationRequired: rec.ReauthorizationRequired,
 	}
 	if !rec.TokenExpiresAt.IsZero() {
 		expires := rec.TokenExpiresAt.UTC()
@@ -155,6 +165,7 @@ func (m *Module) saveSchwab(w http.ResponseWriter, r *http.Request) {
 	if credentialsChanged {
 		rec.AccessToken, rec.RefreshToken, rec.StreamerInfo = "", "", ""
 		rec.TokenExpiresAt, rec.OAuthState, rec.OAuthStateExpiresAt = time.Time{}, "", time.Time{}
+		rec.ReauthorizationRequired = false
 	}
 	if rec.AppKey == "" {
 		rec = schwabRecord{}
@@ -212,6 +223,7 @@ func (m *Module) disconnectSchwab(w http.ResponseWriter, r *http.Request) {
 	}
 	rec.AccessToken, rec.RefreshToken, rec.StreamerInfo = "", "", ""
 	rec.TokenExpiresAt, rec.OAuthState, rec.OAuthStateExpiresAt = time.Time{}, "", time.Time{}
+	rec.ReauthorizationRequired = false
 	rec.LastError = ""
 	if err := m.storeSchwab(r.Context(), rec); err != nil {
 		httpapi.Error(w, http.StatusInternalServerError, "schwab_settings_failed", "无法断开 Schwab")
@@ -289,6 +301,7 @@ func (m *Module) oauthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	rec.OAuthState, rec.OAuthStateExpiresAt = "", time.Time{}
 	rec.LastError = ""
+	rec.ReauthorizationRequired = false
 	if err := m.storeSchwab(r.Context(), rec); err != nil {
 		writeHTML(w, http.StatusInternalServerError, "授权成功但无法保存令牌")
 		return
@@ -312,11 +325,19 @@ func (m *Module) oauthRefreshHTTP(w http.ResponseWriter, r *http.Request) {
 		httpapi.Error(w, http.StatusInternalServerError, "schwab_settings_failed", "无法读取 Schwab 配置")
 		return
 	}
+	if rec.ReauthorizationRequired {
+		httpapi.Error(w, http.StatusConflict, "schwab_reauthorization_required", errSchwabReauthorizationRequired.Error())
+		return
+	}
 	if rec.RefreshToken == "" {
 		httpapi.Error(w, http.StatusConflict, "schwab_disconnected", "尚未连接 Schwab，请先完成授权")
 		return
 	}
 	if err := m.refreshAccessToken(r.Context()); err != nil {
+		if errors.Is(err, errSchwabReauthorizationRequired) {
+			httpapi.Error(w, http.StatusConflict, "schwab_reauthorization_required", err.Error())
+			return
+		}
 		httpapi.Error(w, http.StatusBadGateway, "schwab_refresh_failed", err.Error())
 		return
 	}
@@ -342,6 +363,9 @@ func (m *Module) refreshAccessTokenLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if rec.ReauthorizationRequired {
+		return errSchwabReauthorizationRequired
+	}
 	if rec.RefreshToken == "" {
 		return nil
 	}
@@ -353,7 +377,17 @@ func (m *Module) refreshAccessTokenLocked(ctx context.Context) error {
 		"refresh_token": {rec.RefreshToken},
 	}); err != nil {
 		rec.LastError = err.Error()
-		_ = m.storeSchwab(ctx, rec)
+		if errors.Is(err, errSchwabReauthorizationRequired) {
+			rec.ReauthorizationRequired = true
+			rec.AccessToken, rec.RefreshToken, rec.StreamerInfo = "", "", ""
+			rec.TokenExpiresAt = time.Time{}
+		}
+		if storeErr := m.storeSchwab(ctx, rec); storeErr != nil {
+			return storeErr
+		}
+		if rec.ReauthorizationRequired {
+			m.streamer.reset()
+		}
 		return err
 	}
 	rec.LastError = ""
@@ -393,19 +427,19 @@ func (m *Module) exchangeToken(ctx context.Context, rec *schwabRecord, params ur
 	req.Header.Set("Accept", "application/json")
 	resp, err := m.httpClient.Do(req)
 	if err != nil {
-		return err
+		return errors.New("暂时无法连接 Schwab，请稍后重试。")
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxSchwabTokenBytes))
 	if err != nil {
-		return err
+		return errors.New("读取 Schwab 授权响应失败，请稍后重试。")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("token endpoint HTTP %d: %s", resp.StatusCode, trimErrorBody(body))
+		return schwabTokenFailure(resp.StatusCode, body, params.Get("grant_type") == "refresh_token")
 	}
 	var token schwabTokenResponse
 	if err := json.Unmarshal(body, &token); err != nil {
-		return err
+		return errors.New("Schwab 授权响应无效，请稍后重试。")
 	}
 	if token.AccessToken == "" {
 		return errors.New("token 响应缺少 access_token")
@@ -463,6 +497,17 @@ func (m *Module) proxySchwab(apiPrefix string) http.HandlerFunc {
 			return
 		}
 		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusUnauthorized {
+			// Refresh the connection state, but never replay an order or other request.
+			if err := m.refreshRejectedAccessToken(r.Context(), token); err != nil {
+				code := "schwab_refresh_failed"
+				if errors.Is(err, errSchwabReauthorizationRequired) {
+					code = "schwab_reauthorization_required"
+				}
+				httpapi.Error(w, http.StatusConflict, code, err.Error())
+				return
+			}
+		}
 		copySchwabHeaders(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
 		_, _ = io.Copy(w, io.LimitReader(resp.Body, 16<<20))

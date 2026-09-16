@@ -3,6 +3,8 @@ package app
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"encoding/json"
 	"net/http"
 	"os"
 	"os/exec"
@@ -10,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"workbench/internal/foundation/modules"
 )
 
 func TestIndependentExampleProcessAttachTwice(t *testing.T) {
@@ -43,10 +47,16 @@ func runIndependentAttach(t *testing.T, repo, exampleBin string, run int) {
 	addr := readListenAddr(t, stdout)
 	application := newTestApp(t)
 	token, cookies := csrf(t, application.Handler())
-	created := request(t, application.Handler(), http.MethodPost, "/api/modules/external",
-		[]byte(`{"baseUrl":"http://`+addr+`","serviceToken":"process-token"}`), token, cookies)
-	if created.Code != http.StatusCreated {
-		t.Fatalf("attach = %d %s", created.Code, created.Body.String())
+	created, err := application.registry.Attach(context.Background(), modules.ConnectionInput{BaseURL: "http://" + addr, ServiceToken: "process-token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdJSON, err := json.Marshal(created)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(createdJSON, []byte("process-token")) {
+		t.Fatal("token leaked on attach")
 	}
 	listed := request(t, application.Handler(), http.MethodGet, "/api/modules", nil, "", cookies)
 	if listed.Code != 200 || !bytes.Contains(listed.Body.Bytes(), []byte(`"kind":"external"`)) || !bytes.Contains(listed.Body.Bytes(), []byte("/apps/demo_external/overview")) {
@@ -152,9 +162,8 @@ func TestExampleReattachAfterUnregisterCanEnable(t *testing.T) {
 	addr := readListenAddr(t, stdout)
 	application := newTestApp(t)
 	token, cookies := csrf(t, application.Handler())
-	body := []byte(`{"baseUrl":"http://` + addr + `","serviceToken":"process-token"}`)
-	if got := request(t, application.Handler(), http.MethodPost, "/api/modules/external", body, token, cookies); got.Code != http.StatusCreated {
-		t.Fatalf("attach = %d %s", got.Code, got.Body.String())
+	if _, err := application.registry.Attach(context.Background(), modules.ConnectionInput{BaseURL: "http://" + addr, ServiceToken: "process-token"}); err != nil {
+		t.Fatal(err)
 	}
 	if got := request(t, application.Handler(), http.MethodPut, "/api/modules/demo_external/enabled", []byte(`{"enabled":true}`), token, cookies); got.Code != http.StatusOK {
 		t.Fatalf("enable = %d %s", got.Code, got.Body.String())
@@ -165,8 +174,8 @@ func TestExampleReattachAfterUnregisterCanEnable(t *testing.T) {
 	if got := request(t, application.Handler(), http.MethodDelete, "/api/modules/external/demo_external", nil, token, cookies); got.Code != http.StatusNoContent {
 		t.Fatalf("unregister = %d %s", got.Code, got.Body.String())
 	}
-	if got := request(t, application.Handler(), http.MethodPost, "/api/modules/external", body, token, cookies); got.Code != http.StatusCreated {
-		t.Fatalf("reattach = %d %s", got.Code, got.Body.String())
+	if _, err := application.registry.Attach(context.Background(), modules.ConnectionInput{BaseURL: "http://" + addr, ServiceToken: "process-token"}); err != nil {
+		t.Fatal(err)
 	}
 	enabled := request(t, application.Handler(), http.MethodPut, "/api/modules/demo_external/enabled", []byte(`{"enabled":true}`), token, cookies)
 	if enabled.Code != http.StatusOK {

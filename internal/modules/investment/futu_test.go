@@ -1,6 +1,7 @@
 package investment
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,22 +11,73 @@ import (
 	"time"
 )
 
+func TestFutuReconnectsAfterOpenDRestart(t *testing.T) {
+	fake := startFakeOpenD(t)
+	_, portStr, _ := strings.Cut(fake.addr(), ":")
+	port, _ := strconv.Atoi(portStr)
+	m := openInvestmentModule(t)
+	m.deps.FutuOpenDAddress = fake.addr()
+	if err := m.storeFutu(context.Background(), futuRecord{Host: "127.0.0.1", Port: port, Enabled: true, OvernightEnabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := m.futu.ensure(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate the TCP closure caused by the managed OpenD process restarting.
+	first.conn.Close()
+	select {
+	case <-first.stop:
+	case <-time.After(time.Second):
+		t.Fatal("client did not observe disconnect")
+	}
+	second, err := m.futu.ensureOverlay(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("gateway reused the closed connection")
+	}
+	if loggedIn, err := second.globalState(context.Background()); err != nil || !loggedIn {
+		t.Fatal("replacement connection is unusable", err)
+	}
+}
+
 func TestFutuSettingsDefaultAndValidation(t *testing.T) {
 	module := openInvestmentModule(t)
 	got := httptest.NewRecorder()
 	module.getFutu(got, httptest.NewRequest(http.MethodGet, "/api/modules/investment/futu", nil))
-	if got.Code != 200 || !strings.Contains(got.Body.String(), `"enabled":false`) || !strings.Contains(got.Body.String(), `"host":"127.0.0.1"`) {
+	if got.Code != 200 || !strings.Contains(got.Body.String(), `"enabled":false`) || strings.Contains(got.Body.String(), `"host"`) || strings.Contains(got.Body.String(), `"port"`) {
 		t.Fatalf("default: %s", got.Body.String())
 	}
 	bad := httptest.NewRecorder()
 	module.saveFutu(bad, httptest.NewRequest(http.MethodPut, "/api/modules/investment/futu", strings.NewReader(`{"host":"futu-opend","port":11111,"enabled":true,"allowNonLocal":false}`)))
 	if bad.Code != 400 {
-		t.Fatalf("hostname without allow: %d %s", bad.Code, bad.Body.String())
+		t.Fatalf("deployment fields accepted: %d %s", bad.Code, bad.Body.String())
 	}
 	unknown := httptest.NewRecorder()
-	module.saveFutu(unknown, httptest.NewRequest(http.MethodPut, "/api/modules/investment/futu", strings.NewReader(`{"host":"127.0.0.1","port":11111,"enabled":false,"allowNonLocal":false,"allowHistoryKline":true}`)))
+	module.saveFutu(unknown, httptest.NewRequest(http.MethodPut, "/api/modules/investment/futu", strings.NewReader(`{"enabled":false,"allowHistoryKline":true}`)))
 	if unknown.Code != 400 {
 		t.Fatalf("unknown field: %d %s", unknown.Code, unknown.Body.String())
+	}
+}
+
+func TestFutuConnectionComesFromDeploymentConfiguration(t *testing.T) {
+	m := openInvestmentModule(t)
+	if _, err := m.deps.DB.Exec(`UPDATE investment_futu SET host='old-host',port=9999,allow_non_local=1`); err != nil {
+		t.Fatal(err)
+	}
+	m.deps.FutuOpenDAddress = "configured-opend:11112"
+	m.deps.FutuAllowNonLocal = true
+	rec, err := m.loadFutu(context.Background())
+	if err != nil || rec.Host != "configured-opend" || rec.Port != 11112 || !rec.AllowNonLocal {
+		t.Fatal("database connection overrode deployment configuration", err)
+	}
+	for _, address := range []string{"http://opend:11111", "127.0.0.1:0", "127.0.0.1:abc"} {
+		m.deps.FutuOpenDAddress = address
+		if _, _, err := m.futuConnection(); err == nil {
+			t.Fatal("invalid OpenD deployment address accepted", address)
+		}
 	}
 }
 
@@ -45,16 +97,19 @@ func TestFutuKlineDisabledConflict(t *testing.T) {
 
 func TestFutuKlineUsesCurrentWindowAndHistoryFallback(t *testing.T) {
 	fake := startFakeOpenD(t)
-	host, portStr, _ := strings.Cut(fake.addr(), ":")
-	port, _ := strconv.Atoi(portStr)
 	module := openInvestmentModule(t)
 	save := httptest.NewRecorder()
-	body := `{"host":"` + host + `","port":` + portStr + `,"enabled":true,"allowNonLocal":false}`
+	module.deps.FutuOpenDAddress = fake.addr()
+	body := `{"enabled":true}`
 	module.saveFutu(save, httptest.NewRequest(http.MethodPut, "/api/modules/investment/futu", strings.NewReader(body)))
 	if save.Code != 200 {
 		t.Fatalf("save: %d %s", save.Code, save.Body.String())
 	}
-	_ = port
+	night := httptest.NewRecorder()
+	module.saveOvernight(night, httptest.NewRequest(http.MethodPut, "/api/modules/investment/overnight", strings.NewReader(`{"enabled":true}`)))
+	if night.Code != 200 {
+		t.Fatal(night.Body.String())
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/modules/investment/futu/kline?symbol=AAPL&resolution=1", nil)
 	rec := httptest.NewRecorder()
@@ -108,10 +163,10 @@ func TestFutuKlineUsesCurrentWindowAndHistoryFallback(t *testing.T) {
 
 func TestFutuDisconnectStopsOverlay(t *testing.T) {
 	fake := startFakeOpenD(t)
-	_, portStr, _ := strings.Cut(fake.addr(), ":")
 	module := openInvestmentModule(t)
+	module.deps.FutuOpenDAddress = fake.addr()
 	save := httptest.NewRecorder()
-	module.saveFutu(save, httptest.NewRequest(http.MethodPut, "/api/modules/investment/futu", strings.NewReader(`{"host":"127.0.0.1","port":`+portStr+`,"enabled":true,"allowNonLocal":false}`)))
+	module.saveFutu(save, httptest.NewRequest(http.MethodPut, "/api/modules/investment/futu", strings.NewReader(`{"enabled":true}`)))
 	if save.Code != 200 {
 		t.Fatal(save.Body.String())
 	}

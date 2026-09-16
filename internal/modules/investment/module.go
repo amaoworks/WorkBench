@@ -27,8 +27,13 @@ const (
 )
 
 type Dependencies struct {
-	DB     *sql.DB
-	Logger *slog.Logger
+	DB                *sql.DB
+	Logger            *slog.Logger
+	FutuConfigDir     string
+	FutuRuntimeDir    string
+	FutuOpenDBinary   string
+	FutuOpenDAddress  string
+	FutuAllowNonLocal bool
 }
 
 type HTTPRoute struct {
@@ -38,17 +43,19 @@ type HTTPRoute struct {
 }
 
 type Module struct {
-	deps       Dependencies
-	queries    *investmentsqlc.Queries
-	now        func() time.Time
-	httpClient *http.Client
-	schwabAPI  string
-	tvOrigin   string
-	tvProxy    *httputil.ReverseProxy
-	tokenMu    sync.Mutex
-	streamer   *streamer
-	futu       *futuGateway
-	logger     *slog.Logger
+	deps          Dependencies
+	queries       *investmentsqlc.Queries
+	now           func() time.Time
+	httpClient    *http.Client
+	schwabAPI     string
+	tvOrigin      string
+	tvProxy       *httputil.ReverseProxy
+	tokenMu       sync.Mutex
+	streamer      *streamer
+	futu          *futuGateway
+	opend         *openDService
+	moduleEnabled bool // guarded by futu.connectMu
+	logger        *slog.Logger
 }
 
 func New(deps Dependencies) (*Module, error) {
@@ -73,9 +80,16 @@ func New(deps Dependencies) (*Module, error) {
 		tvOrigin:  defaultTVOrigin,
 	}
 	module.tvProxy = newTVProxy(module.tvOrigin)
+	if _, _, err := module.futuConnection(); err != nil {
+		return nil, err
+	}
 	module.tvProxy.ErrorLog = slog.NewLogLogger(deps.Logger.Handler(), slog.LevelError)
 	module.streamer = newStreamer(module)
 	module.futu = newFutuGateway(module)
+	module.moduleEnabled = true
+	if deps.FutuConfigDir == "" && deps.FutuRuntimeDir != "" {
+		module.opend = newOpenDService(deps.FutuRuntimeDir, deps.FutuOpenDBinary)
+	}
 	return module, nil
 }
 
@@ -102,6 +116,8 @@ func (m *Module) Register(r contracts.ModuleRegistrar) error {
 		r.Handle("GET", "/api/modules/investment/futu", http.HandlerFunc(m.getFutu)),
 		r.Handle("PUT", "/api/modules/investment/futu", http.HandlerFunc(m.saveFutu)),
 		r.Handle("POST", "/api/modules/investment/futu/disconnect", http.HandlerFunc(m.disconnectFutu)),
+		r.Handle("GET", "/api/modules/investment/overnight", http.HandlerFunc(m.getOvernight)),
+		r.Handle("PUT", "/api/modules/investment/overnight", http.HandlerFunc(m.saveOvernight)),
 		r.Handle("GET", "/api/modules/investment/futu/kline", http.HandlerFunc(m.getFutuKline)),
 		r.Handle("GET", "/api/modules/investment/futu/quote/ws", http.HandlerFunc(m.serveFutuStream)),
 		r.Handle("POST", "/api/modules/investment/futu/quote/ws/command", http.HandlerFunc(m.futuCommand)),
@@ -109,7 +125,13 @@ func (m *Module) Register(r contracts.ModuleRegistrar) error {
 			Title: "投资", WidgetKind: "investment.overview", DataRoute: "/api/modules/investment/schwab", Size: contracts.WidgetMedium, Order: 20}),
 		r.Job(contracts.JobDefinition{ID: "investment.schwab_refresh", Module: "investment", Schedule: contracts.ScheduleSpec{Kind: contracts.ScheduleInterval, Interval: 20 * time.Minute},
 			TimeZone: "UTC", Timeout: 30 * time.Second, OverlapPolicy: contracts.OverlapSkip, MisfirePolicy: contracts.MisfireRunOnce,
-			Retry: contracts.RetryPolicy{MaxAttempts: 3, InitialWait: time.Second, MaxWait: time.Minute}, Handler: func(ctx context.Context, _ contracts.JobRun) error { return m.refreshAccessToken(ctx) }}),
+			Retry: contracts.RetryPolicy{MaxAttempts: 3, InitialWait: time.Second, MaxWait: time.Minute}, Handler: func(ctx context.Context, _ contracts.JobRun) error {
+				err := m.refreshAccessToken(ctx)
+				if errors.Is(err, errSchwabReauthorizationRequired) {
+					return nil // Await interactive authorization; retries cannot repair this state.
+				}
+				return err
+			}}),
 	}
 	for _, method := range proxyMethods {
 		regs = append(regs,
@@ -147,10 +169,24 @@ func (m *Module) Routes() []contracts.ProvidedRoute {
 	return routes
 }
 
-func (m *Module) OnEnabledChanged(_ context.Context, enabled bool) error {
+func (m *Module) OnEnabledChanged(ctx context.Context, enabled bool) error {
+	m.futu.connectMu.Lock()
+	defer m.futu.connectMu.Unlock()
+	m.moduleEnabled = enabled
 	if !enabled {
+		// Stopping must not depend on a live request context or a database read.
+		m.syncOpenD(futuRecord{})
 		m.ResetStream()
+		return m.publishFutuLogin(futuRecord{})
 	}
+	rec, err := m.loadFutu(ctx)
+	if err != nil {
+		return err
+	}
+	if err := m.publishFutuLogin(rec); err != nil {
+		return err
+	}
+	m.syncOpenD(rec)
 	return nil
 }
 
@@ -162,6 +198,11 @@ func (m *Module) ResetStream() {
 
 // Close releases upgraded connections, which http.Server.Shutdown does not close.
 func (m *Module) Close() {
+	m.futu.connectMu.Lock()
+	if m.opend != nil {
+		m.opend.close()
+	}
+	m.futu.connectMu.Unlock()
 	m.streamer.close()
 	m.futu.close()
 }

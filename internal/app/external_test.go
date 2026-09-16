@@ -124,18 +124,21 @@ func itoa(v int64) string {
 	return string(b)
 }
 
-func TestExternalModuleHTTPAttachEnableConfigAndRestart(t *testing.T) {
+func TestExternalModuleAttachEnableConfigAndRestart(t *testing.T) {
 	application := newTestApp(t)
 	application.registry.SetTimeouts(modules.Timeouts{Control: 300 * time.Millisecond, ProbeInterval: time.Hour, RetryMax: time.Second, MaxProbes: 2})
 	token, cookies := csrf(t, application.Handler())
 	remote := newAppFake(t, "attach-secret-token")
 
-	created := request(t, application.Handler(), http.MethodPost, "/api/modules/external",
-		[]byte(`{"baseUrl":"`+remote.server.URL+`","serviceToken":"attach-secret-token"}`), token, cookies)
-	if created.Code != http.StatusCreated {
-		t.Fatalf("attach status = %d %s", created.Code, created.Body.String())
+	created, err := application.registry.Attach(context.Background(), modules.ConnectionInput{BaseURL: remote.server.URL, ServiceToken: "attach-secret-token"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if bytes.Contains(created.Body.Bytes(), []byte("attach-secret-token")) {
+	createdJSON, err := json.Marshal(created)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(createdJSON, []byte("attach-secret-token")) {
 		t.Fatal("token leaked on attach")
 	}
 
@@ -205,6 +208,14 @@ func TestExternalAuthCSRFAndBuiltinGuard(t *testing.T) {
 		t.Fatal("attach without CSRF succeeded")
 	}
 	token, cookies := csrf(t, application.Handler())
+	if got := request(t, application.Handler(), http.MethodPost, "/api/modules/external",
+		[]byte(`{"baseUrl":"`+remote.server.URL+`","serviceToken":"tok"}`), token, cookies); got.Code != http.StatusNotFound {
+		t.Fatalf("attach with CSRF status = %d %s", got.Code, got.Body.String())
+	}
+	listed := request(t, application.Handler(), http.MethodGet, "/api/modules", nil, "", cookies)
+	if bytes.Contains(listed.Body.Bytes(), []byte("demo_external")) {
+		t.Fatalf("valid CSRF POST added module: %s", listed.Body.String())
+	}
 	if got := request(t, application.Handler(), http.MethodPut, "/api/modules/todo/connection", []byte(`{"baseUrl":"http://127.0.0.1:9","serviceToken":"x"}`), token, cookies); got.Code == 200 {
 		t.Fatal("connection update on builtin succeeded")
 	}
@@ -221,10 +232,16 @@ func TestExternalEnablePendingDoesNotLookLikeSuccess(t *testing.T) {
 	remote.mu.Lock()
 	remote.delay = time.Second
 	remote.mu.Unlock()
-	created := request(t, application.Handler(), http.MethodPost, "/api/modules/external",
-		[]byte(`{"baseUrl":"`+remote.server.URL+`","serviceToken":"tok"}`), token, cookies)
-	if created.Code != 201 {
-		t.Fatalf("attach = %d %s", created.Code, created.Body.String())
+	created, err := application.registry.Attach(context.Background(), modules.ConnectionInput{BaseURL: remote.server.URL, ServiceToken: "tok"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdJSON, err := json.Marshal(created)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(createdJSON, []byte("tok")) {
+		t.Fatal("token leaked on attach")
 	}
 	got := request(t, application.Handler(), http.MethodPut, "/api/modules/demo_external/enabled", []byte(`{"enabled":true}`), token, cookies)
 	if got.Code != http.StatusAccepted {

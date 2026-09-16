@@ -1,18 +1,23 @@
 # Overlay onto the workbench compose file so OpenD and workbench share a network.
 # From the workbench repo root:
-#   docker compose -f compose.yaml -f futu-opend/compose.workbench.yaml --env-file futu-opend/.env up --build
+#   docker compose -f compose.yaml -f futu-opend/compose.workbench.yaml --env-file .env up --build
 #
-# Then in 设置 → 投资: OpenD host `futu-opend`, port `11111`, enable overlay,
-# and allow non-loopback host.
+# Configure Futu login and overnight in 设置 → 业务模块 → 投资设置.
 services:
+  workbench:
+    environment:
+      WORKBENCH_FUTU_CONFIG_DIR: /run/workbench-futu
+      WORKBENCH_FUTU_OPEND_ADDRESS: futu-opend:11111
+      WORKBENCH_FUTU_ALLOW_NON_LOCAL: "true"
+    volumes:
+      - futu_login:/run/workbench-futu
   futu-opend:
     build:
       context: ./futu-opend
     restart: unless-stopped
     environment:
-      FUTU_ACCOUNT_ID: ${FUTU_ACCOUNT_ID:?Set FUTU_ACCOUNT_ID}
-      FUTU_ACCOUNT_PWD_MD5: ${FUTU_ACCOUNT_PWD_MD5:?Set FUTU_ACCOUNT_PWD_MD5}
-      FUTU_OPEND_VER: ${FUTU_OPEND_VER:-10.10.7008}
+      FUTU_LOGIN_CONFIG: /run/workbench-futu/login.json
+      FUTU_OPEND_VER: ${FUTU_OPEND_VER:-10.9.6908}
       FUTU_OPEND_IP: 0.0.0.0
       FUTU_OPEND_PORT: 11111
       FUTU_OPEND_TELNET_PORT: 22222
@@ -23,6 +28,7 @@ services:
     volumes:
       - futu_opend_bin:/opt/FutuOpenD
       - futu_opend_data:/home/futu/.com.futunn.FutuOpenD
+      - futu_login:/run/workbench-futu:ro
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo >/dev/tcp/127.0.0.1/11111'"]
       interval: 30s
@@ -33,3 +39,4 @@ services:
 volumes:
   futu_opend_bin:
   futu_opend_data:
+  futu_login:
