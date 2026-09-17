@@ -97,26 +97,6 @@ type externalModule struct {
 	retryEpoch atomic.Uint64
 }
 
-func listedBuiltin(manifest contracts.ModuleManifest, enabled bool) ListedModule {
-	observed := enabled
-	health := contracts.HealthUnknown
-	if enabled {
-		health = contracts.HealthReady
-	}
-	return ListedModule{
-		ID:              manifest.ID,
-		Kind:            KindBuiltin,
-		Name:            manifest.Name,
-		Version:         manifest.Version,
-		ContractVersion: manifest.ContractVersion,
-		Icon:            manifest.Icon,
-		Navigation:      append([]contracts.NavigationItem(nil), manifest.Navigation...),
-		Enabled:         enabled,
-		ObservedEnabled: &observed,
-		Health:          health,
-	}
-}
-
 func (e *externalModule) listed() ListedModule {
 	rec := e.rec
 	nav := navigationFromManifest(rec.Manifest)

@@ -8,7 +8,7 @@
 ./scripts/test.sh
 ```
 
-脚本按顺序检查 sqlc 重新生成前后的平台/全部业务生成目录、运行 Go 测试、前端及终端 JS lint、投资适配器 Node 测试和生产构建。它不要求工作区无未提交改动，也不自动运行浏览器测试。
+脚本按顺序检查 sqlc 重新生成前后的平台/全部业务生成目录、运行 Go 测试、前端及终端 JS lint、前后端契约测试、投资适配器 Node 测试和生产构建。它不要求工作区无未提交改动，也不自动运行浏览器测试。
 
 `SQLC_BIN` 可指定 sqlc 1.31.x 路径；未设置时查找 `.tools/bin/sqlc`，再使用 PATH。`GO_BIN` 可指定 Go 可执行文件。首次运行前先在 `web/` 执行 `npm ci`。部分 Go 测试使用本机临时 HTTP 服务，测试环境须允许监听 loopback 端口。
 
@@ -19,6 +19,12 @@ SQLC_BIN=/path/to/sqlc ./scripts/test.sh
 生成结果漂移时脚本会保留新结果并失败，核对 SQL 和生成差异后再验证。生产前端产物也会更新到 `internal/webui/dist/`。
 
 需要检查 Go 并发访问时，在允许监听本机临时端口的环境执行 `go test -race ./...`。这会运行全项目测试及 race detector，包括投资连接重建、配置替换和 WebSocket 关闭场景。
+
+## 前后端契约测试
+
+`npm run test:contracts --prefix web` 使用 Node 24 原生 TypeScript 支持，不需要额外测试运行器。它执行 `TestFrontendContracts`，通过真实 App HTTP Handler 和临时数据库生成响应到临时文件，再用前端生产 Zod schema 校验。覆盖认证、模块目录/启停/失败重试、总览、设置、通知、Todo 和投资配置，以及错误响应。测试同时验证缺失字段、字段类型和枚举漂移会被拒绝；退出后删除响应文件。
+
+该检查已接入 `scripts/test.sh` 和现有 CI。新增关键接口时同步扩展 Go 响应样例与 Node schema 映射，不能提交手写响应代替真实接口。新增可选字段应包含一个实际返回该字段的样例。它不替代券商代理、WebSocket、SSE 或浏览器交互测试。
 
 ## 构建
 

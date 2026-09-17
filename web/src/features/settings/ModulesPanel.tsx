@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
 import { api, apiResponse } from "../../shared/api";
-import type { ExternalModule, WorkbenchModule } from "../../shared/schema";
+import { moduleSchema, type ExternalModule, type WorkbenchModule } from "../../shared/schema";
 import { useModules } from "../../app/queries";
 import { Button } from "../../components/ui/Button";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
@@ -18,7 +18,7 @@ export function ModulesPanel() {
   const toggle = useMutation({
     mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) => {
       const response = await apiResponse(`/api/modules/${id}/enabled`, { method: "PUT", body: JSON.stringify({ enabled }) });
-      return { status: response.status, body: await response.json() as WorkbenchModule };
+      return { status: response.status, body: moduleSchema.parse(await response.json()) };
     },
     onSuccess: async ({ status, body }, { id, enabled }) => {
       await client.cancelQueries();
@@ -30,7 +30,7 @@ export function ModulesPanel() {
         return;
       }
       toast.success(enabled ? "业务已启用" : "业务已停用，历史数据已保留");
-    }, onError: (err) => toast.error(err.message)
+    }, onError: async (err) => { await refresh(); toast.error(err.message); }
   });
   if (modules.isPending) return <Skeleton className="h-32" />;
   if (modules.isError) return <p role="alert">模块加载失败：{modules.error.message}</p>;
@@ -40,12 +40,13 @@ export function ModulesPanel() {
       <div>
         <h3>{module.name}</h3>
         <p className="text-sm text-[var(--muted)]">版本 {module.version} · {moduleStatus(module)}</p>
-        {module.kind === "external" && module.lastError && <p className="text-sm text-[var(--danger)]" role="status">{module.lastError}</p>}
+        {module.lastError && <p className="text-sm text-[var(--danger)]" role="status">{module.lastError}</p>}
         {module.kind === "external" && module.connectionNote && <p className="text-sm text-[var(--muted)]">{module.connectionNote}</p>}
       </div>
       <div className="module-actions">
         <ModuleSettingsDialog module={module} />
         {module.kind === "external" && <ExternalActions module={module} onChange={refresh} />}
+        {module.kind === "builtin" && module.lastError && <Button variant="secondary" disabled={toggle.isPending} onClick={() => toggle.mutate({ id: module.id, enabled: module.enabled })}>重试</Button>}
         <Button variant="secondary" role="switch" aria-label={module.name} aria-checked={module.enabled} disabled={toggle.isPending} onClick={() => toggle.mutate({ id: module.id, enabled: !module.enabled })}>{module.enabled ? "停用" : "启用"}</Button>
       </div>
     </div>)}
@@ -53,7 +54,9 @@ export function ModulesPanel() {
 }
 
 function moduleStatus(module: WorkbenchModule) {
-  if (module.kind !== "external") return module.enabled ? "已启用" : "已停用";
+  if (module.kind === "builtin" && module.lastError) return module.enabled ? "启用失败 · 业务入口已关闭" : "业务入口已关闭 · 停用未完成";
+  if (module.kind === "builtin" && module.pending) return module.enabled ? "正在启用" : "正在停用";
+  if (module.kind !== "external") return module.observedEnabled ? "已启用" : "已停用";
   if (module.pending && module.enabled) return "正在启用";
   if (module.pending && !module.enabled) return "业务入口已关闭，等待服务确认停用";
   if (module.health === "offline") return "已停用 · 服务不可达";

@@ -11,7 +11,7 @@ import { toast } from "sonner";
 
 export default function NotificationsPage() {
   const queryClient = useQueryClient();
-  const notifications = useQuery({ queryKey: ["notifications", "list"], queryFn: async () => notificationsPageSchema.parse(await api<unknown>("/api/notifications?limit=100")) });
+  const notifications = useQuery({ queryKey: ["notifications", "list"], queryFn: async () => notificationsPageSchema.parse(await api("/api/notifications?limit=100")) });
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["notifications"] });
   const onError = (error: Error) => toast.error(error.message);
   const markAll = useMutation({ mutationFn: () => api("/api/notifications/read-all", { method: "PUT", body: "{}" }), onSuccess: refresh, onError });

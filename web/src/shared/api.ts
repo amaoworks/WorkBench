@@ -1,12 +1,12 @@
 let csrfToken: string | null = null;
 
 export class APIError extends Error {
-  constructor(
-    public status: number,
-    public code: string,
-    message: string
-  ) {
+  status: number;
+  code: string;
+  constructor(status: number, code: string, message: string) {
     super(message);
+    this.status = status;
+    this.code = code;
   }
 }
 
@@ -14,7 +14,8 @@ async function getCSRFToken(): Promise<string> {
   if (csrfToken) return csrfToken;
   const response = await fetch("/api/auth/csrf", { credentials: "same-origin" });
   if (!response.ok) throw new Error("无法初始化安全令牌");
-  const body = (await response.json()) as { token: string };
+  const body = (await response.json()) as { token?: unknown } | null;
+  if (typeof body?.token !== "string" || !body.token) throw new Error("安全令牌响应格式不正确");
   csrfToken = body.token;
   return body.token;
 }
@@ -35,9 +36,13 @@ export async function apiResponse(path: string, init: RequestInit = {}): Promise
 	return response;
 }
 
-export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
-	const response = await apiResponse(path, init);
-  if (response.status === 204) return undefined as T;
-  if (response.status === 202) return response.json() as Promise<T>;
-  return response.json() as Promise<T>;
+// Unvalidated JSON stays unknown. Callers consuming fields must supply a schema.
+export async function api(path: string, init: RequestInit = {}): Promise<unknown> {
+  const response = await apiResponse(path, init);
+  if (response.status === 204) return undefined;
+  return response.json();
+}
+
+export async function apiValidated<T>(path: string, schema: { parse(value: unknown): T }, init: RequestInit = {}): Promise<T> {
+  return schema.parse(await api(path, init));
 }

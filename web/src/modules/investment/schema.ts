@@ -5,7 +5,7 @@ export const schwabSettingsSchema = z.object({
   callbackUrl: z.string(),
   hasAppSecret: z.boolean(),
   connected: z.boolean(),
-  reauthorizationRequired: z.boolean().default(false),
+  reauthorizationRequired: z.boolean(),
   tokenExpiresAt: z.string().optional(),
   lastError: z.string()
 });

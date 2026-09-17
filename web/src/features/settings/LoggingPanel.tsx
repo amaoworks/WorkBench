@@ -1,8 +1,9 @@
+import { loggingSettingsSchema } from "./schema";
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { LoaderCircle, Save } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "../../shared/api";
+import { apiValidated } from "../../shared/api";
 import type { LoggingSettings, Settings } from "./queries";
 
 const levels = [
@@ -16,7 +17,7 @@ export function LoggingPanel({ value }: { value: LoggingSettings }) {
   const [level, setLevel] = useState(value.level);
   const client = useQueryClient();
   const save = useMutation({
-    mutationFn: () => api<LoggingSettings>("/api/settings/logging", { method: "PUT", body: JSON.stringify({ level }) }),
+    mutationFn: () => apiValidated("/api/settings/logging", loggingSettingsSchema, { method: "PUT", body: JSON.stringify({ level }) }),
     onSuccess: (logging) => {
       client.setQueryData<Settings>(["settings"], (old) => old ? { ...old, logging } : old);
       toast.success("日志等级已保存并立即生效");

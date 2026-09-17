@@ -1,22 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../../shared/api";
+import { apiValidated } from "../../shared/api";
 
-export type Appearance = { theme: "light" | "dark" | "system"; motion: "full" | "reduced" };
-export type AISettings = { enabled: boolean; model: string; baseUrl: string; hasApiKey: boolean };
-export type LoggingSettings = { level: "debug" | "info" | "warn" | "error" };
-export type Settings = {
-  ai: AISettings;
-  appearance: Appearance;
-  logging: LoggingSettings;
-  deployment: { listenAddress: string; dataPath: string; authMode: "local" | "password"; publicUrl: string; allowedHosts: string[] | null };
-};
+import { appearanceSchema, settingsSchema, type Appearance, type Settings } from "./schema";
+export type { Appearance, AISettings, LoggingSettings, Settings } from "./schema";
+
 export function useSettings() {
-  return useQuery({ queryKey: ["settings"], queryFn: () => api<Settings>("/api/settings") });
+  return useQuery({ queryKey: ["settings"], queryFn: () => apiValidated("/api/settings", settingsSchema) });
 }
 export function useAppearance() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (value: Appearance) => api<Appearance>("/api/settings/appearance", { method: "PUT", body: JSON.stringify(value) }),
+    mutationFn: (value: Appearance) => apiValidated("/api/settings/appearance", appearanceSchema, { method: "PUT", body: JSON.stringify(value) }),
     onSuccess: (appearance) => client.setQueryData<Settings>(["settings"], (old) => old ? { ...old, appearance } : old)
   });
 }

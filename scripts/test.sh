@@ -33,5 +33,6 @@ fi
 
 cd "$repo_root/web"
 npm run lint
+GO_BIN="$go_bin" npm run test:contracts
 npm run test:investment
 npm run build

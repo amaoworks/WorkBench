@@ -36,10 +36,9 @@ import (
 )
 
 type builtinBinding struct {
-	id        contracts.ModuleID
-	module    contracts.Module
-	routes    contracts.ModuleRouteProvider
-	lifecycle contracts.ModuleLifecycle
+	id     contracts.ModuleID
+	module contracts.Module
+	routes contracts.ModuleRouteProvider
 }
 
 type App struct {
@@ -85,22 +84,26 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	fail := func(err error) (*App, error) {
-		_ = database.Close()
-		return nil, err
-	}
+	ready := false
+	var registry *modules.Registry
+	defer func() {
+		if !ready {
+			_ = registry.Close()
+			_ = database.Close()
+		}
+	}()
 	if err := database.MigrateCore(ctx); err != nil {
-		return fail(err)
+		return nil, err
 	}
 
 	eventStore := events.NewStore(database.SQL())
 	notificationService, err := notifications.NewService(database.SQL(), eventStore)
 	if err != nil {
-		return fail(err)
+		return nil, err
 	}
 	todoModule, err := todo.New(database.SQL(), eventStore, notificationService)
 	if err != nil {
-		return fail(err)
+		return nil, err
 	}
 	textAI := ai.NewTextService()
 	if cfg.FutuRuntimeDir == "" {
@@ -108,20 +111,14 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	}
 	investmentModule, err := investment.New(investment.Dependencies{DB: database.SQL(), Logger: logger.With("component", "investment"), FutuConfigDir: cfg.FutuConfigDir, FutuRuntimeDir: cfg.FutuRuntimeDir, FutuOpenDBinary: cfg.FutuOpenDBinary, FutuOpenDAddress: cfg.FutuOpenDAddress, FutuAllowNonLocal: cfg.FutuAllowNonLocal})
 	if err != nil {
-		return fail(err)
+		return nil, err
 	}
-	ready := false
-	defer func() {
-		if !ready {
-			investmentModule.Close()
-		}
-	}()
 	definitions := []contracts.Module{todoModule, investmentModule}
-	registry, err := modules.InitializeWith(ctx, database, definitions, modules.Options{
+	registry, err = modules.InitializeWith(ctx, database, definitions, modules.Options{
 		Logger: logger.With("component", "modules"),
 	})
 	if err != nil {
-		return fail(err)
+		return nil, err
 	}
 	builtins := bindBuiltinModules(definitions)
 
@@ -130,12 +127,12 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	enabled := func(id contracts.ModuleID) bool { return id == "core" || registry.IsEnabled(id) }
 	dispatcher, err := events.NewDispatcher(database.SQL(), eventStore, consumers, enabled, logger.With("component", "events"))
 	if err != nil {
-		return fail(err)
+		return nil, err
 	}
 	jobs := append(registry.Catalog().Jobs, maintenanceJob(database.SQL()))
 	scheduled, err := scheduler.New(ctx, database.SQL(), jobs, enabled, logger.With("component", "scheduler"))
 	if err != nil {
-		return fail(err)
+		return nil, err
 	}
 	authService, err := auth.New(ctx, database.SQL(), auth.Config{
 		Mode: cfg.AuthMode, ListenAddress: cfg.ListenAddress, PublicHTTPS: cfg.PublicHTTPS(),
@@ -144,29 +141,29 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	})
 	if err != nil {
 		_ = scheduled.Shutdown(context.Background())
-		return fail(err)
+		return nil, err
 	}
 	ui, err := webui.New()
 	if err != nil {
 		_ = scheduled.Shutdown(context.Background())
-		return fail(err)
+		return nil, err
 	}
 	dashboardService := dashboard.New(database.SQL(), registry.Catalog().Widgets, registry.IsEnabled)
 	notificationHTTP := notifications.NewHTTPHandler(notificationService, hub)
 	toolRuntime, err := ai.NewToolRuntime(database.SQL(), registry.Catalog().Tools, registry.IsEnabled)
 	if err != nil {
 		_ = scheduled.Shutdown(context.Background())
-		return fail(err)
+		return nil, err
 	}
 	gateway, err := ai.NewGateway(nil, toolRuntime)
 	if err != nil {
 		_ = scheduled.Shutdown(context.Background())
-		return fail(err)
+		return nil, err
 	}
 	conversationService, err := conversation.NewService(database.SQL(), gateway)
 	if err != nil {
 		_ = scheduled.Shutdown(context.Background())
-		return fail(err)
+		return nil, err
 	}
 	conversationHTTP := conversation.NewHTTPHandler(conversationService)
 
@@ -179,7 +176,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	application.textAI = textAI
 	if err := application.loadSettings(ctx); err != nil {
 		_ = scheduled.Shutdown(context.Background())
-		return fail(err)
+		return nil, err
 	}
 	application.handler = application.routes(dashboardService, notificationHTTP, conversationHTTP, ui)
 	application.server = &http.Server{
@@ -187,10 +184,6 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second,
 		WriteTimeout: 0, IdleTimeout: 2 * time.Minute,
 		ErrorLog: slog.NewLogLogger(logger.With("component", "http").Handler(), slog.LevelError),
-	}
-	if err := investmentModule.OnEnabledChanged(ctx, registry.IsEnabled("investment")); err != nil {
-		_ = scheduled.Shutdown(context.Background())
-		return fail(fmt.Errorf("restore OpenD service: %w", err))
 	}
 	ready = true
 	logger.Debug("workspace initialized", "component", "app", "modules", len(registry.Catalog().Manifests))
@@ -297,9 +290,6 @@ func bindBuiltinModules(definitions []contracts.Module) []builtinBinding {
 		if routes, ok := definition.(contracts.ModuleRouteProvider); ok {
 			binding.routes = routes
 		}
-		if lifecycle, ok := definition.(contracts.ModuleLifecycle); ok {
-			binding.lifecycle = lifecycle
-		}
 		bindings = append(bindings, binding)
 	}
 	return bindings
@@ -333,16 +323,8 @@ func (a *App) setModuleEnabled(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.registry.SetEnabled(r.Context(), id, *input.Enabled); err != nil {
-		httpapi.Error(w, http.StatusNotFound, "module_not_found", err.Error())
+		writeModuleError(w, err)
 		return
-	}
-	for _, binding := range a.builtins {
-		if binding.id == id && binding.lifecycle != nil {
-			if err := binding.lifecycle.OnEnabledChanged(r.Context(), *input.Enabled); err != nil {
-				a.logger.Error("module lifecycle failed", "component", "modules", "module", id, "error", err)
-			}
-			break
-		}
 	}
 	a.logger.Info("module state changed", "component", "modules", "module", id, "enabled", *input.Enabled)
 	listed, _ := a.registry.GetListed(id)
@@ -507,7 +489,6 @@ func (a *App) Run(ctx context.Context) error {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), a.config.ShutdownGrace)
 	defer cancel()
-	a.closeLifecycles()
 	_ = a.registry.Close()
 	serverErr := a.server.Shutdown(shutdownCtx)
 	schedulerErr := a.shutdownScheduler(shutdownCtx)
@@ -522,18 +503,9 @@ func (a *App) shutdownScheduler(ctx context.Context) error {
 	return a.schedulerErr
 }
 
-func (a *App) closeLifecycles() {
-	for _, binding := range a.builtins {
-		if binding.lifecycle != nil {
-			binding.lifecycle.Close()
-		}
-	}
-}
-
 func (a *App) Close() error {
 	var result error
 	a.closeOnce.Do(func() {
-		a.closeLifecycles()
 		result = errors.Join(a.registry.Close(), a.shutdownScheduler(context.Background()), a.database.Close())
 	})
 	return result

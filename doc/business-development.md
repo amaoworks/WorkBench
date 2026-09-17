@@ -34,7 +34,7 @@ Go 同一模块先按文件分工，出现独立职责和实际复用需求后�
 1. 选择稳定的模块 ID：小写字母开头，其余使用小写字母、数字和下划线，最多 63 字符。业务表使用 `<id>_` 前缀，资源标识使用 `<id>.` 前缀，HTTP 使用 `/api/modules/<id>/...`。
 2. 实现 [contracts.Module](../internal/contracts/module.go)：`Manifest()`、`Migrations()`、`Register()`。当前 Registry 支持 `ContractVersion: 1`；业务版本独立维护。
 3. 在构造函数显式接收所需依赖并检查必需项。Todo 使用位置参数，Investment 使用 `Dependencies`；根据依赖数量选择清楚的签名。
-4. 在 [internal/app/app.go](../internal/app/app.go) 创建模块并加入 `modules.Initialize` 清单。模块注册阶段只声明资源，检查并返回每个注册错误，不执行远程请求或业务写入，也不启动后台循环。有长连接或进程资源时实现 `ModuleLifecycle`；OAuth 回调或静态资源实现 `ModuleRouteProvider`。App 只遍历这些契约，不要再增加模块 ID 分支。
+4. 在 [internal/app/app.go](../internal/app/app.go) 创建模块并加入 `modules.Initialize` 清单。模块注册阶段只声明资源，检查并返回每个注册错误，不执行远程请求或业务写入，也不启动后台循环。有长连接或进程资源时实现 `ModuleLifecycle`；OAuth 回调或静态资源实现 `ModuleRouteProvider`。Registry 自动恢复和管理生命周期，App 遍历额外路由；不要增加模块 ID 分支。启停回调必须支持重试，失败后目录保留期望状态、实际状态为未知，业务入口关闭。
 5. 模块迁移通过本包 `go:embed migrations/*.sql` 提供，固定 SQL 放 `query/`，在 [sqlc.yaml](../sqlc.yaml) 增加 schema、query 和生成目标。运行 `sqlc generate` 并提交生成文件。
 
 业务不直接 import 其他业务、`internal/app` 或 `internal/capabilities` 实现。使用 `contracts` 接口注入，底层 HTTP/ID 工具可使用 `foundation/httpapi` 和 `foundation/identity`。共享数据库连接用于本业务表；跨业务读取应先设计公开契约或事件。
@@ -76,7 +76,7 @@ export default {
 
 Registry 通过 `./*/*.module.ts` 收集声明，校验模块和资源标识。页面 key、Widget kind 必须与后端对应；组件通过 `React.lazy` 加载。提供模块设置时增加 `settings` 懒加载组件，接收 `{ enabled: boolean }`；关闭状态下暂停业务查询并提示启用模块。
 
-接口函数与查询 hooks 放 `queries.ts`，响应的 Zod schema 和业务类型放 `schema.ts`。页面保留表单状态、交互反馈和渲染。参考 [Todo queries](../web/src/modules/todo/queries.ts) 与 [Investment queries](../web/src/modules/investment/queries.ts)。
+接口函数与查询 hooks 放 `queries.ts`，响应的 Zod schema 和推导的业务类型放 `schema.ts`。`api` 返回 `unknown`；需要读取响应时使用 `apiValidated` 或 `schema.parse`，不要通过类型断言绕过校验。新增或修改关键接口时，在 `internal/app/frontend_contract_test.go` 捕获真实响应，并在 `web/tests/contracts.test.mjs` 注册对应生产 schema。页面保留表单状态、交互反馈和渲染。参考 [Todo queries](../web/src/modules/todo/queries.ts) 与 [Investment queries](../web/src/modules/investment/queries.ts)。
 
 业务查询 key 以模块 ID 开头，例如 `["todo", "tasks"]`；卡片使用 `["widget", widget.id]`。写入后刷新受影响的业务和卡片缓存，涉及总览时刷新 `["dashboard"]`。列表读取 `nextCursor`，沿用后端分页语义，不能只请求第一页后在客户端当作全量数据。
 

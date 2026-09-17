@@ -80,12 +80,14 @@ type Catalog struct {
 }
 
 type Registry struct {
-	db       *sql.DB
-	queries  *dbsqlc.Queries
-	catalog  Catalog
-	mu       sync.RWMutex
-	enabled  map[contracts.ModuleID]bool
-	external map[contracts.ModuleID]*externalModule
+	db           *sql.DB
+	queries      *dbsqlc.Queries
+	catalog      Catalog
+	mu           sync.RWMutex
+	enabled      map[contracts.ModuleID]bool
+	builtinOrder []contracts.ModuleID
+	builtins     map[contracts.ModuleID]*builtinModule
+	external     map[contracts.ModuleID]*externalModule
 
 	clock    func() time.Time
 	timeouts Timeouts
@@ -106,6 +108,18 @@ func Initialize(ctx context.Context, database *workbenchdb.Database, definitions
 }
 
 func InitializeWith(ctx context.Context, database *workbenchdb.Database, definitions []contracts.Module, opts Options) (*Registry, error) {
+	// Ownership of constructed module resources transfers to the registry, even
+	// when validation or initialization fails.
+	ready := false
+	defer func() {
+		if !ready {
+			for i := len(definitions) - 1; i >= 0; i-- {
+				if lifecycle, ok := definitions[i].(contracts.ModuleLifecycle); ok {
+					lifecycle.Close()
+				}
+			}
+		}
+	}()
 	if database == nil {
 		return nil, errors.New("database is required")
 	}
@@ -161,6 +175,7 @@ func InitializeWith(ctx context.Context, database *workbenchdb.Database, definit
 		queries:    dbsqlc.New(database.SQL()),
 		catalog:    catalog,
 		enabled:    make(map[contracts.ModuleID]bool, len(catalog.Manifests)),
+		builtins:   make(map[contracts.ModuleID]*builtinModule, len(definitions)),
 		external:   make(map[contracts.ModuleID]*externalModule),
 		clock:      clock,
 		timeouts:   timeouts,
@@ -176,12 +191,23 @@ func InitializeWith(ctx context.Context, database *workbenchdb.Database, definit
 		bgCancel()
 		return nil, err
 	}
+	for _, definition := range definitions {
+		id := definition.Manifest().ID
+		lifecycle, _ := definition.(contracts.ModuleLifecycle)
+		registry.builtins[id] = &builtinModule{lifecycle: lifecycle}
+		registry.builtinOrder = append(registry.builtinOrder, id)
+		if err := registry.applyBuiltin(ctx, id, registry.builtins[id], registry.enabled[id]); err != nil {
+			bgCancel()
+			return nil, fmt.Errorf("restore module %q: %w", id, err)
+		}
+	}
 	if err := registry.loadExternals(ctx); err != nil {
 		bgCancel()
 		return nil, err
 	}
 	registry.wg.Add(1)
 	go registry.probeLoop()
+	ready = true
 	return registry, nil
 }
 
@@ -198,6 +224,17 @@ func (r *Registry) Close() error {
 	r.sockets.closeAll()
 	r.transports.closeAll()
 	r.wg.Wait()
+	for i := len(r.builtinOrder) - 1; i >= 0; i-- {
+		builtin := r.builtins[r.builtinOrder[i]]
+		if builtin == nil {
+			continue
+		}
+		builtin.ctrl.Lock()
+		if builtin.lifecycle != nil {
+			builtin.lifecycle.Close()
+		}
+		builtin.ctrl.Unlock()
+	}
 	return nil
 }
 
@@ -309,10 +346,14 @@ func validateManifest(manifest contracts.ModuleManifest) error {
 func (r *Registry) Catalog() Catalog { return r.catalog }
 
 func (r *Registry) IsEnabled(id contracts.ModuleID) bool {
+	if r.closed.Load() {
+		return false
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if enabled, ok := r.enabled[id]; ok {
-		return enabled
+		state := r.builtins[id]
+		return enabled && state != nil && state.observed != nil && *state.observed && !state.pending && state.lastError == ""
 	}
 	if ext, ok := r.external[id]; ok {
 		return ext.rec.Enabled
@@ -339,7 +380,7 @@ func (r *Registry) List() []ListedModule {
 	defer r.mu.RUnlock()
 	items := make([]ListedModule, 0, len(r.catalog.Manifests)+len(r.external))
 	for _, manifest := range r.catalog.Manifests {
-		items = append(items, listedBuiltin(manifest, r.enabled[manifest.ID]))
+		items = append(items, r.listedBuiltin(manifest))
 	}
 	for _, ext := range r.external {
 		items = append(items, ext.listed())
@@ -358,36 +399,10 @@ func (r *Registry) GetListed(id contracts.ModuleID) (ListedModule, bool) {
 	}
 	for _, manifest := range r.catalog.Manifests {
 		if manifest.ID == id {
-			return listedBuiltin(manifest, r.enabled[id]), true
+			return r.listedBuiltin(manifest), true
 		}
 	}
 	return ListedModule{}, false
-}
-
-func (r *Registry) SetEnabled(ctx context.Context, id contracts.ModuleID, enabled bool) error {
-	r.mu.RLock()
-	_, known := r.enabled[id]
-	r.mu.RUnlock()
-	if !known {
-		return fmt.Errorf("unknown module %q", id)
-	}
-	value := 0
-	if enabled {
-		value = 1
-	}
-	rows, err := r.queries.SetModuleEnabled(ctx, dbsqlc.SetModuleEnabledParams{
-		Enabled: int64(value), UpdatedAt: time.Now().UTC().UnixMilli(), ID: string(id),
-	})
-	if err != nil {
-		return fmt.Errorf("update module %q: %w", id, err)
-	}
-	if rows != 1 {
-		return fmt.Errorf("module %q was not updated", id)
-	}
-	r.mu.Lock()
-	r.enabled[id] = enabled
-	r.mu.Unlock()
-	return nil
 }
 
 func (r *Registry) reloadEnabled(ctx context.Context) error {

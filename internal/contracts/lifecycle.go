@@ -28,6 +28,11 @@ type ModuleRouteProvider interface {
 }
 
 // ModuleLifecycle is optional. Modules without process resources may omit it.
+// The registry restores persisted intent after migrations, serializes changes per
+// module, and closes resources on initialization failure and shutdown. Callbacks
+// must honor ctx and support retrying the same intent after a partial failure.
+// A failed callback leaves the actual state unknown and all business gates closed.
+// Close must release resources even when initialization or a callback failed.
 type ModuleLifecycle interface {
 	OnEnabledChanged(ctx context.Context, enabled bool) error
 	Close()

@@ -12,7 +12,7 @@ const moduleBase = {
   id: z.string(), name: z.string(), version: z.string(), icon: z.string(),
   navigation: z.array(navigationSchema), enabled: z.boolean(),
   hasSettings: z.boolean().optional(),
-  observedEnabled: z.boolean().nullable().optional(),
+  observedEnabled: z.boolean().nullable(),
   health: z.string().optional(),
   pending: z.boolean().optional(),
   lastError: z.string().optional(),
@@ -62,3 +62,10 @@ export const notificationSchema = z.object({
 });
 export type Notification = z.infer<typeof notificationSchema>;
 export const notificationsPageSchema = z.object({ items: z.array(notificationSchema), nextCursor: z.string().optional() });
+
+export const authStatusSchema = z.object({ authenticated: z.boolean(), mode: z.enum(["local", "password"]) });
+export const unreadCountSchema = z.object({ count: z.number() });
+export const aiStatusSchema = z.object({ available: z.boolean() });
+export const apiErrorSchema = z.object({ code: z.string(), message: z.string() });
+
+export const savedSchema = z.object({ saved: z.literal(true) });

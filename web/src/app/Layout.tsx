@@ -1,8 +1,9 @@
+import { unreadCountSchema } from "../shared/schema";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { Bell, Bot, CheckSquare2, Command, LayoutDashboard, Moon, PanelLeftClose, PanelLeftOpen, Sun, Settings2, Aperture } from "lucide-react";
 import { NavLink, Route, Routes } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "../shared/api";
+import { apiValidated } from "../shared/api";
 import { cn } from "../shared/cn";
 import { ThemeContext } from "../shared/theme";
 import { Button } from "../components/ui/Button";
@@ -33,7 +34,7 @@ export function Layout() {
   const [systemDark, setSystemDark] = useState(() => window.matchMedia("(prefers-color-scheme: dark)").matches);
   const dark = theme === "dark" || (theme === "system" && systemDark);
   useNotificationStream();
-  const unread = useQuery({ queryKey: ["notifications", "count"], queryFn: () => api<{ count: number }>("/api/notifications/unread-count") });
+  const unread = useQuery({ queryKey: ["notifications", "count"], queryFn: () => apiValidated("/api/notifications/unread-count", unreadCountSchema) });
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
   }, [dark]);
@@ -53,7 +54,7 @@ export function Layout() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
-  const navigation = useMemo(() => modules.data?.items.filter((item) => item.enabled).flatMap((item) => item.navigation.map((nav) => ({ ...nav, icon: item.icon }))).sort((a, b) => a.order - b.order) ?? [], [modules.data]);
+  const navigation = useMemo(() => modules.data?.items.filter((item) => item.enabled && (item.kind === "external" || (item.observedEnabled === true && !item.pending && !item.lastError))).flatMap((item) => item.navigation.map((nav) => ({ ...nav, icon: item.icon }))).sort((a, b) => a.order - b.order) ?? [], [modules.data]);
   return (
     <ThemeContext.Provider value={dark ? "dark" : "light"}>
     <div className="workbench-shell min-h-screen">

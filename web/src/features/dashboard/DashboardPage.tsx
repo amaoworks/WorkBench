@@ -12,8 +12,8 @@ import { PageHeader } from "../../components/ui/PageHeader";
 
 export default function DashboardPage() {
   const [editing, setEditing] = useState(false);
-  const dashboard = useQuery({ queryKey: ["dashboard"], queryFn: async () => dashboardSchema.parse(await api<unknown>("/api/dashboard")) });
-  const catalog = useQuery({ queryKey: ["dashboard", "catalog"], queryFn: async () => widgetCatalogSchema.parse(await api<unknown>("/api/dashboard/widgets")), enabled: editing });
+  const dashboard = useQuery({ queryKey: ["dashboard"], queryFn: async () => dashboardSchema.parse(await api("/api/dashboard")) });
+  const catalog = useQuery({ queryKey: ["dashboard", "catalog"], queryFn: async () => widgetCatalogSchema.parse(await api("/api/dashboard/widgets")), enabled: editing });
   return <div className="page">
     <PageHeader title="总览" description="查看工作进展，安排接下来的行动。" />
     <div className="mb-4 flex flex-wrap gap-3"><Button variant="secondary" onClick={() => setEditing(!editing)}>{editing ? "关闭配置" : "配置总览"}</Button><Link className="studio-button secondary" to="/settings?tab=modules">管理业务</Link></div>

@@ -1,7 +1,8 @@
+import { aiStatusSchema } from "../../shared/schema";
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Bot, Send, X } from "lucide-react";
-import { api, apiResponse } from "../../shared/api";
+import { apiValidated, apiResponse } from "../../shared/api";
 import { Button } from "../../components/ui/Button";
 import { cn } from "../../shared/cn";
 import { Link } from "react-router-dom";
@@ -61,7 +62,7 @@ export function AIPanel({ open, onClose }: { open: boolean; onClose: () => void 
   const [input, setInput] = useState("");
   const [conversationId, setConversationId] = useState(() => localStorage.getItem("workbench-conversation-id") ?? "");
   const [messages, setMessages] = useState<Message[]>([]);
-  const status = useQuery({ queryKey: ["ai", "status"], queryFn: () => api<{ available: boolean }>("/api/ai/status"), enabled: open });
+  const status = useQuery({ queryKey: ["ai", "status"], queryFn: () => apiValidated("/api/ai/status", aiStatusSchema), enabled: open });
   useEffect(() => {
     if (conversationId) localStorage.setItem("workbench-conversation-id", conversationId);
   }, [conversationId]);

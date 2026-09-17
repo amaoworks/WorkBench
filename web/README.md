@@ -17,7 +17,7 @@ src/shared/             HTTP 客户端、平台共享 schema、工具
 src/styles.css          主题变量和共享样式
 ```
 
-业务前端与 `internal/modules/<id>/` 一一对应。业务接口函数、查询 hooks 和缓存刷新放模块内 `queries.ts`，数据校验和类型放 `schema.ts`。页面保留表单与交互状态；平台 shared 不存放 Task 等业务专属模型。业务之间不直接导入彼此实现。
+业务前端与 `internal/modules/<id>/` 一一对应。业务接口函数、查询 hooks 和缓存刷新放模块内 `queries.ts`，数据校验和推导类型放 `schema.ts`。共享 `api` 返回 `unknown`，读取字段前调用 `apiValidated` 或 schema 的 `parse`；设置类型也由 `features/settings/schema.ts` 推导。页面保留表单与交互状态；平台 shared 不存放 Task 等业务专属模型。业务之间不直接导入彼此实现。
 
 ## 模块注册和缓存
 
@@ -39,6 +39,6 @@ src/styles.css          主题变量和共享样式
 
 ## 开发与构建
 
-在本目录执行 `npm ci`，使用 `npm run dev` 开发、`npm run lint` 检查、`npm run build` 执行类型检查和生产构建。产物直接写入 `internal/webui/dist/` 并检入，随后可嵌入 Go 程序。
+在本目录执行 `npm ci`，使用 `npm run dev` 开发、`npm run lint` 检查、`npm run test:contracts` 验证真实后端响应与前端 schema、`npm run build` 执行类型检查和生产构建。产物直接写入 `internal/webui/dist/` 并检入，随后可嵌入 Go 程序。
 
 Vite 代理和 Host 配置见[配置与运行](../doc/configuration.md)，完整检查及浏览器回归见 [scripts/README](../scripts/README.md)。

@@ -1,9 +1,10 @@
+import { aiTestSchema, backupSchema } from "./schema";
 import { useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Save, AudioLines, Check, CircleHelp, Database, Fingerprint, KeyRound, LoaderCircle, Monitor, Moon, Bot, Paintbrush, Radio, Server, ShieldCheck, Sun } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "../../shared/api";
+import { api, apiValidated } from "../../shared/api";
 import { useAppearance, useSettings, type AISettings, type Settings } from "./queries";
 import { ModulesPanel } from "./ModulesPanel";
 import { LoggingPanel } from "./LoggingPanel";
@@ -59,7 +60,7 @@ function AIForm({ value }: { value: AISettings }) {
   const [testResult, setTestResult] = useState("");
   const payload = () => ({ enabled, baseUrl, model, apiKey, clearApiKey });
   const save = useMutation({ mutationFn: () => api("/api/settings/ai", { method: "PUT", body: JSON.stringify(payload()) }), onSuccess: async () => { setApiKey(""); toast.success("智能配置已保存，新对话请求立即生效"); await client.invalidateQueries({ queryKey: ["settings"] }); await client.invalidateQueries({ queryKey: ["ai"] }); }, onError: (err) => toast.error(err.message) });
-  const test = useMutation({ mutationFn: () => api<{ latencyMs: number }>("/api/settings/ai/test", { method: "POST", body: JSON.stringify(payload()) }), onSuccess: (result) => setTestResult(`连接成功 · ${result.latencyMs} ms`), onError: (err) => setTestResult(err.message) });
+  const test = useMutation({ mutationFn: () => apiValidated("/api/settings/ai/test", aiTestSchema, { method: "POST", body: JSON.stringify(payload()) }), onSuccess: (result) => setTestResult(`连接成功 · ${result.latencyMs} ms`), onError: (err) => setTestResult(err.message) });
   const busy = save.isPending || test.isPending;
   const dirty = enabled !== value.enabled || baseUrl !== value.baseUrl || model !== value.model || apiKey !== "" || clearApiKey;
   return <form onSubmit={(event) => { event.preventDefault(); save.mutate(); }} className="studio-form">
@@ -102,7 +103,7 @@ function AppearanceForm({ value }: { value: Settings }) {
 
 function DataPanel({ value }: { value: Settings }) {
   const [file, setFile] = useState("");
-  const backup = useMutation({ mutationFn: () => api<{ file: string }>("/api/system/backup", { method: "POST", body: "{}" }), onSuccess: (result) => { setFile(result.file); toast.success("备份已创建并通过完整性检查"); }, onError: (err) => toast.error(err.message) });
+  const backup = useMutation({ mutationFn: () => apiValidated("/api/system/backup", backupSchema, { method: "POST", body: "{}" }), onSuccess: (result) => { setFile(result.file); toast.success("备份已创建并通过完整性检查"); }, onError: (err) => toast.error(err.message) });
   const deployment = value.deployment;
   return <div className="studio-form"><div className="backup-panel"><div className="icon-tile"><Database size={22} /></div><div><h3>数据备份</h3><p>创建完整数据库备份。</p></div><button className="studio-button secondary" disabled={backup.isPending} onClick={() => backup.mutate()}>{backup.isPending ? <LoaderCircle size={16} className="animate-spin" /> : <Database size={16} />}{backup.isPending ? "正在备份" : "创建备份"}</button></div>{file && <p className="inline-result" role="status"><Check size={16} /><span>已保存至数据库同目录的 backups/{file}</span></p>}<p className="form-note backup-note">备份含数据和密钥，保存在服务器。</p>
     <section className="deployment-panel" aria-labelledby="deployment-title"><div className="control-heading"><h3 id="deployment-title"><Server size={17} />运行信息</h3><span className="deployment-hint">启动配置 · 只读</span></div><dl><div><dt>监听地址</dt><dd>{deployment.listenAddress}</dd></div><div><dt>数据库路径</dt><dd>{deployment.dataPath}</dd></div><div><dt>认证模式</dt><dd>{deployment.authMode === "password" ? "密码登录" : "本机免登录"}</dd></div><div><dt>外部访问地址</dt><dd>{deployment.publicUrl || "本机 HTTP 服务"}</dd></div><div><dt>允许访问的 Host</dt><dd>{deployment.allowedHosts?.length ? deployment.allowedHosts.join(", ") : "默认允许本机监听地址"}</dd></div></dl></section></div>;

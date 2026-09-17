@@ -18,7 +18,7 @@ Manifest 声明 ID、显示名称、业务版本、契约版本、图标和导�
 
 可选契约：
 
-- [ModuleLifecycle](../internal/contracts/lifecycle.go)：`OnEnabledChanged`、`Close`。无后台资源的模块可以不实现。App 遍历该接口，不再按模块 ID 分支。
+- [ModuleLifecycle](../internal/contracts/lifecycle.go)：`OnEnabledChanged`、`Close`。无后台资源的模块可以不实现。Registry 在迁移后恢复每个模块的持久化意图，串行执行启停，并负责初始化失败及退出时的资源释放。回调应遵守 context，支持部分失败后重试同一意图；`Close` 必须能清理初始化未完成的资源。传入初始化函数后，资源所有权交给 Registry。
 - [ModuleRouteProvider](../internal/contracts/lifecycle.go)：额外声明公共回调或受保护静态入口。公共回调必须显式标注，不会因为普通业务注册而匿名开放。
 
 外部协议类型在 [external.go](../internal/contracts/external.go)，`protocolVersion` 当前为 1，与内置 `contractVersion` 分开。远端管理路径为 `/_workbench/manifest|status|state|config`。
@@ -55,7 +55,7 @@ Dashboard 保存完整的 Widget 配置集合，包含 ID、visible、size、ord
 
 ## HTTP 入口
 
-JSON 错误使用 `code`、`message`，并可含 `details`、`requestId`，定义见 [APIError](../internal/contracts/http.go)。共享 [httpapi](../internal/foundation/httpapi/json.go) 校验 JSON、限制请求体并拒绝未知字段。前端 [api](../web/src/shared/api.ts) 负责凭据、CSRF 和错误映射。
+JSON 错误使用 `code`、`message`，并可含 `details`、`requestId`，定义见 [APIError](../internal/contracts/http.go)。共享 [httpapi](../internal/foundation/httpapi/json.go) 校验 JSON、限制请求体并拒绝未知字段。前端 [api](../web/src/shared/api.ts) 负责凭据、CSRF 和错误映射，未校验的 JSON 返回 `unknown`。消费响应字段时使用 `apiValidated(path, schema, init)` 或显式 `schema.parse`，响应类型由 Zod 推导。关键 HTTP 契约通过真实后端响应与生产前端 schema 的跨端测试验证，见 [web/tests/contracts.test.mjs](../web/tests/contracts.test.mjs)。
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
@@ -64,7 +64,7 @@ JSON 错误使用 `code`、`message`，并可含 `details`、`requestId`，定�
 | POST | `/api/auth/login`、`/api/auth/logout` | 登录、退出 |
 | GET | `/api/modules` | 合并内置与外部目录（含 `kind`），只返回缓存状态 |
 | POST | `/api/modules/external` | 校验连接并接入外部模块，成功 201 |
-| PUT | `/api/modules/{id}/enabled` | 保存 `{ enabled }`；外部模块确认后 200，意图已保存等待确认时 202 |
+| PUT | `/api/modules/{id}/enabled` | 保存 `{ enabled }`；内置回调确认后 200，失败 503 并保留意图；外部确认后 200，等待确认时 202 |
 | PUT | `/api/modules/{id}/connection` | 更新外部连接；要求已停用，更换 origin 须重新提供凭据 |
 | POST | `/api/modules/{id}/refresh` | 有界刷新外部 manifest/状态 |
 | GET | `/api/modules/{id}/status` | 已缓存状态 |
