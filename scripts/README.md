@@ -146,6 +146,37 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 
 脚本需要访问 TradingView 静态资源站，带内容哈希的库文件缓存在系统临时目录 `workbench-tv-test-cache/`。截图写入 `/tmp/workbench-investment-account-manager.png` 和 `/tmp/workbench-investment-order-ticket.png`。终端 JS 通过 Go embed 编入程序；修改后需重新编译并启动工作台进程，再刷新浏览器。
 
+添加 `--mobile` 可在 Chromium 的 iPhone 尺寸、触屏和浏览器标识模拟环境中验证真实图表加载、历史 K 线、触摸及横竖屏切换。此模式使用 HTTPS 双层 iframe，并通过 `frame-src 'self'` 禁止图表的 `blob:` 导航，验证官方同源加载模式；同时模拟旧版 Safari/WebView 拒绝相对 WebSocket 地址的行为。不替代 Safari 真机验收。截图写入 `/tmp/workbench-investment-chart-mobile-{390,844,320}.png`。
+
+```bash
+PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
+  CHROMIUM_PATH=/usr/bin/chromium \
+  node scripts/investment-terminal.e2e.cjs --mobile
+```
+
+安装 Playwright WebKit 及运行依赖后，添加 `--webkit` 可改用 WebKit 引擎执行同一手机回归，截图文件名增加 `webkit-`。这是 Linux WebKit 测试，仍需 iOS Safari 真机确认系统版本相关的问题。
+
+```bash
+PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
+  node scripts/investment-terminal.e2e.cjs --webkit
+```
+
+添加 `--app` 会在端口 18140 启动临时工作台，通过完整 React 投资页加载真实图表，并检查普通布局、页面铺满与恢复时的图表保留。该模式本地使用 HTTP，独立的手机 iframe 模式覆盖 HTTPS。`WORKBENCH_BIN` 可指定测试程序，默认 `/tmp/workbench-investment-terminal-test`；退出后清理临时数据库和进程。先构建最新程序：
+
+```bash
+go build -o /tmp/workbench-investment-terminal-test ./cmd/workbench
+PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
+  node scripts/investment-terminal.e2e.cjs --webkit --app
+```
+
+`investment-loading.e2e.cjs` 使用真实终端文档和适配器，模拟外部图表模块加载失败、初始化异常、行情已连接但图表超时，验证失败提示、点击重试和迟到的加载成功。无需启动工作台或访问券商；图表库就绪过程使用可控 fixture。支持 `--webkit`：
+
+```bash
+PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
+  CHROMIUM_PATH=/usr/bin/chromium \
+  node scripts/investment-loading.e2e.cjs
+```
+
 `investment-page.e2e.cjs` 自行启动使用临时数据库的工作台，模拟已连接的 Schwab 设置并嵌入带状态标记的测试终端。它验证连续切换主题、图表加载中切换和跟随系统时的颜色同步，以及页面铺满/恢复、浏览器全屏/退出、新窗口、手机尺寸和全屏失败后的恢复，并确认主题和显示模式切换不重建图表。使用端口 18138，无需券商凭据；截图写入 `/tmp/workbench-investment-expanded-mobile.png`。
 
 ```bash

@@ -1,7 +1,8 @@
 import { SCHWAB_WS } from './schwab.js';
+import { createWebSocket } from './websocket.js';
 
 export class SchwabStream {
-    constructor({ events = window, socket = url => new WebSocket(url), url = SCHWAB_WS, retryDelay = 3000 } = {}) {
+    constructor({ events = window, socket = createWebSocket, url = SCHWAB_WS, retryDelay = 3000 } = {}) {
         this.events = events;
         this.socket = socket;
         this.url = url;

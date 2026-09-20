@@ -5,16 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
-	"workbench/internal/foundation/httpapi"
 )
 
 type streamerInfo struct {
@@ -29,6 +26,7 @@ type streamerClient struct {
 	conn *websocket.Conn
 	send chan []byte
 }
+
 type streamer struct {
 	module     *Module
 	connectMu  sync.Mutex
@@ -47,26 +45,19 @@ func newStreamer(module *Module) *streamer {
 	return &streamer{module: module, clients: make(map[*streamerClient]struct{}), pending: make(map[string]chan error), services: make(map[string]bool), sequence: 2}
 }
 
-var wsUpgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool {
-	origin := r.Header.Get("Origin")
-	if origin == "" {
-		return true
-	}
-	parsed, err := url.Parse(origin)
-	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && strings.EqualFold(parsed.Host, r.Host)
-}}
-
 func (s *streamer) reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closeLocked()
 }
+
 func (s *streamer) close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
 	s.closeLocked()
 }
+
 func (s *streamer) closeLocked() {
 	s.generation++ // Invalidates a LOGIN that is still in flight, too.
 	if s.schwab != nil {
@@ -83,6 +74,7 @@ func (s *streamer) closeLocked() {
 		s.removeLocked(client)
 	}
 }
+
 func (s *streamer) removeLocked(client *streamerClient) {
 	if _, ok := s.clients[client]; ok {
 		delete(s.clients, client)
@@ -91,32 +83,6 @@ func (s *streamer) removeLocked(client *streamerClient) {
 	_ = client.conn.Close()
 }
 
-func (m *Module) serveStreamer(w http.ResponseWriter, r *http.Request) {
-	if _, err := m.ensureAccessToken(r.Context()); err != nil {
-		httpapi.Error(w, http.StatusConflict, "schwab_disconnected", err.Error())
-		return
-	}
-	conn, err := wsUpgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return
-	}
-	client := &streamerClient{conn: conn, send: make(chan []byte, 64)}
-	if err := m.streamer.add(r.Context(), client); err != nil {
-		m.logger.Warn("Schwab stream connection failed", "errorType", fmt.Sprintf("%T", err))
-		_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseTryAgainLater, "Schwab connection unavailable"), time.Now().Add(time.Second))
-		_ = conn.Close()
-		return
-	}
-	go client.writePump()
-	defer m.streamer.remove(client)
-	conn.SetReadLimit(4096)
-	// Browser connections only receive events. Commands use the CSRF-protected HTTP endpoint.
-	for {
-		if _, _, err := conn.ReadMessage(); err != nil {
-			return
-		}
-	}
-}
 func (c *streamerClient) writePump() {
 	defer c.conn.Close()
 	for message := range c.send {
@@ -126,6 +92,7 @@ func (c *streamerClient) writePump() {
 		}
 	}
 }
+
 func (s *streamer) add(ctx context.Context, client *streamerClient) error {
 	if err := s.ensure(ctx); err != nil {
 		return err
@@ -139,6 +106,7 @@ func (s *streamer) add(ctx context.Context, client *streamerClient) error {
 	client.send <- []byte(`{"stream":{"status":"ready"}}`)
 	return nil
 }
+
 func (s *streamer) remove(client *streamerClient) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -152,40 +120,6 @@ func (s *streamer) remove(client *streamerClient) {
 	if len(s.clients) == 0 {
 		s.closeLocked()
 	}
-}
-
-func (m *Module) streamerCommand(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		Service   string `json:"service"`
-		Command   string `json:"command"`
-		Keys      string `json:"keys"`
-		Fields    string `json:"fields"`
-		RequestID any    `json:"requestId"`
-	}
-	if httpapi.Decode(w, r, &input, 64*1024) != nil {
-		httpapi.Error(w, 400, "invalid_request", "无效的 streamer 命令")
-		return
-	}
-	service, command := strings.ToUpper(input.Service), strings.ToUpper(input.Command)
-	switch service {
-	case "LEVELONE_EQUITIES", "LEVELONE_OPTIONS", "LEVELONE_FUTURES", "LEVELONE_FUTURES_OPTIONS", "LEVELONE_FOREX":
-	default:
-		httpapi.Error(w, 400, "invalid_request", "不支持的行情服务")
-		return
-	}
-	if command != "ADD" || strings.TrimSpace(input.Keys) == "" {
-		httpapi.Error(w, 400, "invalid_request", "请使用 ADD 并提供品种代码")
-		return
-	}
-	if _, err := m.ensureAccessToken(r.Context()); err != nil {
-		httpapi.Error(w, 409, "schwab_disconnected", err.Error())
-		return
-	}
-	if err := m.streamer.sendCommand(r.Context(), service, input.Keys, input.Fields); err != nil {
-		httpapi.Error(w, 503, "schwab_ws_disconnected", err.Error())
-		return
-	}
-	httpapi.Write(w, 200, map[string]bool{"success": true})
 }
 
 func streamRequest(info streamerInfo, id, service, command string, parameters map[string]string) map[string]any {
@@ -271,6 +205,7 @@ func (s *streamer) ensure(ctx context.Context) error {
 	go s.readSchwab(conn)
 	return nil
 }
+
 func awaitStreamResponse(conn *websocket.Conn, id string) error {
 	for {
 		_, raw, err := conn.ReadMessage()
@@ -340,6 +275,7 @@ func (s *streamer) sendCommand(ctx context.Context, service, keys, fields string
 	s.services[service] = true
 	return nil
 }
+
 func (s *streamer) readSchwab(conn *websocket.Conn) {
 	defer func() {
 		s.mu.Lock()
@@ -386,64 +322,6 @@ func (s *streamer) readSchwab(conn *websocket.Conn) {
 		}
 		s.mu.Unlock()
 	}
-}
-func (m *Module) streamerCredentials(ctx context.Context) (streamerInfo, string, uint64, error) {
-	m.tokenMu.Lock()
-	defer m.tokenMu.Unlock()
-	if err := m.refreshAccessTokenLocked(ctx); err != nil {
-		return streamerInfo{}, "", 0, err
-	}
-	rec, err := m.loadSchwab(ctx)
-	if err != nil {
-		return streamerInfo{}, "", 0, err
-	}
-	token := rec.AccessToken
-	if token == "" {
-		return streamerInfo{}, "", 0, errors.New("尚未连接 Schwab")
-	}
-	m.streamer.mu.Lock()
-	generation := m.streamer.generation
-	m.streamer.mu.Unlock()
-	if rec.StreamerInfo != "" {
-		var cached streamerInfo
-		if json.Unmarshal([]byte(rec.StreamerInfo), &cached) == nil && cached.StreamerSocketURL != "" {
-			return cached, token, generation, nil
-		}
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(m.schwabAPI, "/")+"/trader/v1/userPreference", nil)
-	if err != nil {
-		return streamerInfo{}, "", 0, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Accept", "application/json")
-	resp, err := m.httpClient.Do(req)
-	if err != nil {
-		return streamerInfo{}, "", 0, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return streamerInfo{}, "", 0, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return streamerInfo{}, "", 0, errors.New(trimErrorBody(body))
-	}
-	var parsed struct {
-		StreamerInfo []streamerInfo `json:"streamerInfo"`
-	}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return streamerInfo{}, "", 0, err
-	}
-	if len(parsed.StreamerInfo) == 0 || parsed.StreamerInfo[0].StreamerSocketURL == "" {
-		return streamerInfo{}, "", 0, errors.New("userPreference 未返回 streamerInfo")
-	}
-	info := parsed.StreamerInfo[0]
-	raw, _ := json.Marshal(info)
-	rec.StreamerInfo = string(raw)
-	if err := m.storeSchwab(ctx, rec); err != nil {
-		return streamerInfo{}, "", 0, err
-	}
-	return info, token, generation, nil
 }
 
 func firstNonEmpty(values ...string) string {

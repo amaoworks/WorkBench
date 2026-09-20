@@ -1,6 +1,6 @@
 # Investment 投资
 
-模块 ID 为 `investment`，显示名称为“投资”，页面为 `/investment`。后端在 [internal/modules/investment](../../internal/modules/investment)，前端在 [web/src/modules/investment](../../web/src/modules/investment)。
+模块 ID 为 `investment`，显示名称为“投资”，页面为 `/investment`。后端在 [internal/modules/investment](../../internal/modules/investment)，前端在 [web/src/modules/investment](../../web/src/modules/investment)。模块随 Workbench 主程序运行，内部按配置、授权、连接、订阅和历史行情分文件，见[代码导航](../../internal/modules/investment/README.md)。
 
 模块在工作台进程内接入 Charles Schwab Trader API：Go 负责 OAuth、REST 和 Streamer WebSocket，TradingView 终端负责行情、持仓与订单界面。模拟行情、模拟波动提醒及模拟行情 AI 摘要已移除，不再注册对应接口、任务和事件消费者。
 
@@ -32,6 +32,10 @@ OpenD 容器封装在仓库根目录 [futu-opend](../../futu-opend/)，可整夹
 ## 行情与交易
 
 连接后用 iframe 打开 `/investment/terminal`。终端从 Schwab 获取历史与实时行情，读取所选账户的真实多空持仓；订单查询覆盖最近一年。Schwab 没有订单游标，达到单次 3000 条上限时递归拆分时间范围并按订单 ID 去重；无法完整读取时明确报错，不展示被截断的完整列表。
+
+页面已有窄屏布局，终端使用 TradingView 的触屏自适应界面。Schwab 和 Futu 行情连接根据当前页面生成绝对 `ws://` / `wss://` 地址，保留域名与端口，避免旧版 Safari/WebView 不接受相对 WebSocket 地址而在创建图表前中断。手机空间不足时可使用「页面铺满」。浏览器回归包含真实图表的手机模拟模式，见[脚本说明](../../scripts/README.md#投资账户管理器)。
+
+内部图表启用 TradingView 官方的 `iframe_loading_same_origin`，通过同源代理 `/charting_library/sameorigin.html` 创建子页面，避免依赖 `blob:` iframe 导航。加载提示一直保留到图表 `chartReady()` 完成，行情 WebSocket 就绪不会提前隐藏它。图表模块加载失败或初始化异常显示重试入口；超过三十秒仍未就绪时提示继续等待或重新加载，迟到的成功加载仍可正常恢复。参见[官方 Featuresets](https://www.tradingview.com/charting-library-docs/latest/customization/Featuresets/#iframe_loading_same_origin)。
 
 投资页工具栏提供「页面铺满」「全屏」「新窗口」。页面铺满使用 `/investment?view=terminal`，隐藏工作台导航、页头和外围留白，保留终端工具栏；「返回工作台」恢复普通布局。切换页面铺满或浏览器全屏只改变布局，不重建 iframe，保留当前图表及下单面板状态。「新窗口」在独立标签页打开同一投资页并默认铺满，适合放到副屏；浏览器全屏可以通过工具栏或浏览器退出操作恢复。
 

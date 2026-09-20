@@ -1,3 +1,5 @@
+import { createWebSocket } from './websocket.js';
+
 const PREFIX = "/api/modules/investment/futu";
 
 let csrfToken = null;
@@ -63,7 +65,7 @@ export function usesFutuTicks(subsessionId, timestamp) {
 }
 
 export class FutuStream {
-    constructor({ events = window, socket = (url) => new WebSocket(url), url = FUTU_WS, retryDelay = 3000, status = futuFetch } = {}) {
+    constructor({ events = window, socket = createWebSocket, url = FUTU_WS, retryDelay = 3000, status = futuFetch } = {}) {
         this.events = events;
         this.socket = socket;
         this.url = url;

@@ -6,11 +6,22 @@
   <title>投资终端</title>
   <style>
     html, body, #tv_chart_container { margin: 0; height: 100%; background: var(--terminal-background, #fff); }
+    html { color-scheme: light dark; }
+    #terminal-loading { position: fixed; inset: 0; z-index: 20000; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box; text-align: center; font: 14px/1.6 system-ui, sans-serif; background: var(--terminal-background, Canvas); color: CanvasText; }
+    #terminal-loading[hidden] { display: none; }
+    #terminal-loading-title { margin: 0; font-size: 18px; }
+    #terminal-retry { padding: 10px 18px; border: 1px solid currentColor; border-radius: 6px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
   </style>
 </head>
 <body>
+  <div id="terminal-loading" role="status" aria-live="polite">
+    <h1 id="terminal-loading-title">正在加载图表…</h1>
+    <p id="terminal-loading-message">首次打开可能需要一些时间。</p>
+    <div id="terminal-loading-actions" hidden><button id="terminal-retry" type="button">重新加载</button></div>
+  </div>
   <div id="stream-status" role="status" style="position:fixed;top:0;left:0;right:0;z-index:10000;background:#fff3cd;color:#664d03;padding:8px;text-align:center">正在连接 Schwab，实时行情与订单状态等待更新…</div>
   <div id="tv_chart_container"></div>
+  <script src="/investment/terminal/loading.js"></script>
   <script type="module">
     import { widget as tvWidget } from "/charting_library/charting_library.esm.js";
     import Datafeed from "/investment/terminal/datafeed.js";
@@ -53,7 +64,7 @@
       fullscreen: false,
       autosize: true,
       disabled_features: ["header_saveload", "study_templates"],
-      enabled_features: ["pre_post_market_sessions"],
+      enabled_features: ["pre_post_market_sessions", "iframe_loading_same_origin"],
       widgetbar: { details: true, watchlist: true, news: false, datawindow: true },
       broker_factory: function (host) { broker = new Broker(host); return broker; },
       broker_config: {
@@ -73,6 +84,7 @@
       }
     });
     unbindTheme = bindTheme(widget, theme);
+    widget.chartReady().then(() => window.terminalLoad.ready()).catch(() => window.terminalLoad.fail());
   </script>
 </body>
 </html>

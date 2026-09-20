@@ -97,3 +97,50 @@ test('invalid history and price-less quotes do not create NaN bars', async t => 
     feed.request = async () => json({ invalid: true });
     await assert.rejects(history(feed), /历史数据/);
 });
+
+test('quote subscribers receive the provider fields for each asset class', t => {
+    const { feed, events } = setup(t);
+    const cases = [
+        ['LEVELONE_OPTIONS', 'AAPL 260918C00100000', { '4': 12, '3': 11, '2': 13, '8': 50 }, 12, 11, 50],
+        ['LEVELONE_FUTURES', '/ES', { '3': 6000, '1': 5999, '2': 6001, '8': 80 }, 6000, 5999, 80],
+        ['LEVELONE_FUTURES_OPTIONS', './ES', { '19': 20, '1': 19, '2': 21, '8': 90 }, 20, 19, 90],
+        ['LEVELONE_FOREX', 'EUR/USD', { '29': 1.1, '1': 1.09, '2': 1.11, '6': 100 }, 1.1, 1.09, 100],
+    ];
+    for (const [service, name, fields, price, bid, volume] of cases) {
+        const quotes = [];
+        feed.subscribeQuotes([name], [], updates => quotes.push(...updates), name);
+        events.dispatchEvent(new CustomEvent('LEVELONE_ANY', {
+            detail: { service, timestamp, content: [{ key: name, ...fields }] }
+        }));
+        assert.equal(quotes.length, 1);
+        assert.equal(quotes[0].n, name);
+        assert.equal(quotes[0].v.lp, price);
+        assert.equal(quotes[0].v.bid, bid);
+        assert.equal(quotes[0].v.volume, volume);
+    }
+});
+
+test('symbol resolution keeps night sessions exclusive to equities and preserves asset precision', async t => {
+    const { feed } = setup(t);
+    feed.futuRequest = async () => new Response(JSON.stringify({ enabled: true, overnightEnabled: true }));
+    const resolve = name => new Promise((ok, fail) => feed.resolveSymbol(name, ok, fail, { session: 'night' }));
+    const equities = await resolve(' AAPL ');
+    assert.equal(equities.name, 'AAPL');
+    assert.equal(equities.subsession_id, 'night');
+    assert.equal(equities.session, '2000-0400');
+    for (const [name, type] of [['AAPL 260918C00100000', 'OPTIONS'], ['/ES', 'FUTURES'], ['./ES', 'FUTURES_OPTIONS'], ['EUR/USD', 'FOREX']]) {
+        const info = await resolve(name);
+        assert.equal(info.type, type);
+        assert.equal(info.subsession_id, 'regular');
+        assert.equal(info.subsessions.some(session => session.id === 'night'), false);
+        assert.equal(info.pricescale, type === 'FOREX' ? 100000 : 100);
+    }
+});
+
+test('weekly and monthly history aligns to calendar boundaries', async t => {
+    const { feed } = setup(t);
+    for (const [resolution, expected] of [['1W', '2026-09-07T00:00:00Z'], ['1M', '2026-09-01T00:00:00Z']]) {
+        const { bars } = await history(feed, symbol, resolution);
+        assert.equal(bars[0].time, Date.parse(expected));
+    }
+});
