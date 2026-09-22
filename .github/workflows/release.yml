@@ -12,7 +12,29 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  on-main:
+    name: Require commit on main
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Require the tagged commit to be on main
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          commit=$(git rev-parse 'HEAD^{commit}')
+          main=$(git rev-parse refs/remotes/origin/main)
+          if ! git merge-base --is-ancestor "$commit" "$main"; then
+            printf '%s\n' \
+              'Release packages can only be published from commits already on main.' \
+              "Tagged commit ${commit} is not contained in origin/main (${main})." >&2
+            exit 1
+          fi
+          printf 'Release commit %s is on main (%s).\n' "$commit" "$main"
+
   check:
+    needs: on-main
     uses: ./.github/workflows/ci.yml
 
   packages:
@@ -149,8 +171,8 @@ jobs:
         run: |
           cd packages
           sha256sum --check SHA256SUMS
-          printf 'Container: %s:%s\n\nDigest: %s@%s\n\nSee the deployment guide in the attached packages.\n' \
-            "$IMAGE" "$VERSION" "$IMAGE" "$DIGEST" > "$RUNNER_TEMP/release-notes.md"
+          printf 'Released from: main\nCommit: %s\n\nContainer: %s:%s\n\nDigest: %s@%s\n\nSee the deployment guide in the attached packages.\n' \
+            "$GITHUB_SHA" "$IMAGE" "$VERSION" "$IMAGE" "$DIGEST" > "$RUNNER_TEMP/release-notes.md"
           extra=()
           if [[ "$VERSION" == *-* ]]; then
             extra+=(--prerelease --latest=false)

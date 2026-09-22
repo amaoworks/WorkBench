@@ -75,7 +75,7 @@ cd workbench_v0.1.1_linux_amd64
 | 推送 `main` | **CI and Build** | 验证通过后，在该次运行的 **Artifacts** 下载 Linux amd64/arm64 二进制包、Docker 镜像文件和部署文件 |
 | Actions → **CI and Build** → **Run workflow**，选择分支 | **CI and Build** | 与主分支构建相同，可手动打包，无需先创建版本标签 |
 | 提交 PR | **CI and Build** | 运行检查、双架构镜像构建及部署验证 |
-| 推送 `v0.1.1` 等版本标签 | **Release** | 二进制包与校验文件发布至 **Releases**，多架构镜像推送至 **GHCR** |
+| 推送指向 `main` 提交的 `v0.1.1` 等版本标签 | **Release** | 先确认该提交已在 `main` 上，再把二进制包与校验文件发布至 **Releases**，多架构镜像推送至 **GHCR** |
 
 普通分支构建的 Artifacts 保留 14 天，名称为 `workbench-linux-<架构>-<提交号>`。下载并解开 GitHub 的 artifact ZIP 后，其中包含可直接解压的二进制 `.tar.gz`、可用 `docker load` 导入的 `*_docker.tar.gz`、部署文件包和 `SHA256SUMS`。
 
@@ -86,14 +86,16 @@ docker load --input workbench_<构建版本>_linux_amd64_docker.tar.gz
 
 导入后的镜像名为 `workbench:sha-<完整提交号>`，可在 `.env` 中设置 `WORKBENCH_IMAGE=workbench`、`WORKBENCH_VERSION=sha-<完整提交号>` 后使用 Compose。二进制包解压后运行其中的 `workbench`。普通构建不会创建正式 Release 或推送 GHCR。
 
-正式发布时，在包含工作流的提交上创建并推送版本标签：
+正式发布只接受已经在 `main` 上的提交。先把要发布的提交合并进 `main` 并推送，再在该提交上创建并推送版本标签：
 
 ```bash
+git checkout main
+git pull origin main
 git tag v0.1.1
 git push origin v0.1.1
 ```
 
-**Release** 会复用检查、编译并验证两种架构的二进制、构建和推送 Docker 镜像，最后创建 GitHub Release。稳定版本更新镜像 `latest`；`v0.1.1-rc.1` 等预发布版本独立标记。失败的检查会阻止后续构建或发布，可在 Actions 查看对应步骤日志。工作流入口：[CI and Build](.github/workflows/ci.yml)、[Release](.github/workflows/release.yml)。
+**Release** 由 `v*` 标签触发。工作流先确认被标记的提交是 `origin/main` 的祖先（包含 `main` 顶端）；`dev` 或其他分支上尚未进入 `main` 的提交会在 **Require commit on main** 失败，不打包、不推送 GHCR、不创建 GitHub Release。通过后复用检查、编译并验证两种架构的二进制、构建和推送 Docker 镜像，最后创建 GitHub Release。Release 说明会写明 `Released from: main`。稳定版本更新镜像 `latest`；`v0.1.1-rc.1` 等预发布版本独立标记。失败的检查会阻止后续构建或发布，可在 Actions 查看对应步骤日志。工作流入口：[CI and Build](.github/workflows/ci.yml)、[Release](.github/workflows/release.yml)。
 
 ## 文档
 

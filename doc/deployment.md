@@ -198,14 +198,18 @@ VERSION=v0.1.1 ./scripts/release.sh
 下载 artifact ZIP 并解压后，先运行 `sha256sum --check SHA256SUMS`。二进制包解压即可运行；`*_docker.tar.gz` 使用 `docker load --input 文件名` 导入，镜像名为 `workbench:sha-<完整提交号>`。Compose 设置 `WORKBENCH_IMAGE=workbench`、`WORKBENCH_VERSION=sha-<完整提交号>`，其余配置与正常部署一致。普通构建不推送 GHCR，也不创建正式 Release。
 
 
-`.github/workflows/release.yml` 在推送 `v*` 标签时复用 CI。接受 `vMAJOR.MINOR.PATCH` 及预发布后缀，例如 `v0.1.1-rc.1`，不使用带 `+` 的构建元数据。验证后构建二进制包，分别在两个架构的 runner 上运行压缩包中的程序，再推送多架构 GHCR 镜像并创建 GitHub Release。
+`.github/workflows/release.yml` 在推送 `v*` 标签时触发。接受 `vMAJOR.MINOR.PATCH` 及预发布后缀，例如 `v0.1.1-rc.1`，不使用带 `+` 的构建元数据。正式包只能从 `main` 产出：标签指向的提交必须已经包含在 `origin/main` 中。先推送 `main`，再在该提交上打标签。
 
 ```bash
+git checkout main
+git pull origin main
 git tag v0.1.1
 git push origin v0.1.1
 ```
 
-二进制和镜像注入相同的版本、提交号和提交时间。镜像标签包括版本原文（`v0.1.1`）、完整提交号（`sha-...`），稳定版本另更新 `latest`；预发布不会更新 `latest`，GitHub Release 标记为 prerelease。部署推荐固定版本。不要移动已发布标签；需要修正时发布新版本。
+**Require commit on main** 用 `git merge-base --is-ancestor` 检查该提交。尚未合并进 `main` 的 `dev` 提交会在这一步失败，后续的检查、打包、GHCR 推送和 GitHub Release 都不会执行。通过后复用 CI，构建二进制包，分别在两个架构的 runner 上运行压缩包中的程序，再推送多架构 GHCR 镜像并创建 GitHub Release。Release 说明包含 `Released from: main` 和对应提交号。
+
+二进制和镜像注入相同的版本、提交号和提交时间。镜像标签包括版本原文（`v0.1.1`）、完整提交号（`sha-...`），稳定版本另更新 `latest`；预发布不会更新 `latest`，GitHub Release 标记为 prerelease。部署推荐固定版本。不要移动已发布标签；需要修正时发布新版本。这条分支限制写在被标记提交自己的工作流里，合并到 `main` 之后才会约束新的标签。
 
 Actions 通过内置 `GITHUB_TOKEN` 发布：镜像任务有 `packages: write`，Release 任务有 `contents: write`，验证任务仅请求读权限。仓库或组织需允许相应权限。Actions 依赖固定到提交 SHA，Dependabot 每月检查工作流依赖更新。Fork 发布时镜像名自动取该仓库的小写路径，部署 `.env` 的 `WORKBENCH_IMAGE` 需对应修改。
 
