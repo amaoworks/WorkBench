@@ -21,6 +21,10 @@ const order = {
   orderLegCollection: [{ instruction: "BUY", quantity: 2, instrument: { symbol: "MSFT", assetType: "EQUITY" } }]
 };
 let liveOrder = order;
+let watchlists = { revision: 0, state: null };
+let watchlistWriter = '', watchlistBase = 0, watchlistSequence = 0;
+let failWatchlistSave = false;
+let heldWatchlistSave;
 const history = [
   { ...order, orderId: 40, status: "FILLED", filledQuantity: 2 },
   { ...order, orderId: 41, status: "CANCELED" },
@@ -57,7 +61,11 @@ const history = [
       if (["ResizeObserver loop completed with undelivered notifications.", "ResizeObserver loop limit exceeded"].includes(error.message)) { resizeNotifications++; return; }
       errors.push(error.message);
     });
-    page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
+    page.on("console", message => {
+      if (message.type() !== "error") return;
+      if (message.location().url?.endsWith('/api/modules/investment/watchlists') && /503|409/.test(message.text())) return;
+      errors.push(message.text());
+    });
     await page.routeWebSocket("**/trader/ws", socket => {
       sockets.push(socket);
       socket.send(JSON.stringify({ stream: { status: "ready" } }));
@@ -118,6 +126,29 @@ const history = [
           });
         }
         if (path === "/api/auth/csrf") return await route.fulfill({ json: { token: "test-csrf" } });
+        if (path === "/api/modules/investment/watchlists") {
+          if (route.request().method() === "PUT") {
+            if (failWatchlistSave) return await route.fulfill({ status: 503, json: { message: '自选表保存暂时失败' } });
+            assert.equal(route.request().headers()['x-csrf-token'], "test-csrf");
+            const input = route.request().postDataJSON();
+            const sameWriter = input.writer === watchlistWriter && input.revision === watchlistBase;
+            if (input.revision !== watchlists.revision && !sameWriter) return await route.fulfill({ status: 409, json: { code: "watchlists_conflict", message: "自选表已在其他窗口更新，本页改动尚未保存" } });
+            if (!sameWriter || input.sequence > watchlistSequence) {
+              watchlists = { revision: watchlists.revision + 1, state: input.state };
+              watchlistWriter = input.writer; watchlistBase = input.revision; watchlistSequence = input.sequence;
+            }
+            if (heldWatchlistSave && !heldWatchlistSave.claimed) {
+              heldWatchlistSave.claimed = true;
+              heldWatchlistSave.started.resolve();
+              await heldWatchlistSave.release.promise;
+              // The page may already be gone when this intentionally delayed
+              // response is released; the newer keepalive request is separate.
+              return await route.fulfill({ json: { revision: watchlists.revision, sequence: watchlistSequence } }).catch(() => {});
+            }
+            return await route.fulfill({ json: { revision: watchlists.revision, sequence: watchlistSequence } });
+          }
+          return await route.fulfill({ json: watchlists });
+        }
         if (useApp && path === "/api/modules/investment/schwab") {
           return await route.fulfill({ json: { appKey: "fixture", callbackUrl: "https://example.test/oauth/schwab", hasAppSecret: true, connected: true, reauthorizationRequired: false, lastError: "" } });
         }
@@ -289,13 +320,93 @@ const history = [
     await page.waitForFunction(() => window.__orderUpdates.some(order => order.id === "42" && order.status === 2));
     await page.evaluate(() => window.__broker._refresh());
     assert.deepEqual(await page.evaluate(() => window.__orderUpdates.map(order => [order.id, order.status])), [["42", 2]], "a new fill must be announced exactly once");
+    const watchlistSaved = page.waitForResponse(response => response.url().endsWith('/watchlists') && response.request().method() === 'PUT' && response.request().postDataJSON().state.lists.length === 2 && response.ok());
+    const selectedList = await page.evaluate(async () => {
+      const api = await window.__widget.watchList();
+      const first = api.getActiveListId();
+      api.renameList(first, '长期关注');
+      api.updateList(first, ['###科技', 'MSFT', 'AAPL']);
+      const second = api.createList('观察中', ['SPY']);
+      await new Promise(resolve => setTimeout(resolve, 0));
+      api.setActiveList(second.id);
+      return second.id;
+    });
+    await watchlistSaved;
+    await page.waitForFunction(() => document.getElementById('watchlist-status').hidden);
+    // A new browser/device starts without TradingView's local settings. Clear
+    // them before reload so this verifies the workspace copy, not localStorage.
+    await page.evaluate(() => localStorage.clear());
     await page.reload();
     await page.waitForFunction(() => window.__broker?.connectionStatus() === 1);
     await page.evaluate(async () => { await window.__widget.chartReady(); await window.__broker._refresh(); });
     assert.equal(await page.evaluate(async () => (await window.__broker.ordersHistory()).length), 3);
     assert.deepEqual(await page.evaluate(() => window.__orderUpdates), [], "reloading must not replay previous fills");
+    await page.locator('#terminal-loading').waitFor({ state: 'hidden' });
+    assert.deepEqual(await page.evaluate(async () => {
+      const api = await window.__widget.watchList();
+      return { activeId: api.getActiveListId(), lists: Object.values(api.getAllLists()).map(({ title, symbols }) => ({ title, symbols })) };
+    }), { activeId: selectedList, lists: [{ title: '长期关注', symbols: ['###科技', 'MSFT', 'AAPL'] }, { title: '观察中', symbols: ['SPY'] }] });
+    const deletionSaved = page.waitForResponse(response => response.url().endsWith('/watchlists') && response.request().method() === 'PUT' && response.request().postDataJSON().state.lists.length === 1 && response.ok());
+    await page.evaluate(async () => {
+      const api = await window.__widget.watchList();
+      const inactive = Object.keys(api.getAllLists()).find(id => id !== api.getActiveListId());
+      api.deleteList(inactive);
+    });
+    await deletionSaved;
+    assert.equal(watchlists.state.lists.length, 1, 'deleting an inactive list must reach workspace storage');
+    failWatchlistSave = true;
+    await page.evaluate(async () => {
+      const api = await window.__widget.watchList();
+      api.updateList(api.getActiveListId(), []);
+    });
+    await page.getByRole('alert').filter({ hasText: '自选表保存暂时失败' }).waitFor();
+    failWatchlistSave = false;
+    const retrySaved = page.waitForResponse(response => response.url().endsWith('/watchlists') && response.request().method() === 'PUT' && response.ok());
+    await page.getByRole('button', { name: '重试保存', exact: true }).click();
+    await retrySaved;
+    await page.locator('#watchlist-status').waitFor({ state: 'hidden' });
+    await page.reload();
+    await page.locator('#terminal-loading').waitFor({ state: 'hidden' });
+    assert.deepEqual(await page.evaluate(async () => {
+      const api = await window.__widget.watchList();
+      return Object.values(api.getAllLists()).map(list => list.symbols);
+    }), [[]], 'saved empty lists must survive refresh without reviving deleted symbols');
+    heldWatchlistSave = { started: Promise.withResolvers(), release: Promise.withResolvers(), claimed: false };
+    await page.evaluate(async () => {
+      const api = await window.__widget.watchList();
+      api.updateList(api.getActiveListId(), ['GOOG']);
+    });
+    await heldWatchlistSave.started.promise;
+    await page.evaluate(async () => {
+      const api = await window.__widget.watchList();
+      api.updateList(api.getActiveListId(), ['NVDA']);
+    });
+    await page.reload();
+    await page.locator('#terminal-loading').waitFor({ state: 'hidden' });
+    heldWatchlistSave.release.resolve();
+    assert.deepEqual(await page.evaluate(async () => {
+      const api = await window.__widget.watchList();
+      return api.getList(api.getActiveListId());
+    }), ['NVDA'], 'refresh during an older save must recover the latest edit');
+    assert.deepEqual(watchlists.state.lists[0].symbols, ['NVDA']);
+    watchlistBase = watchlists.revision;
+    watchlists = { revision: watchlists.revision + 1, state: { ...watchlists.state, lists: watchlists.state.lists.map(list => ({ ...list, symbols: ['IBM'] })) } };
+    watchlistWriter = 'another-device'; watchlistSequence = 1;
+    await page.evaluate(async () => {
+      const api = await window.__widget.watchList();
+      api.updateList(api.getActiveListId(), ['AAPL']);
+    });
+    await page.getByRole('button', { name: '加载工作台版本', exact: true }).waitFor();
+    await page.reload();
+    await page.locator('#terminal-loading').waitFor({ state: 'hidden' });
+    await page.getByRole('button', { name: '加载工作台版本', exact: true }).waitFor();
+    assert.deepEqual(await page.evaluate(async () => (await window.__widget.watchList()).getList()), ['AAPL'], 'conflicting local edits must remain recoverable');
+    assert.deepEqual(watchlists.state.lists[0].symbols, ['IBM'], 'the old page must not replace the other device state');
+    await page.getByRole('button', { name: '加载工作台版本', exact: true }).click();
+    await page.waitForFunction(() => document.getElementById('terminal-loading').hidden && document.getElementById('watchlist-status').hidden);
+    assert.deepEqual(await page.evaluate(async () => (await window.__widget.watchList()).getList()), ['IBM']);
     assert.deepEqual(errors, []);
-    console.log("PASS: actual TradingView theme changes with chart preservation, account manager, account switch/reconnect, order ticket, history without replay and live fill notification; no browser errors or trades.");
+    console.log("PASS: actual TradingView themes, account manager, account switch/reconnect, order ticket, history without replay, live fill notification and workspace watchlists restored without localStorage; no browser errors or trades.");
   } finally {
     await browser?.close();
     if (app && app.exitCode === null && app.pid) {

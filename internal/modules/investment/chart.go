@@ -1,12 +1,16 @@
 package investment
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -26,7 +30,11 @@ func newTVProxy(origin string) *httputil.ReverseProxy {
 		req.Header.Del("Cookie")
 		req.Header.Del("Authorization")
 		req.Header.Del("X-CSRF-Token")
-		req.Header.Set("Accept-Encoding", "identity")
+		// Forward the browser's supported encodings so large chart bundles can
+		// stay compressed on both hops. Do not negotiate on the browser's behalf.
+		if req.Header.Get("Accept-Encoding") == "" {
+			req.Header.Set("Accept-Encoding", "identity")
+		}
 	}
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		resp.Header.Del("X-Frame-Options")
@@ -82,9 +90,9 @@ func (m *Module) serveTerminal(w http.ResponseWriter, r *http.Request) {
 	case ".js":
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("ETag", fmt.Sprintf(`"%x"`, sha256.Sum256(payload)))
 	default:
 		w.Header().Set("Content-Type", "application/octet-stream")
 	}
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(payload)
+	http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(payload))
 }

@@ -44,6 +44,7 @@
 | Investment | `investment_price_rules` | 标的、阈值、启停、规则版本及最近有效报价/错误 |
 | Investment | `investment_price_triggers` | `(rule_id, trading_date)` 唯一的触发快照、站内通知 ID；删除规则后保留 |
 | Investment | `investment_price_monitor` | 最近后台检查时间、状态和错误 |
+| Investment | `investment_watchlists` | 自选列表、分组和顺序、当前列表，以及防止迟到请求和旧窗口覆盖的编辑版本/会话/序号 |
 
 平台设置可供通用能力使用。例如总览布局由 Dashboard 能力管理，但保存在平台 `workspace_settings`；业务配置使用模块自己的表。
 

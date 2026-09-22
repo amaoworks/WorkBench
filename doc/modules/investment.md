@@ -74,6 +74,12 @@ OpenD 容器封装在仓库根目录 [futu-opend](../../futu-opend/)，可整夹
 
 历史 K 线按时间排序、去重并排除查询结束边界；日、周、月线时间与 UTC 周期起点对齐。历史回补不会覆盖更新的实时 K 线，同一品种周期的多个订阅者只计算一次成交量增量，交给图表的数据使用副本，避免图表修改内部缓存。
 
+24h 视图并行读取 Schwab 与 Futu 的历史数据，两路完成后再合并；读取期间连接变更时丢弃旧结果。
+
+自选表自动保存到工作台数据库。新增、删除、重命名、标的顺序、分组和当前选中的列表，在刷新、重启工作台或另一台设备打开时恢复。第一次使用时会导入当前浏览器已有的自选表；之后以工作台保存的内容为准，空列表也会保留。接入使用 [TradingView Watchlist API](https://www.tradingview.com/charting-library-docs/latest/trading_terminal/Watch-List/)。
+
+保存失败时显示「重试保存」。同一页面连续编辑按序号提交，迟到的旧请求不会覆盖新内容；修改后刷新会先恢复当前标签页的待提交草稿。其他窗口已保存新版本时，本页显示冲突并保留本页内容；点击「加载工作台版本」会放弃本页未保存修改并载入工作台版本。跨设备在打开或刷新时恢复，不做实时协同。
+
 ## 长连接恢复
 
 Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后才通知浏览器 ready。行情服务首次使用 SUBS，之后使用 ADD；HTTP 成功仅在 Schwab 确认订阅后返回。
@@ -86,12 +92,15 @@ Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后
 
 当前 `/charting_library/` 从 `https://trading-terminal.tradingview-widget.com/charting_library/` 同源反代，保存图纸和新闻等依赖外部服务的功能关闭。行情与交易数据来自 Schwab；夜盘覆盖打开时，Night / 24h 的夜盘段来自 Futu OpenD。
 
+图表代理保留浏览器的压缩协商和上游缓存头，压缩资源直接转发。内嵌终端脚本用内容 ETag 校验缓存，未变化时返回 304，程序升级后会返回新脚本；终端 HTML 保持 `no-store`。数据源就绪回调在下一个任务中执行，遵循 [TradingView 异步回调约定](https://www.tradingview.com/charting-library-docs/latest/connecting_data/Datafeed-API/#asynchronous-callbacks)，无需固定等待一秒。首次加载仍取决于服务器访问外部图表资源及券商数据的速度。
+
 这个演示资源接入不等同于取得库的部署授权。TradingView FAQ 区分了 Widgets、Advanced Charts 和 Trading Platform；自托管交易功能需使用获得授权的 Trading Platform 包。参见 [官方 FAQ](https://www.tradingview.com/charting-library-docs/latest/resources/Frequently-Asked-Questions/)。
 
 ## 接口与资源
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
+| GET/PUT | `/api/modules/investment/watchlists` | 工作台自选表读取/保存（需要编辑版本、会话和序号） |
 | GET | `/api/modules/investment/schwab` | 应用配置、连接状态、`reauthorizationRequired` 及最近错误 |
 | PUT | `/api/modules/investment/schwab` | 保存 `appKey`、`appSecret`、`callbackUrl` |
 | POST | `/api/modules/investment/schwab/disconnect` | 清除令牌和连接 |

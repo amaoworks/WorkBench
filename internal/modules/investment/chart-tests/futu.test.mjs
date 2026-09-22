@@ -83,6 +83,49 @@ test('24h 10-minute stays on Schwab', async (t) => {
     assert.deepEqual(futuCalls, []);
 });
 
+test('24h history loads both providers concurrently and merges only after both finish', async t => {
+    const calls = [];
+    const schwab = Promise.withResolvers(), futu = Promise.withResolvers();
+    const feed = new Datafeed({
+        events: new EventTarget(), stream: { ready: false },
+        request: () => { calls.push('schwab'); return schwab.promise; },
+        futuRequest: path => {
+            if (path === '') return Promise.resolve(new Response(JSON.stringify({ enabled: true, overnightEnabled: true })));
+            calls.push('futu');
+            return futu.promise;
+        },
+    });
+    t.after(() => feed.destroy());
+    let settled = false;
+    const pending = history(feed, { name: 'AAPL', subsession_id: '24h' }).then(result => { settled = true; return result; });
+    await new Promise(setImmediate);
+    assert.deepEqual(calls, ['schwab', 'futu'], 'a slow Schwab response must not delay the Futu request');
+    futu.resolve(json([{ time: nightTime, open: 200, high: 200, low: 200, close: 200, volume: 5 }]));
+    await new Promise(setImmediate);
+    assert.equal(settled, false, 'partial history must not be published');
+    schwab.resolve(json([candle]));
+    const { bars } = await pending;
+    assert.deepEqual(bars.map(bar => bar.close), [200, 100]);
+});
+
+test('24h history rejects a reconnect while the last response body is still being read', async t => {
+    const events = new EventTarget(), futu = Promise.withResolvers();
+    const feed = new Datafeed({
+        events, stream: { ready: false }, request: async () => json([candle]),
+        futuRequest: async path => path === ''
+            ? new Response(JSON.stringify({ enabled: true, overnightEnabled: true }))
+            : { ok: true, json: () => futu.promise },
+    });
+    t.after(() => feed.destroy());
+    const pending = history(feed, { name: 'AAPL', subsession_id: '24h' });
+    const rejected = assert.rejects(pending, /连接已变更/);
+    await new Promise(setImmediate);
+    events.dispatchEvent(new Event('SCHWAB_STREAM_CLOSED'));
+    futu.resolve({ candles: [] });
+    await rejected;
+    assert.equal(feed.latestBars.size, 0);
+});
+
 test('isOvernightET uses America/New_York including DST', () => {
     assert.equal(isOvernightET(Date.parse('2026-01-15T01:00:00Z')), true);
     assert.equal(isOvernightET(Date.parse('2026-01-15T09:00:00Z')), false);

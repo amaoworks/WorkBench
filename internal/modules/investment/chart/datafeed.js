@@ -141,11 +141,12 @@ export default class Datafeed {
     }
 
     onReady(callback) {
+        // TradingView needs a separate task, not a fixed startup delay.
         setTimeout(() => {
             callback({
                 supported_resolutions: ['1', '5', '10', '15', '30', '1D', '1W', '1M'],
             });
-        }, 1000);
+        }, 0);
     }
 
     async searchSymbols(userInput, exchange, symbolType, onResult) {
@@ -248,8 +249,11 @@ export default class Datafeed {
             if (session === '24h' && NIGHT_RESOLUTIONS.has(resolution)) {
                 const overlay = await this.ensureFutuOverlay();
                 if (overlay.enabled && this.identifyAssetType(name) === 'EQUITIES') {
-                    const schwab = await this.getSchwabBars(name, resolution, periodParams, epoch, true);
-                    const night = await this.getFutuNightBars(name, resolution, from, to, epoch);
+                    const [schwab, night] = await Promise.all([
+                        this.getSchwabBars(name, resolution, periodParams, epoch, true),
+                        this.getFutuNightBars(name, resolution, from, to, epoch),
+                    ]);
+                    if (this.destroyed || epoch !== this.streamEpoch) throw new Error('行情连接已变更，请重新读取历史数据');
                     const merged = mergeSessionBars(schwab, night);
                     this.seedLatest(name, session, resolution, merged);
                     onResult(merged, { noData: merged.length === 0 });

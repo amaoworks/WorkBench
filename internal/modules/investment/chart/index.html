@@ -11,6 +11,8 @@
     #terminal-loading[hidden] { display: none; }
     #terminal-loading-title { margin: 0; font-size: 18px; }
     #terminal-retry { padding: 10px 18px; border: 1px solid currentColor; border-radius: 6px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+    #watchlist-status { position: fixed; bottom: 12px; left: 12px; right: 12px; z-index: 21000; padding: 10px 14px; background: #fff3cd; color: #664d03; border-radius: 6px; font: 14px/1.6 system-ui, sans-serif; }
+    #watchlist-retry { margin-left: 12px; cursor: pointer; }
   </style>
 </head>
 <body>
@@ -21,6 +23,7 @@
   </div>
   <div id="stream-status" role="status" style="position:fixed;top:0;left:0;right:0;z-index:10000;background:#fff3cd;color:#664d03;padding:8px;text-align:center">正在连接 Schwab，实时行情与订单状态等待更新…</div>
   <div id="tv_chart_container"></div>
+  <div id="watchlist-status" role="alert" hidden><span id="watchlist-message"></span><button id="watchlist-retry" type="button">重试保存</button></div>
   <script src="/investment/terminal/loading.js"></script>
   <script type="module">
     import { widget as tvWidget } from "/charting_library/charting_library.esm.js";
@@ -29,6 +32,7 @@
     import { SchwabStream } from "/investment/terminal/stream.js";
     import { FutuStream } from "/investment/terminal/futu.js";
     import { bindTheme } from "/investment/terminal/theme.js";
+    import { loadWatchlists, bindWatchlists } from "/investment/terminal/watchlists.js";
 
     const params = new URLSearchParams(location.search);
     const theme = params.get("theme") === "dark" ? "dark" : "light";
@@ -40,7 +44,8 @@
       status.hidden = false;
       window.parent.postMessage({ type: 'workbench.schwab.status_changed' }, location.origin);
     });
-    let broker, widget, unbindTheme, disposed = false;
+    let broker, widget, unbindTheme, watchlistSync, disposed = false;
+    const savedWatchlists = loadWatchlists().then(value => ({ value }), error => ({ error }));
     const datafeed = new Datafeed({ futuStream: window.futu, resetCharts: () => {
       widget.chartReady().then(() => {
         if (disposed || !window.ws.ready) return;
@@ -48,7 +53,7 @@
         for (let i = 0; i < widget.chartsCount(); i++) widget.chart(i).resetData();
       }).catch(() => { status.hidden = false; });
     } });
-    window.addEventListener('pagehide', () => { disposed = true; unbindTheme?.(); window.ws.close(); window.futu.close(); datafeed.destroy(); broker?.destroy(); });
+    window.addEventListener('pagehide', () => { disposed = true; unbindTheme?.(); watchlistSync?.dispose(); window.ws.close(); window.futu.close(); datafeed.destroy(); broker?.destroy(); });
 
     widget = new tvWidget({
       datafeed,
@@ -84,7 +89,22 @@
       }
     });
     unbindTheme = bindTheme(widget, theme);
-    widget.chartReady().then(() => window.terminalLoad.ready()).catch(() => window.terminalLoad.fail());
+    widget.chartReady().then(async () => {
+      const saved = await savedWatchlists;
+      if (disposed) return;
+      if (saved.error) throw saved.error;
+      watchlistSync = await bindWatchlists(widget, saved.value, error => {
+        const panel = document.getElementById('watchlist-status');
+        panel.hidden = !error;
+        if (!error) return;
+        document.getElementById('watchlist-message').textContent = error.message;
+        const retry = document.getElementById('watchlist-retry');
+        retry.textContent = error.conflict ? '加载工作台版本' : '重试保存';
+        retry.onclick = () => { if (error.conflict) { watchlistSync?.dispose({ discard: true }); saved.value.discardDraft(); location.reload(); } else void watchlistSync?.retry(); };
+      });
+      if (disposed) { watchlistSync.dispose(); return; }
+      window.terminalLoad.ready();
+    }).catch(error => window.terminalLoad.fail(error.message));
   </script>
 </body>
 </html>

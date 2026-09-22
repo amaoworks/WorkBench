@@ -86,3 +86,12 @@ type InvestmentSchwab struct {
 	UpdatedAt               int64  `json:"updated_at"`
 	ReauthorizationRequired int64  `json:"reauthorization_required"`
 }
+
+type InvestmentWatchlist struct {
+	ID           int64  `json:"id"`
+	Revision     int64  `json:"revision"`
+	Writer       string `json:"writer"`
+	BaseRevision int64  `json:"base_revision"`
+	Sequence     int64  `json:"sequence"`
+	Content      string `json:"content"`
+}

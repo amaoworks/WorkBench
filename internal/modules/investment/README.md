@@ -14,6 +14,7 @@
 | OpenD 传输协议、行情请求与解码 | `futu_opend.go`、`futu_quotes.go` |
 | OpenD 安装、进程与登录配置 | `futu_install.go`、`futu_service.go`、`futu_process_*.go`、`futu_login.go` |
 | 夜盘开关、终端资源与图表库代理 | `overnight.go`、`chart.go` |
+| 工作台自选表持久化、编辑版本检查 | `watchlists.go` |
 | 模块内共享的路径、时间及随机值辅助函数 | `helpers.go` |
 
 `Module` 统一装配并持有连接资源。拆文件不改变锁的归属：Schwab 凭据仍由 `tokenMu` 串行保护，连接建立和配置替换仍使用各网关的 `connectMu`，连接集合与代数由网关自身的 `mu` 保护。修改这些路径时，应一起检查模块停用、令牌更新、迟到响应和退出清理。
@@ -31,6 +32,7 @@
 | `broker.js`、`broker-models.js` | 账户和交易适配、订单与持仓模型 |
 | `schwab.js`、`stream.js`、`futu.js`、`websocket.js` | 请求客户端与行情连接 |
 | `index.html`、`loading.js`、`theme.js` | 终端装配、加载反馈与主题 |
+| `watchlists.js` | 自选表恢复、自动保存、待提交草稿与重试 |
 
 行情转换函数接收明确的输入和缓存，连接代数校验由 `datafeed.js` 传入历史请求函数。新增终端 JS 放在 `chart/` 同层，可被当前嵌入规则、lint 和浏览器测试路由直接发现。
 

@@ -160,6 +160,8 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 
 脚本需要访问 TradingView 静态资源站，带内容哈希的库文件缓存在系统临时目录 `workbench-tv-test-cache/`。截图写入 `/tmp/workbench-investment-account-manager.png` 和 `/tmp/workbench-investment-order-ticket.png`。终端 JS 通过 Go embed 编入程序；修改后需重新编译并启动工作台进程，再刷新浏览器。
 
+桌面模式还验证工作台自选表保存：多列表的名称、分组、标的顺序和当前列表在清空浏览器本地存储后恢复，删除非当前列表会保存，保存失败可重试，清空列表后刷新不会恢复旧标的；旧保存请求未返回时刷新仍恢复最新编辑，跨设备冲突后可保留本页草稿或载入工作台版本。后端版本冲突、迟到请求、CSRF 和进程重启持久化另由 Go 测试覆盖。
+
 添加 `--mobile` 可在 Chromium 的 iPhone 尺寸、触屏和浏览器标识模拟环境中验证真实图表加载、历史 K 线、触摸及横竖屏切换。此模式使用 HTTPS 双层 iframe，并通过 `frame-src 'self'` 禁止图表的 `blob:` 导航，验证官方同源加载模式；同时模拟旧版 Safari/WebView 拒绝相对 WebSocket 地址的行为。不替代 Safari 真机验收。截图写入 `/tmp/workbench-investment-chart-mobile-{390,844,320}.png`。
 
 ```bash

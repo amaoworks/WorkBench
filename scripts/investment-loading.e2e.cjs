@@ -17,6 +17,8 @@ const { chromium, webkit, devices } = require(process.env.PLAYWRIGHT_MODULE || "
     await page.routeWebSocket("**/trader/ws", socket => socket.send(JSON.stringify({ stream: { status: "ready" } })));
     await page.route("https://workbench.test/**", async route => {
       const path = new URL(route.request().url()).pathname;
+      if (path === "/api/auth/csrf") return route.fulfill({ json: { token: "fixture" } });
+      if (path === "/api/modules/investment/watchlists") return route.fulfill({ json: { revision: 1, state: { lists: [{ id: "test", title: "自选表", symbols: [] }], activeId: "test" } } });
       if (path === "/charting_library/charting_library.esm.js") {
         if (mode === "module-error") return route.fulfill({ status: 503, contentType: "text/plain", body: "chart library unavailable" });
         // Control chart readiness independently of the already connected stream.
@@ -28,6 +30,11 @@ const { chromium, webkit, devices } = require(process.env.PLAYWRIGHT_MODULE || "
             changeTheme() { return Promise.resolve(); }
             resetCache() {}
             chartsCount() { return 0; }
+            watchList() { return Promise.resolve({
+              getAllLists: () => ({ test: { id: 'test', title: '自选表', symbols: [] } }), getActiveListId: () => 'test',
+              createList() {}, renameList() {}, setActiveList() {}, deleteList() {},
+              ...Object.fromEntries(['onListAdded', 'onListChanged', 'onListRemoved', 'onListRenamed', 'onActiveListChanged'].map(name => [name, () => ({ subscribe() {}, unsubscribe() {} })])),
+            }); }
           }
         ` });
       }
