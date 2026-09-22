@@ -4,6 +4,10 @@
 
 package investmentsqlc
 
+import (
+	"database/sql"
+)
+
 type InvestmentFutu struct {
 	ID               int64  `json:"id"`
 	Host             string `json:"host"`
@@ -26,6 +30,45 @@ type InvestmentFutuBar struct {
 	Low        float64 `json:"low"`
 	Close      float64 `json:"close"`
 	Volume     float64 `json:"volume"`
+}
+
+type InvestmentPriceMonitor struct {
+	ID        int64         `json:"id"`
+	Status    string        `json:"status"`
+	CheckedAt sql.NullInt64 `json:"checked_at"`
+	LastError string        `json:"last_error"`
+}
+
+type InvestmentPriceRule struct {
+	ID            string          `json:"id"`
+	Symbol        string          `json:"symbol"`
+	Direction     string          `json:"direction"`
+	ThresholdBps  int64           `json:"threshold_bps"`
+	Enabled       int64           `json:"enabled"`
+	Version       int64           `json:"version"`
+	CreatedAt     int64           `json:"created_at"`
+	UpdatedAt     int64           `json:"updated_at"`
+	Price         sql.NullFloat64 `json:"price"`
+	PreviousClose sql.NullFloat64 `json:"previous_close"`
+	ChangePercent sql.NullFloat64 `json:"change_percent"`
+	QuoteAt       sql.NullInt64   `json:"quote_at"`
+	CheckedAt     sql.NullInt64   `json:"checked_at"`
+	LastError     string          `json:"last_error"`
+}
+
+type InvestmentPriceTrigger struct {
+	ID             string  `json:"id"`
+	RuleID         string  `json:"rule_id"`
+	TradingDate    string  `json:"trading_date"`
+	Symbol         string  `json:"symbol"`
+	Direction      string  `json:"direction"`
+	ThresholdBps   int64   `json:"threshold_bps"`
+	Price          float64 `json:"price"`
+	PreviousClose  float64 `json:"previous_close"`
+	ChangePercent  float64 `json:"change_percent"`
+	QuoteAt        int64   `json:"quote_at"`
+	TriggeredAt    int64   `json:"triggered_at"`
+	NotificationID string  `json:"notification_id"`
 }
 
 type InvestmentSchwab struct {

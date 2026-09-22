@@ -2,7 +2,26 @@
 
 模块 ID 为 `investment`，显示名称为“投资”，页面为 `/investment`。后端在 [internal/modules/investment](../../internal/modules/investment)，前端在 [web/src/modules/investment](../../web/src/modules/investment)。模块随 Workbench 主程序运行，内部按配置、授权、连接、订阅和历史行情分文件，见[代码导航](../../internal/modules/investment/README.md)。
 
-模块在工作台进程内接入 Charles Schwab Trader API：Go 负责 OAuth、REST 和 Streamer WebSocket，TradingView 终端负责行情、持仓与订单界面。模拟行情、模拟波动提醒及模拟行情 AI 摘要已移除，不再注册对应接口、任务和事件消费者。
+模块在工作台进程内接入 Charles Schwab Trader API：Go 负责 OAuth、REST、Streamer WebSocket 和后台价格监控，TradingView 终端负责行情、持仓与订单界面。投资页可切换「交易终端」和「价格监控」。行情及提醒均使用真实券商数据。
+
+## 价格监控与预警
+
+在 `/investment?tab=monitor` 添加美股或 ETF 代码，选择上涨/下跌和正百分比阈值，最多 100 条规则。涨跌幅为 `(常规时段最新成交价 / 上一交易日收盘价 - 1) × 100%`；阈值支持两位小数，上涨最多 1000%，下跌最多 100%。首次有效检查已满足阈值时也会提醒。尚未授权时可以保存规则，页面显示授权或行情错误。
+
+`investment.monitor_prices` 每分钟在服务端运行，同一标的只查询一次，每批最多 50 个代码，关闭网页不影响检查。进程必须保持运行。交易时段来自 Schwab `markets/equity` 的当天常规时段，日历最多缓存一小时，支持休市、提前收市和美东夏令时；无法确认时段时暂停判断。盘前、盘后和富途夜盘行情当前不参与预警。
+
+查询 `quotes` 的 `quote.closePrice`、`regular.regularMarketLastPrice` 和 `regular.regularMarketTradeTime`。只接受 `assetMainType=EQUITY`、`realtime=true` 的有效正价格；时间必须位于当天常规时段，距检查不超过三分钟且不能显著超前。错误或缺失数据清除本次有效价格并展示原因，不生成提醒。分钟采样可能遗漏短暂越线后回落的波动。
+
+每条规则每个 `America/New_York` 交易日最多触发一次。涨跌两向可以分别建规则；编辑、暂停和重新启用同一规则不会清除当日记录。后台请求期间删除/修改规则、停用投资或变更授权，会阻止迟到结果触发提醒。触发快照、通知和通知事件在同一事务提交，重启后去重仍有效。删除规则会保留历史。
+
+提醒保留在站内；可在「设置 → 通知推送」配置 Telegram，见 [Telegram 通知](../notifications.md)。页面展示最新价、前收盘价、涨跌幅、行情时间、检查状态和分页触发记录。后台超过三分钟未检查会显示中断。
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/api/modules/investment/monitor` | 规则、行情快照和后台检查状态 |
+| POST | `/api/modules/investment/monitor/rules` | 创建 `{ symbol, direction: "up"或"down", thresholdPercent, enabled }` |
+| PUT / DELETE | `/api/modules/investment/monitor/rules/{id}` | 完整更新规则 / 删除规则 |
+| GET | `/api/modules/investment/monitor/history?cursor=...` | 每页 50 条历史，返回 `nextCursor` |
 
 ## Schwab 连接
 

@@ -8,11 +8,13 @@ import { api, apiValidated } from "../../shared/api";
 import { useAppearance, useSettings, type AISettings, type Settings } from "./queries";
 import { ModulesPanel } from "./ModulesPanel";
 import { LoggingPanel } from "./LoggingPanel";
+import { TelegramPanel } from "./TelegramPanel";
 import { PageHeader } from "../../components/ui/PageHeader";
 
 const sections = [
   { id: "modules", title: "业务模块", icon: Database },
   { id: "ai", title: "AI 配置", icon: Bot },
+  { id: "notifications", title: "通知推送", icon: Radio },
   { id: "security", title: "账户安全", icon: Fingerprint },
   { id: "appearance", title: "外观", icon: Paintbrush },
   { id: "data", title: "数据与运行", icon: Database }
@@ -44,6 +46,7 @@ export default function SettingsPage() {
     }}><Icon size={17} /><span>{title}</span></button>)}</div>
     <div className="settings-panel" role="tabpanel" id="panel-modules" aria-labelledby="tab-modules" hidden={active !== "modules"}><ModulesPanel /></div>
     <div className="settings-panel" role="tabpanel" id="panel-ai" aria-labelledby="tab-ai" hidden={active !== "ai"}><AIForm key={JSON.stringify(data.ai)} value={data.ai} /></div>
+    <div className="settings-panel" role="tabpanel" id="panel-notifications" aria-labelledby="tab-notifications" hidden={active !== "notifications"}><TelegramPanel /></div>
     <div className="settings-panel" role="tabpanel" id="panel-security" aria-labelledby="tab-security" hidden={active !== "security"}><PasswordForm mode={data.deployment.authMode} /></div>
     <div className="settings-panel" role="tabpanel" id="panel-appearance" aria-labelledby="tab-appearance" hidden={active !== "appearance"}><AppearanceForm value={data} /></div>
     <div className="settings-panel" role="tabpanel" id="panel-data" aria-labelledby="tab-data" hidden={active !== "data"}><LoggingPanel key={data.logging.level} value={data.logging} /><DataPanel value={data} /></div>

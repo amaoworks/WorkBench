@@ -8,6 +8,7 @@
 | Schwab 配置与持久化 | `schwab.go` |
 | OAuth 页面与回调、令牌刷新、REST 代理 | `schwab_oauth.go`、`schwab_auth.go`、`schwab_proxy.go` |
 | Schwab 实时连接、凭据读取、浏览器入口 | `streamer.go`、`streamer_credentials.go`、`streamer_http.go` |
+| 后台价格采集、交易日历、规则与历史 API | `monitor.go`、`monitor_quotes.go`、`monitor_http.go` |
 | Futu 配置与地址校验、行情 HTTP 入口 | `futu.go`、`futu_http.go` |
 | Futu 连接与推送、订阅租约、历史查询与缓存 | `futu_gateway.go`、`futu_subscriptions.go`、`futu_history.go` |
 | OpenD 传输协议、行情请求与解码 | `futu_opend.go`、`futu_quotes.go` |
@@ -16,6 +17,8 @@
 | 模块内共享的路径、时间及随机值辅助函数 | `helpers.go` |
 
 `Module` 统一装配并持有连接资源。拆文件不改变锁的归属：Schwab 凭据仍由 `tokenMu` 串行保护，连接建立和配置替换仍使用各网关的 `connectMu`，连接集合与代数由网关自身的 `mu` 保护。修改这些路径时，应一起检查模块停用、令牌更新、迟到响应和退出清理。
+
+价格扫描由 `scanMu` 串行化，行情 HTTP 不持有业务写锁；提交前取得 `monitorMu`、`tokenMu`，检查启停、规则版本及当前授权。规则 CRUD 与生命周期也通过 `monitorMu` 串行。每日触发记录与通知事件共用事务，使用平台 `NotificationService`，不直接发送 TG。
 
 终端位于 `chart/`，与外层 React 投资页分开，由 Go embed 提供同源资源：
 

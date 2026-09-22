@@ -31,9 +31,11 @@ Manifest 声明 ID、显示名称、业务版本、契约版本、图标和导�
 | `EventConsumer` | ID、模块、主题集合、超时、最大尝试次数、Handler；消费者按至少一次交付设计 |
 | [JobDefinition](../internal/contracts/job.go) | cron/interval/once、明确时区、超时、重试；OverlapPolicy 当前支持 skip，MisfirePolicy 支持 skip/run_once |
 | [NotificationService](../internal/contracts/notification.go) | 创建、事务内创建、分页、标已读、全部已读、归档、未读数 |
-| `NotificationChannel` | 已定义外部投递接口，当前 App 未装配外部渠道 |
+| `NotificationChannel` | 外部投递接口，已装配 Telegram；首版转发投资价格预警 |
 
 通知内容为纯文本，`actionRoute` 为站内路径，`actionLabel` 为跳转文案，幂等键由业务提供。SSE 发布 `core.notification.created`、`core.notification.updated` 和 `core.notification.archived`，浏览器收到后刷新查询。连接有心跳，不实现基于 Last-Event-ID 的历史补发。
+
+Telegram 使用独立 dispatcher 和已有 `event_deliveries` 持久化投递。消费者可通过 `RetryAfterError` 请求更晚的重试时间，通过 `PermanentDeliveryError` 直接终止为 `dead`；详情及设置接口见 [Telegram 通知](notifications.md)。
 
 ## AI 和对话
 
@@ -85,6 +87,8 @@ JSON 错误使用 `code`、`message`，并可含 `details`、`requestId`，定�
 | PUT | `/api/settings/ai`、`/api/settings/appearance` | 保存 AI 或外观 |
 | PUT | `/api/settings/logging` | 保存 `{ "level": "info" }` 并立即生效；支持 debug/info/warn/error，返回规范化等级 |
 | POST | `/api/settings/ai/test` | 测试候选 AI 配置，不保存 |
+| GET / PUT | `/api/settings/telegram` | 读取脱敏配置和状态 / 保存 Telegram 配置 |
+| POST | `/api/settings/telegram/test` | 发送一条测试消息，不保存候选配置 |
 | PUT | `/api/settings/password` | 验证当前密码并修改 |
 | POST | `/api/system/backup` | 创建服务端备份，返回文件名 |
 

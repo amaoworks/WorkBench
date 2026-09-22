@@ -42,26 +42,28 @@ type builtinBinding struct {
 }
 
 type App struct {
-	config        Config
-	logger        *slog.Logger
-	logLevel      *slog.LevelVar
-	database      *workbenchdb.Database
-	registry      *modules.Registry
-	dispatcher    *events.Dispatcher
-	scheduler     *scheduler.Scheduler
-	auth          *auth.Service
-	handler       http.Handler
-	server        *http.Server
-	closeOnce     sync.Once
-	schedulerOnce sync.Once
-	schedulerErr  error
-	settingsMu    sync.Mutex
-	aiSettings    AISettings
-	appearance    Appearance
-	logging       LoggingSettings
-	gateway       *ai.Gateway
-	textAI        *ai.TextService
-	builtins      []builtinBinding
+	config             Config
+	logger             *slog.Logger
+	logLevel           *slog.LevelVar
+	database           *workbenchdb.Database
+	registry           *modules.Registry
+	dispatcher         *events.Dispatcher
+	telegramDispatcher *events.Dispatcher
+	telegram           *notifications.Telegram
+	scheduler          *scheduler.Scheduler
+	auth               *auth.Service
+	handler            http.Handler
+	server             *http.Server
+	closeOnce          sync.Once
+	schedulerOnce      sync.Once
+	schedulerErr       error
+	settingsMu         sync.Mutex
+	aiSettings         AISettings
+	appearance         Appearance
+	logging            LoggingSettings
+	gateway            *ai.Gateway
+	textAI             *ai.TextService
+	builtins           []builtinBinding
 }
 
 func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
@@ -109,7 +111,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	if cfg.FutuRuntimeDir == "" {
 		cfg.FutuRuntimeDir = filepath.Join(filepath.Dir(cfg.DataPath), "futu-opend")
 	}
-	investmentModule, err := investment.New(investment.Dependencies{DB: database.SQL(), Logger: logger.With("component", "investment"), FutuConfigDir: cfg.FutuConfigDir, FutuRuntimeDir: cfg.FutuRuntimeDir, FutuOpenDBinary: cfg.FutuOpenDBinary, FutuOpenDAddress: cfg.FutuOpenDAddress, FutuAllowNonLocal: cfg.FutuAllowNonLocal})
+	investmentModule, err := investment.New(investment.Dependencies{DB: database.SQL(), Notifications: notificationService, Logger: logger.With("component", "investment"), FutuConfigDir: cfg.FutuConfigDir, FutuRuntimeDir: cfg.FutuRuntimeDir, FutuOpenDBinary: cfg.FutuOpenDBinary, FutuOpenDAddress: cfg.FutuOpenDAddress, FutuAllowNonLocal: cfg.FutuAllowNonLocal})
 	if err != nil {
 		return nil, err
 	}
@@ -126,6 +128,11 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	consumers := append(registry.Catalog().Consumers, hub.Consumer())
 	enabled := func(id contracts.ModuleID) bool { return id == "core" || registry.IsEnabled(id) }
 	dispatcher, err := events.NewDispatcher(database.SQL(), eventStore, consumers, enabled, logger.With("component", "events"))
+	if err != nil {
+		return nil, err
+	}
+	telegram := notifications.NewTelegram(database.SQL(), cfg.PublicURL, enabled, logger.With("component", "telegram"))
+	telegramDispatcher, err := events.NewDispatcher(database.SQL(), eventStore, []contracts.EventConsumer{telegram.Consumer()}, enabled, logger.With("component", "telegram"))
 	if err != nil {
 		return nil, err
 	}
@@ -170,6 +177,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	application := &App{
 		config: cfg, logger: logger, logLevel: logLevel, database: database, registry: registry,
 		dispatcher: dispatcher, scheduler: scheduled, auth: authService,
+		telegram: telegram, telegramDispatcher: telegramDispatcher,
 		builtins: builtins,
 	}
 	application.gateway = gateway
@@ -259,6 +267,9 @@ func (a *App) routes(
 		protected.Post("/api/chat/stream", conversationHTTP.Stream)
 		protected.Post("/api/system/backup", a.backup)
 		protected.Get("/api/settings", a.getSettings)
+		protected.Get("/api/settings/telegram", a.telegram.Settings)
+		protected.Put("/api/settings/telegram", a.telegram.SaveSettings)
+		protected.Post("/api/settings/telegram/test", a.telegram.TestSettings)
 		protected.Put("/api/settings/ai", a.saveAISettings)
 		protected.Post("/api/settings/ai/test", a.testAISettings)
 		protected.Put("/api/settings/appearance", a.saveAppearance)
@@ -465,8 +476,13 @@ func (a *App) Run(ctx context.Context) error {
 		_ = a.shutdownScheduler(context.Background())
 		return fmt.Errorf("start scheduler: %w", err)
 	}
-	dispatchDone := make(chan error, 1)
-	go func() { dispatchDone <- a.dispatcher.Run(runCtx) }()
+	dispatchDone := make(chan error, 2)
+	var dispatchers sync.WaitGroup
+	for _, dispatcher := range []*events.Dispatcher{a.dispatcher, a.telegramDispatcher} {
+		dispatchers.Add(1)
+		go func() { defer dispatchers.Done(); dispatchDone <- dispatcher.Run(runCtx) }()
+	}
+	defer func() { cancelRun(); dispatchers.Wait() }()
 	serverDone := make(chan error, 1)
 	go func() {
 		serverDone <- a.server.Serve(listener)

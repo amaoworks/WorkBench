@@ -34,13 +34,16 @@
 | 通知 | `notifications` | 提醒内容、幂等键、读取/归档/过期状态和来源 |
 | 对话 | `ai_conversations`、`ai_messages` | 对话元数据和消息 |
 | 工具运行时 | `ai_tool_calls` | 工具执行、参数审计、幂等键和结果 |
-| 工作空间设置 | `workspace_settings` | 按 section 存储 JSON，目前有 `ai`、`appearance`、`dashboard`、`logging`；日志仅存最低等级，日志内容写入 stderr |
+| 工作空间设置 | `workspace_settings` | 按 section 存储 JSON：`ai`、`appearance`、`dashboard`、`logging`、`telegram`、`telegram_status`；日志内容写入 stderr |
 | Todo | `todo_tasks` | 标题、说明、提醒时间、完成状态和创建/更新时间 |
 | Todo / Wallos | `todo_wallos_settings` | 联动配置、密钥、最近成功同步和错误 |
 | Todo / Wallos | `todo_wallos_occurrences` | 外部来源、订阅 ID、付款日期与待办映射 |
 | Investment | `investment_schwab` | App Key/Secret、回调、访问/刷新令牌、streamer 缓存和 OAuth state |
 | Investment | `investment_futu` | OpenD 主机/端口、夜盘覆盖开关、非本机许可和最近错误 |
 | Investment | `investment_futu_bars` | 夜盘 K 线本地缓存（避免重复消耗富途历史额度） |
+| Investment | `investment_price_rules` | 标的、阈值、启停、规则版本及最近有效报价/错误 |
+| Investment | `investment_price_triggers` | `(rule_id, trading_date)` 唯一的触发快照、站内通知 ID；删除规则后保留 |
+| Investment | `investment_price_monitor` | 最近后台检查时间、状态和错误 |
 
 平台设置可供通用能力使用。例如总览布局由 Dashboard 能力管理，但保存在平台 `workspace_settings`；业务配置使用模块自己的表。
 
@@ -54,13 +57,13 @@
 
 ## 事务和幂等
 
-- Todo 写入、Wallos 待办映射、行情变更与对应领域事件使用同一事务。外部请求在写事务外完成。
+- Todo 写入、Wallos 待办映射与对应领域事件使用同一事务。投资触发快照、站内通知与通知创建事件也原子提交。外部请求在写事务外完成。
 - 事件投递以 `(event_id, consumer_id)` 唯一，领取后写入租约；失败重试，次数耗尽为 `dead`。处理中断可能再次投递，消费者须幂等。
 - 通知的 `idempotency_key` 全局唯一；通过通知服务创建时连同通知变更事件一起提交。
 - Job 执行记录以 `(job_id, scheduled_at, attempt)` 唯一，定义由代码装配；数据库保存恢复和审计状态。
 - AI 写工具以工具名和幂等键查重。运行时审计与业务 Handler 不共用一个原子事务，不能视为任意副作用的严格一次执行保证。
 - Wallos 以 `(source, subscription_id, payment_date)` 去重，其中 source 是配置地址的哈希。任务被删除后允许下次同步重建；完成状态会保留。
-- Investment 按品种保存最新行情，同一时间或更早的快照不会再次覆盖并发布事件。
+- Investment 按规则和美东交易日去重；规则版本校验阻止在 HTTP 查询期间被修改、暂停或删除的规则产生迟到提醒。
 
 时间通常以 UTC Unix 毫秒持久化，HTTP 中的业务时间使用 RFC3339。实体 ID 使用 `foundation/identity`；业务自然键、模块 ID 和资源 ID 沿用各自语义。Wallos 的付款日期保留远端日历日期，并按配置时区计算提醒时间。
 
@@ -72,4 +75,4 @@
 
 外部服务凭据保存在 `external_modules.service_token`，沿用数据库文件权限；API 列表、配置读回、日志和浏览器 URL 都不得出现该值。当前数据库未加密，拥有文件读取权限的主体仍能读取凭据。宿主重启后持久化的健康状态只作历史，重新确认前不开放业务代理。启动同步内置模块时不会覆盖 `kind=external` 的行。
 
-Investment 的 `00003_remove_demo.sql` 移除历史模拟行情和模拟摘要表；已登记的迁移保留，以支持已有工作空间升级。Schwab 凭据不受此迁移影响。
+Investment 的 `00003_remove_demo.sql` 移除历史模拟行情和模拟摘要表，`00004_cleanup_demo.sql` 清理模拟提醒、行情事件及旧调度记录。已登记的迁移保留用于旧工作空间升级；回归测试同时验证相关事件投递被清理，Schwab 凭据及其他业务通知保留。运行时不包含模拟行情功能。

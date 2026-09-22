@@ -53,6 +53,48 @@ func TestPublishTxRollsBackWithBusinessTransaction(t *testing.T) {
 	}
 }
 
+type retryHint struct {
+	delay     time.Duration
+	permanent bool
+}
+
+func (retryHint) Error() string               { return "external delivery failure" }
+func (e retryHint) RetryAfter() time.Duration { return e.delay }
+func (e retryHint) Permanent() bool           { return e.permanent }
+
+func TestDispatcherPersistsRetryAfterAndPermanentFailure(t *testing.T) {
+	for _, permanent := range []bool{false, true} {
+		db := openTestDatabase(t)
+		store := NewStore(db.SQL())
+		consumer := contracts.EventConsumer{ID: "core.external", Module: "core", Topics: []string{"core.test.created"}, MaxAttempts: 12,
+			Handler: func(context.Context, contracts.Event) error { return retryHint{delay: time.Hour, permanent: permanent} }}
+		dispatcher, err := NewDispatcher(db.SQL(), store, []contracts.EventConsumer{consumer}, func(contracts.ModuleID) bool { return true }, testLogger())
+		if err != nil {
+			t.Fatal(err)
+		}
+		now := time.Now().Add(time.Second).UTC()
+		dispatcher.now = func() time.Time { return now }
+		if _, err := store.Publish(context.Background(), contracts.NewEvent{Topic: "core.test.created", SchemaVersion: 1, SourceModule: "core", Payload: []byte(`{}`)}); err != nil {
+			t.Fatal(err)
+		}
+		if err := dispatcher.DispatchOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		var status string
+		var next int64
+		if err := db.SQL().QueryRow("SELECT status,COALESCE(next_attempt_at,0) FROM event_deliveries WHERE consumer_id='core.external'").Scan(&status, &next); err != nil {
+			t.Fatal(err)
+		}
+		if permanent {
+			if status != "dead" || next != 0 {
+				t.Fatal(status, next)
+			}
+		} else if status != "retry" || next != now.Add(time.Hour).UnixMilli() {
+			t.Fatal("Retry-After not persisted", status, next)
+		}
+	}
+}
+
 func TestDispatcherDeliversOnceAfterSuccess(t *testing.T) {
 	database := openTestDatabase(t)
 	store := NewStore(database.SQL())

@@ -63,15 +63,16 @@ Session 和 CSRF Cookie 的 Secure 属性、CSRF 的 HTTPS 来源判断均依据
 
 ## 设置页面
 
-`/settings?tab=modules|ai|security|appearance|data` 可定位五个标签：
+`/settings?tab=modules|ai|notifications|security|appearance|data` 可定位六个标签：
 
 - 业务模块：启停已编译业务；模块提供设置组件时可打开独立弹窗。
 - AI 配置：开关、端点、模型、密钥，支持测试连接与保存。端点须兼容 Responses API；测试会发送简短请求，可能产生费用。保存后新请求使用新 Provider。
+- 通知推送：Telegram Bot Token、Chat ID、启停、测试发送和投递状态，见 [Telegram 通知](notifications.md)。
 - 账户安全：验证当前密码后修改密码，已有登录全部失效。
 - 外观：日光、夜幕、跟随系统，以及减少动态效果；自动保存。
 - 数据与运行：切换日志等级、创建在线备份，并查看当前部署参数。
 
-切换设置标签会保留当前页面内的表单草稿；刷新或离开页面不会持久化未保存输入。AI、Wallos 和 Schwab 密钥只写入、不回显，留空通常保留已有值；更换端点、App Key 或回调须重新提供密钥。详细边界见[安全说明](security.md)。
+切换设置标签会保留当前页面内的表单草稿；刷新或离开页面不会持久化未保存输入。AI、Wallos、Schwab 和 Telegram 密钥只写入、不回显，留空通常保留已有值；更换端点、App Key 或回调须重新提供密钥。详细边界见[安全说明](security.md)。
 
 ## 前端开发和验证
 

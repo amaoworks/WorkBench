@@ -15,7 +15,8 @@
 | [安全边界](security.md) | 当前鉴权、请求保护、凭据和外部服务处理 |
 | [Todo](modules/todo.md) | 待办、分页、提醒、AI Tool 和代码入口 |
 | [Wallos 联动](modules/todo-wallos.md) | Todo 内的订阅同步、账期去重与金额说明 |
-| [Investment](modules/investment.md) | Schwab 行情、持仓、订单和 TradingView 终端 |
+| [Investment](modules/investment.md) | Schwab 行情、持仓、订单、TradingView 终端和后台价格预警 |
+| [Telegram 通知](notifications.md) | 推送配置、测试发送、重试与有效期 |
 
 根 [README](../README.md) 面向使用和启动，各代码目录中的 README 说明本目录职责。新增或调整功能时更新对应主题及入口链接；不把临时执行计划、完成清单和一次性验收记录作为长期开发依据。
 

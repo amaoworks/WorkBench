@@ -41,3 +41,15 @@ type EventConsumer struct {
 	MaxAttempts int
 	Handler     func(context.Context, Event) error
 }
+
+// RetryAfterError lets an external service postpone a retry without sleeping
+// inside the event handler. The dispatcher persists the requested delay.
+type RetryAfterError interface {
+	error
+	RetryAfter() time.Duration
+}
+
+type PermanentDeliveryError interface {
+	error
+	Permanent() bool
+}

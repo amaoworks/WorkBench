@@ -18,7 +18,8 @@ const schemas = {
   settings: settings.settingsSchema, appearance: settings.appearanceSchema, logging: settings.loggingSettingsSchema,
   backup: settings.backupSchema, task: todo.taskSchema, tasks: todo.tasksResponseSchema,
   summary: todo.summarySchema, wallos: todo.wallosSettingsSchema, wallosSync: todo.wallosSyncSchema,
-  schwab: investment.schwabSettingsSchema, futu: investment.futuSettingsSchema, overnight: investment.overnightSettingsSchema
+  schwab: investment.schwabSettingsSchema, futu: investment.futuSettingsSchema, overnight: investment.overnightSettingsSchema,
+  telegram: settings.telegramSettingsSchema, priceMonitor: investment.priceMonitorSchema, priceRule: investment.priceRuleSchema, priceHistory: investment.priceHistorySchema
 };
 
 const temporary = mkdtempSync(join(tmpdir(), "workbench-contracts-"));

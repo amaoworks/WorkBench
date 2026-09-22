@@ -8,6 +8,12 @@ export const settingsSchema = z.object({
   deployment: z.object({ listenAddress: z.string(), dataPath: z.string(), authMode: z.enum(["local", "password"]), publicUrl: z.string(), allowedHosts: z.array(z.string()).nullable() })
 });
 export const aiTestSchema = z.object({ latencyMs: z.number() });
+export const telegramSettingsSchema = z.object({
+  enabled: z.boolean(), chatId: z.string(), hasBotToken: z.boolean(), failedDeliveries: z.number().int(),
+  status: z.object({ lastAttemptAt: z.string().nullable(), lastSuccessAt: z.string().nullable(), lastError: z.string() })
+});
+export const telegramTestSchema = z.object({ ok: z.boolean() });
+export type TelegramSettings = z.infer<typeof telegramSettingsSchema>;
 export const backupSchema = z.object({ file: z.string() });
 export type Appearance = z.infer<typeof appearanceSchema>;
 export type AISettings = z.infer<typeof aiSettingsSchema>;

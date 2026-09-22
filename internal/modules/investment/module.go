@@ -28,6 +28,7 @@ const (
 
 type Dependencies struct {
 	DB                *sql.DB
+	Notifications     contracts.NotificationService
 	Logger            *slog.Logger
 	FutuConfigDir     string
 	FutuRuntimeDir    string
@@ -43,19 +44,24 @@ type HTTPRoute struct {
 }
 
 type Module struct {
-	deps          Dependencies
-	queries       *investmentsqlc.Queries
-	now           func() time.Time
-	httpClient    *http.Client
-	schwabAPI     string
-	tvOrigin      string
-	tvProxy       *httputil.ReverseProxy
-	tokenMu       sync.Mutex
-	streamer      *streamer
-	futu          *futuGateway
-	opend         *openDService
-	moduleEnabled bool // guarded by futu.connectMu
-	logger        *slog.Logger
+	deps           Dependencies
+	queries        *investmentsqlc.Queries
+	now            func() time.Time
+	httpClient     *http.Client
+	schwabAPI      string
+	tvOrigin       string
+	tvProxy        *httputil.ReverseProxy
+	tokenMu        sync.Mutex
+	streamer       *streamer
+	futu           *futuGateway
+	opend          *openDService
+	moduleEnabled  bool // guarded by futu.connectMu
+	logger         *slog.Logger
+	monitorMu      sync.Mutex
+	monitorEnabled bool
+	scanMu         sync.Mutex
+	marketLocation *time.Location
+	marketHours    marketHoursCache // guarded by scanMu
 }
 
 func New(deps Dependencies) (*Module, error) {
@@ -80,6 +86,12 @@ func New(deps Dependencies) (*Module, error) {
 		tvOrigin:  defaultTVOrigin,
 	}
 	module.tvProxy = newTVProxy(module.tvOrigin)
+	location, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		return nil, err
+	}
+	module.marketLocation = location
+	module.monitorEnabled = true
 	if _, _, err := module.futuConnection(); err != nil {
 		return nil, err
 	}
@@ -105,6 +117,12 @@ func (m *Module) Migrations() contracts.MigrationSet {
 func (m *Module) Register(r contracts.ModuleRegistrar) error {
 	proxyMethods := []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch}
 	regs := []error{
+		r.Handle("GET", "/api/modules/investment/monitor", http.HandlerFunc(m.getPriceMonitor)),
+		r.Handle("POST", "/api/modules/investment/monitor/rules", http.HandlerFunc(m.savePriceRule)),
+		r.Handle("PUT", "/api/modules/investment/monitor/rules/{id}", http.HandlerFunc(m.savePriceRule)),
+		r.Handle("DELETE", "/api/modules/investment/monitor/rules/{id}", http.HandlerFunc(m.deletePriceRule)),
+		r.Handle("GET", "/api/modules/investment/monitor/history", http.HandlerFunc(m.getPriceHistory)),
+		r.Job(m.monitorJob()),
 		r.Handle("GET", "/api/modules/investment/schwab", http.HandlerFunc(m.getSchwab)),
 		r.Handle("PUT", "/api/modules/investment/schwab", http.HandlerFunc(m.saveSchwab)),
 		r.Handle("POST", "/api/modules/investment/schwab/disconnect", http.HandlerFunc(m.disconnectSchwab)),
@@ -170,6 +188,9 @@ func (m *Module) Routes() []contracts.ProvidedRoute {
 }
 
 func (m *Module) OnEnabledChanged(ctx context.Context, enabled bool) error {
+	m.monitorMu.Lock()
+	m.monitorEnabled = enabled
+	m.monitorMu.Unlock()
 	m.futu.connectMu.Lock()
 	defer m.futu.connectMu.Unlock()
 	m.moduleEnabled = enabled
@@ -198,6 +219,9 @@ func (m *Module) ResetStream() {
 
 // Close releases upgraded connections, which http.Server.Shutdown does not close.
 func (m *Module) Close() {
+	m.monitorMu.Lock()
+	m.monitorEnabled = false
+	m.monitorMu.Unlock()
 	m.futu.connectMu.Lock()
 	if m.opend != nil {
 		m.opend.close()

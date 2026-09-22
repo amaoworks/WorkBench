@@ -203,8 +203,14 @@ func (d *Dispatcher) handle(parent context.Context, consumer contracts.EventCons
 	}
 
 	status := "retry"
-	nextAttempt := now.Add(backoff(delivery.attempts)).UnixMilli()
-	if delivery.attempts >= consumer.MaxAttempts {
+	delay := backoff(delivery.attempts)
+	var retryAfter contracts.RetryAfterError
+	if errors.As(err, &retryAfter) {
+		delay = max(delay, retryAfter.RetryAfter())
+	}
+	nextAttempt := now.Add(delay).UnixMilli()
+	var permanent contracts.PermanentDeliveryError
+	if delivery.attempts >= consumer.MaxAttempts || (errors.As(err, &permanent) && permanent.Permanent()) {
 		status = "dead"
 		nextAttempt = 0
 	}

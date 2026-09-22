@@ -134,6 +134,20 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 
 投资适配器的 Node 行为测试位于 `internal/modules/investment/chart-tests/`，运行 `cd web && npm run test:investment`。`npm run lint` 同时检查嵌入 Go 的终端 JS；完整检查入口仍是 `./scripts/test.sh`。测试使用模拟响应与本机 WebSocket，不提交真实券商订单。
 
+### 投资价格监控与 Telegram
+
+`investment-monitor.e2e.cjs` 使用临时数据库，验证 TG 配置保存及密钥不回显、设置标签草稿保留、规则创建/编辑/暂停/刷新/删除，以及桌面和手机布局。测试发送 API 在浏览器中拦截，不访问 Telegram；不配置真实券商。后端行情、触发事务、重启去重和投递重试由 Go 测试覆盖。
+
+```bash
+npm --prefix web run build
+go build -o /tmp/workbench-monitor-e2e-bin ./cmd/workbench
+PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
+  CHROMIUM_PATH=/usr/bin/chromium \
+  node scripts/investment-monitor.e2e.cjs
+```
+
+`WORKBENCH_BIN` 可覆盖测试程序路径。截图保存到 `/tmp/workbench-telegram-{1440,390}.png` 和 `/tmp/workbench-price-monitor-{1440,390}.png`。历史模拟行情表、旧通知、事件投递和调度记录的升级清理另由 `TestRemovingDemoTablesPreservesExistingSchwabCredentials` 验证。
+
 ### 投资账户管理器
 
 `investment-terminal.e2e.cjs` 在 Chromium 中加载仓库内的终端代码和实际 TradingView 库，验证连续切换主题后图表颜色、实例、标的和周期，以及账户初始化、持仓与订单渲染、订单标的跳转、账户切换及断线重连；打开原生下单面板，检查有效期/交易时段的名称、可选值及已有订单的回填；验证首次加载和刷新不重播历史订单通知，新的成交仍推送一次。Schwab HTTP 和 WebSocket 请求全部使用虚构响应，无需启动工作台、配置凭据或提交交易。

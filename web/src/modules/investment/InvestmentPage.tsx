@@ -8,6 +8,7 @@ import { PageHeader } from "../../components/ui/PageHeader";
 import { Skeleton } from "../../components/ui/States";
 import { ThemeContext, type Theme } from "../../shared/theme";
 import { refreshSchwabToken, useRefreshInvestment, useSchwabSettings } from "./queries";
+import { InvestmentMonitor } from "./InvestmentMonitor";
 
 export default function InvestmentPage() {
   const schwab = useSchwabSettings(true);
@@ -15,6 +16,7 @@ export default function InvestmentPage() {
   const retry = useMutation({ mutationFn: refreshSchwabToken, onSettled: refresh });
   const [searchParams, setSearchParams] = useSearchParams();
   const expanded = searchParams.get("view") === "terminal";
+  const monitoring = !expanded && searchParams.get("tab") === "monitor";
   const terminal = useRef<HTMLElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [fullscreenError, setFullscreenError] = useState("");
@@ -47,9 +49,13 @@ export default function InvestmentPage() {
 
   return <div className="page investment-page" data-expanded={expanded}>
     <div hidden={expanded}>
-      <PageHeader title="投资" description="查看 Schwab 行情、持仓和订单，通过 TradingView 终端交易。" />
+      <PageHeader title="投资" description="查看行情、持仓和订单，管理价格监控与预警。" />
+      <div className="mb-4 flex gap-2" aria-label="投资视图">
+        <Button variant={monitoring ? "secondary" : "primary"} aria-pressed={!monitoring} onClick={() => setSearchParams((current) => { const next = new URLSearchParams(current); next.delete("tab"); return next; })}>交易终端</Button>
+        <Button variant={monitoring ? "primary" : "secondary"} aria-pressed={monitoring} onClick={() => setSearchParams((current) => { const next = new URLSearchParams(current); next.set("tab", "monitor"); return next; })}>价格监控</Button>
+      </div>
     </div>
-    <section ref={terminal} className="investment-view" aria-label="投资终端">
+    <section ref={terminal} className="investment-view" aria-label="投资终端" style={monitoring ? { display: "none" } : undefined}>
       <div className="investment-toolbar">
         <span className="investment-toolbar-title">TradingView</span>
         <div className="investment-toolbar-actions">
@@ -84,6 +90,7 @@ export default function InvestmentPage() {
       </Card>}
       {connected && <InvestmentTerminal theme={theme} />}
     </section>
+    {monitoring && <InvestmentMonitor />}
   </div>;
 }
 

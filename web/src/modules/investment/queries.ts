@@ -1,7 +1,23 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, apiValidated } from "../../shared/api";
 import type { Widget } from "../../shared/schema";
-import { futuSettingsSchema, overnightSettingsSchema, schwabSettingsSchema, type FutuSettingsInput, type SchwabSettingsInput } from "./schema";
+import { futuSettingsSchema, overnightSettingsSchema, schwabSettingsSchema, priceMonitorSchema, priceHistorySchema, priceRuleSchema, type PriceRuleInput, type FutuSettingsInput, type SchwabSettingsInput } from "./schema";
+
+const MONITOR = "/api/modules/investment/monitor";
+export function usePriceMonitor() {
+  return useQuery({ queryKey: ["investment", "monitor"], queryFn: () => apiValidated(MONITOR, priceMonitorSchema), refetchInterval: 15_000 });
+}
+export function usePriceHistory() {
+  return useInfiniteQuery({ queryKey: ["investment", "price-history"], initialPageParam: "",
+    queryFn: ({ pageParam }) => apiValidated(`${MONITOR}/history?cursor=${encodeURIComponent(pageParam)}`, priceHistorySchema),
+    getNextPageParam: (page) => page.nextCursor || undefined, refetchInterval: 30_000 });
+}
+export function savePriceRule({ id, ...input }: PriceRuleInput & { id?: string }) {
+  return apiValidated(`${MONITOR}/rules${id ? `/${encodeURIComponent(id)}` : ""}`, priceRuleSchema, { method: id ? "PUT" : "POST", body: JSON.stringify(input) });
+}
+export function deletePriceRule(id: string) {
+  return api(`${MONITOR}/rules/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
 
 export function useInvestmentWidget(widget: Widget) {
   return useQuery({ queryKey: ["widget", widget.id], queryFn: async () => schwabSettingsSchema.parse(await api(widget.dataRoute)), refetchInterval: 30_000 });

@@ -50,6 +50,9 @@ func TestFrontendContracts(t *testing.T) {
 	capture("dashboard", "dashboard", "GET", "/api/dashboard", "", 200)
 	capture("widgets", "widgets", "GET", "/api/dashboard/widgets", "", 200)
 	capture("settings", "settings", "GET", "/api/settings", "", 200)
+	capture("telegram", "telegram", "GET", "/api/settings/telegram", "", 200)
+	capture("telegram.saved", "saved", "PUT", "/api/settings/telegram", `{"enabled":false,"botToken":"123:fixture-token","chatId":"12345"}`, 200)
+	capture("telegram.configured", "telegram", "GET", "/api/settings/telegram", "", 200)
 	capture("appearance.saved", "appearance", "PUT", "/api/settings/appearance", `{"theme":"dark","motion":"reduced"}`, 200)
 	capture("logging.saved", "logging", "PUT", "/api/settings/logging", `{"level":"warn"}`, 200)
 	capture("ai.status", "aiStatus", "GET", "/api/ai/status", "", 200)
@@ -74,6 +77,24 @@ func TestFrontendContracts(t *testing.T) {
 	capture("futu.saved", "futu", "PUT", "/api/modules/investment/futu", `{"enabled":false,"account":"","password":"","clearPassword":true}`, 200)
 	capture("overnight", "overnight", "GET", "/api/modules/investment/overnight", "", 200)
 	capture("overnight.saved", "overnight", "PUT", "/api/modules/investment/overnight", `{"enabled":false}`, 200)
+	capture("monitor.empty", "priceMonitor", "GET", "/api/modules/investment/monitor", "", 200)
+	ruleJSON := capture("monitor.rule.created", "priceRule", "POST", "/api/modules/investment/monitor/rules", `{"symbol":"AAPL","direction":"up","thresholdPercent":3,"enabled":true}`, 201)
+	var rule struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(ruleJSON, &rule); err != nil {
+		t.Fatal(err)
+	}
+	capture("monitor.rule.updated", "priceRule", "PUT", "/api/modules/investment/monitor/rules/"+rule.ID, `{"symbol":"AAPL","direction":"up","thresholdPercent":3,"enabled":false}`, 200)
+	if _, err := a.DB().Exec(`UPDATE investment_price_rules SET price=103,previous_close=100,change_percent=3,quote_at=1789999200000,checked_at=1789999200000 WHERE id=?`, rule.ID); err != nil {
+		t.Fatal(err)
+	}
+	capture("monitor.populated", "priceMonitor", "GET", "/api/modules/investment/monitor", "", 200)
+	capture("monitor.history.empty", "priceHistory", "GET", "/api/modules/investment/monitor/history", "", 200)
+	if _, err := a.DB().Exec(`INSERT INTO investment_price_triggers(id,rule_id,trading_date,symbol,direction,threshold_bps,price,previous_close,change_percent,quote_at,triggered_at,notification_id) VALUES('trigger',?,'2026-09-22','AAPL','up',300,103,100,3,1789999200000,1789999200000,'fixture')`, rule.ID); err != nil {
+		t.Fatal(err)
+	}
+	capture("monitor.history.populated", "priceHistory", "GET", "/api/modules/investment/monitor/history", "", 200)
 	capture("notifications.empty", "notifications", "GET", "/api/notifications", "", 200)
 	service, err := notifications.NewService(a.DB(), events.NewStore(a.DB()))
 	if err != nil {
