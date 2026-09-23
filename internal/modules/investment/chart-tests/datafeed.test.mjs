@@ -52,10 +52,42 @@ test('history started before a reconnect cannot refill the new connection cache'
     const { feed, events } = setup(t, () => new Promise(resolve => { release = () => resolve(json([candle])); }));
     const pending = history(feed);
     const rejected = assert.rejects(pending, /连接已变更/);
+    events.dispatchEvent(new Event('SCHWAB_STREAM_CLOSED'));
     events.dispatchEvent(new Event('SCHWAB_STREAM_READY'));
     release();
     await rejected;
     assert.equal(feed.latestBars.size, 0);
+});
+
+test('the first stream-ready event does not interrupt pending history or reset charts', async t => {
+    let release, resets = 0;
+    const events = new EventTarget();
+    const feed = new Datafeed({
+        events,
+        stream: { ready: false },
+        request: () => new Promise(resolve => { release = () => resolve(json([candle])); }),
+        resetCharts: () => { resets++; },
+    });
+    t.after(() => feed.destroy());
+    const pending = history(feed);
+    await new Promise(setImmediate);
+    assert.equal(typeof release, 'function');
+    events.dispatchEvent(new Event('SCHWAB_STREAM_READY'));
+    release();
+    const { bars } = await pending;
+    assert.equal(bars.length, 1);
+    assert.equal(feed.streamEpoch, 0);
+    assert.equal(resets, 0);
+});
+
+test('a ready stream followed by another ready event is treated as a reconnect', t => {
+    const events = new EventTarget();
+    let resets = 0;
+    const feed = new Datafeed({ events, stream: { ready: true }, resetCharts: () => { resets++; } });
+    t.after(() => feed.destroy());
+    events.dispatchEvent(new Event('SCHWAB_STREAM_READY'));
+    assert.equal(feed.streamEpoch, 1);
+    assert.equal(resets, 1);
 });
 
 test('daily history is sorted, deduplicated and excludes the upper boundary', async t => {
@@ -122,7 +154,7 @@ test('quote subscribers receive the provider fields for each asset class', t => 
 
 test('symbol resolution keeps night sessions exclusive to equities and preserves asset precision', async t => {
     const { feed } = setup(t);
-    feed.futuRequest = async () => new Response(JSON.stringify({ enabled: true, overnightEnabled: true }));
+    feed.overnightRequest = async () => new Response(JSON.stringify({ enabled: true, providerEnabled: true }));
     const resolve = name => new Promise((ok, fail) => feed.resolveSymbol(name, ok, fail, { session: 'night' }));
     const equities = await resolve(' AAPL ');
     assert.equal(equities.name, 'AAPL');

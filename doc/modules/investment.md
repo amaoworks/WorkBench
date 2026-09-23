@@ -84,7 +84,7 @@ OpenD 容器封装在仓库根目录 [futu-opend](../../futu-opend/)，可整夹
 
 Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后才通知浏览器 ready。行情服务首次使用 SUBS，之后使用 ADD；HTTP 成功仅在 Schwab 确认订阅后返回。
 
-上游断开时同时关闭浏览器连接，浏览器三秒后重连。重新 ready 后恢复所有活动品种订阅、清空行情快照，并调用 TradingView 的 `resetCache` 与各图表的 `resetData` 重载历史，同时重新读取账户状态。历史回补即使不是首次请求也会恢复实时 K 线基准；断线前的历史响应和已关闭 WebSocket 的迟到事件会被丢弃。终端显示连接恢复中的状态提示。慢客户端不静默丢弃订单事件，而是断开后重新获取状态。参见 [TradingView 数据恢复约定](https://www.tradingview.com/charting-library-docs/latest/connecting_data/Datafeed-Issues/#internet-connection-issues)。
+上游断开时同时关闭浏览器连接，浏览器三秒后重连。首次 ready 只建立订阅，不重置正在加载的历史 K 线。断线后重新 ready 时恢复所有活动品种订阅、清空行情快照，并调用 TradingView 的 `resetCache` 与各图表的 `resetData` 重载历史，同时重新读取账户状态。历史回补即使不是首次请求也会恢复实时 K 线基准；断线前的历史响应和已关闭 WebSocket 的迟到事件会被丢弃。终端显示连接恢复中的状态提示。慢客户端不静默丢弃订单事件，而是断开后重新获取状态。参见 [TradingView 数据恢复约定](https://www.tradingview.com/charting-library-docs/latest/connecting_data/Datafeed-Issues/#internet-connection-issues)。
 
 配置变更使正在登录中的旧连接失效。最后一个浏览器离开、模块停用或进程关闭时清理连接；停用不删除 Schwab 配置、凭据或总览布局。
 
@@ -92,7 +92,11 @@ Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后
 
 当前 `/charting_library/` 从 `https://trading-terminal.tradingview-widget.com/charting_library/` 同源反代，保存图纸和新闻等依赖外部服务的功能关闭。行情与交易数据来自 Schwab；夜盘覆盖打开时，Night / 24h 的夜盘段来自 Futu OpenD。
 
-图表代理保留浏览器的压缩协商和上游缓存头，压缩资源直接转发。内嵌终端脚本用内容 ETag 校验缓存，未变化时返回 304，程序升级后会返回新脚本；终端 HTML 保持 `no-store`。数据源就绪回调在下一个任务中执行，遵循 [TradingView 异步回调约定](https://www.tradingview.com/charting-library-docs/latest/connecting_data/Datafeed-API/#asynchronous-callbacks)，无需固定等待一秒。首次加载仍取决于服务器访问外部图表资源及券商数据的速度。
+图表代理按浏览器支持情况统一使用 gzip 或未压缩正文，避免预热与浏览器请求因 br/zstd 协商不同而重复下载。内容哈希文件名的 JavaScript 与样式表成功取回后缓存在内存和数据目录旁的 `chart-library/`，进程重启后可复用。条件请求在本机校验 ETag；上游失败不写入缓存。`charting_library.esm.js` 与 `sameorigin.html` 使用最多五分钟的内存缓存（上游要求更短时从其要求），过期后重新取回；浏览器每次打开时向工作台校验，命中内存时无需访问外部入口资源。
+
+工作台启动后在后台加载磁盘缓存，并预取入口列出的首屏分包；不会遍历运行时清单下载数百个非首屏分包。其余分包首次使用时缓存。并发请求共用一次有超时的下载，离开页面会及时停止该页面的等待，但不会取消新页面仍需使用的共用下载。预热失败会记录日志，可在下次请求重试。
+
+内嵌终端脚本用内容 ETag 校验缓存，未变化时返回 304，程序升级后会返回新脚本；终端 HTML 保持 `no-store`。数据源就绪回调在下一个任务中执行，遵循 [TradingView 异步回调约定](https://www.tradingview.com/charting-library-docs/latest/connecting_data/Datafeed-API/#asynchronous-callbacks)，无需固定等待一秒。图表就绪后先显示图表，再异步恢复自选表。标的解析和夜盘连接只读取 `/api/modules/investment/overnight` 的本地开关配置，不等待富途设置页的 OpenD 连接、订阅额度和历史额度检查。
 
 这个演示资源接入不等同于取得库的部署授权。TradingView FAQ 区分了 Widgets、Advanced Charts 和 Trading Platform；自托管交易功能需使用获得授权的 Trading Platform 包。参见 [官方 FAQ](https://www.tradingview.com/charting-library-docs/latest/resources/Frequently-Asked-Questions/)。
 

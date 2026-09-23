@@ -185,6 +185,18 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
   node scripts/investment-terminal.e2e.cjs --webkit --app
 ```
 
+`investment-startup.e2e.cjs` 使用临时数据库启动完整工作台，经过真实 `/charting_library/` Go 代理加载图表，只替换券商、自选表等业务 API。它记录首开、三次返回总览后重开、加载中离开后重开的耗时和资源瀑布；就绪检查同时要求遮罩消失、画布可见和非空历史 K 线响应。该测试会访问 TradingView 公开静态资源站，耗时用于对比，不设置受网络波动影响的绝对门槛。
+
+```bash
+go build -o /tmp/workbench-investment-startup-test ./cmd/workbench
+PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
+  CHROMIUM_PATH=/usr/bin/chromium \
+  WORKBENCH_BIN=/tmp/workbench-investment-startup-test \
+  node scripts/investment-startup.e2e.cjs
+```
+
+设置 `WORKBENCH_TEST_FUTU_DELAY_MS=5000` 可模拟富途设置检查耗时五秒，比较修改前后的首屏等待。它只延迟 `/futu` 设置接口，轻量夜盘开关接口仍即时返回。
+
 `investment-loading.e2e.cjs` 使用真实终端文档和适配器，模拟外部图表模块加载失败、初始化异常、行情已连接但图表超时，验证失败提示、点击重试和迟到的加载成功。无需启动工作台或访问券商；图表库就绪过程使用可控 fixture。支持 `--webkit`：
 
 ```bash

@@ -13,7 +13,7 @@
 | Futu 连接与推送、订阅租约、历史查询与缓存 | `futu_gateway.go`、`futu_subscriptions.go`、`futu_history.go` |
 | OpenD 传输协议、行情请求与解码 | `futu_opend.go`、`futu_quotes.go` |
 | OpenD 安装、进程与登录配置 | `futu_install.go`、`futu_service.go`、`futu_process_*.go`、`futu_login.go` |
-| 夜盘开关、终端资源与图表库代理 | `overnight.go`、`chart.go` |
+| 夜盘开关、终端资源与图表库代理 | `overnight.go`、`chart.go`、`chart_cache.go`、`chart_warm.go` |
 | 工作台自选表持久化、编辑版本检查 | `watchlists.go` |
 | 模块内共享的路径、时间及随机值辅助函数 | `helpers.go` |
 

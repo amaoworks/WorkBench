@@ -37,10 +37,19 @@ export default class Broker {
         this._orders = new Map();
         this._rawOrders = new Map();
         this._ordersSnapshot = undefined;
+        this._ordersInflight = undefined;
         this._orderSignatures = undefined;
+        this._ordersGeneration = 0;
+        this._pollInterval = pollInterval;
         this._controller = new AbortController();
+        // Stream ready during the constructor's first init must not start a second
+        // account load. A ready event after that init is a real reconnect.
+        this._boot = true;
         this._onActivity = () => this._scheduleRefresh();
-        this._onReady = () => { this._ready = this._init(); };
+        this._onReady = () => {
+            if (this._boot || this._destroyed) return;
+            this._ready = this._init();
+        };
         this._onDisconnect = () => this._setStatus(2);
         events.addEventListener('ACCT_ACTIVITY', this._onActivity);
         events.addEventListener('SCHWAB_STREAM_READY', this._onReady);
@@ -51,8 +60,7 @@ export default class Broker {
         // lets the host's promise continuations finish; a microtask alone is too early.
         this._ready = new Promise(resolve => setTimeout(resolve, 0)).then(() => {
             if (!this._destroyed) return this._init();
-        });
-        if (pollInterval > 0) this._poll = setInterval(() => this._scheduleRefresh(), pollInterval);
+        }).finally(() => { this._boot = false; });
     }
 
     _setStatus(status) { this._connectionStatus = status; this.host.connectionStatusUpdate(status); }
@@ -63,6 +71,7 @@ export default class Broker {
         this._orders.clear();
         this._rawOrders.clear();
         this._ordersSnapshot = undefined;
+        this._ordersInflight = undefined;
         this._orderSignatures = undefined;
     }
     async _init() {
@@ -87,7 +96,9 @@ export default class Broker {
             this._account = this._accounts.some(a => a.id === preferredAccount) ? preferredAccount : this._accounts[0].id;
             this._setStatus(1);
             this.host.currentAccountUpdate();
-            this._scheduleRefresh();
+            // The library is about to call orders() and ordersHistory() itself.
+            // Reuse that read instead of starting a second full-year download.
+            this._scheduleRefresh(true);
         } catch (error) {
             if (epoch !== this._epoch) return;
             this._accounts = [];
@@ -173,21 +184,38 @@ export default class Broker {
         if (Number.isFinite(cash)) this._cash.setValue(cash);
         if (Number.isFinite(buyingPower)) this._buyingPower.setValue(buyingPower);
     }
-    _scheduleRefresh() {
-        if (this._refreshTimer || !this._account || this._destroyed) return;
+    _scheduleRefresh(reuse = false) {
+        if (!this._account || this._destroyed) return;
+        // Activity during a startup reuse timer must upgrade that refresh. Bumping
+        // the generation lets the pending timer see that its snapshot is stale.
+        if (!reuse) this._ordersGeneration++;
+        if (this._refreshTimer) return;
+        const generation = this._ordersGeneration;
         this._refreshTimer = setTimeout(() => {
             this._refreshTimer = undefined;
-            void this._refresh();
+            void this._refresh(reuse && generation === this._ordersGeneration);
         }, 200);
     }
-    async _refresh() {
+    _armPoll() {
+        // The interval starts only after the first order read settles, so a short
+        // poll cannot add another full-year request while that read is in flight.
+        if (this._poll || this._destroyed || !(this._pollInterval > 0)) return;
+        this._poll = setInterval(() => this._scheduleRefresh(), this._pollInterval);
+    }
+    async _refresh(reuse = false) {
         const epoch = this._epoch;
+        // A read already in flight started before this invalidation. Join it, then
+        // take one newer read after it settles instead of keeping its snapshot.
+        const joined = !reuse && this._ordersInflight?.epoch === epoch
+            ? this._ordersInflight.generation
+            : this._ordersGeneration;
         try {
             // Account activity is an invalidation signal. REST is the source of truth,
             // including fills and events with no identifiable account in their payload.
-            this._ordersSnapshot = undefined;
+            // The startup refresh reuses the read already started for orders()/ordersHistory().
+            if (!reuse) this._ordersSnapshot = undefined;
             const [orders, positions] = await Promise.all([this._loadOrders(), this.positions()]);
-            if (epoch !== this._epoch) return;
+            if (epoch !== this._epoch || this._destroyed) return;
             for (const order of orders) {
                 const signature = orderSignature(order);
                 if (this._orderSignatures.get(order.id) === signature) continue;
@@ -195,7 +223,15 @@ export default class Broker {
                 this.host.orderUpdate(order);
             }
             positions.forEach(position => this.host.positionUpdate?.(position));
-        } catch (error) { if (epoch === this._epoch) this._notify(error); }
+            if (this._ordersGeneration !== joined && !this._refreshTimer) void this._refresh(false);
+        } catch (error) {
+            if (epoch !== this._epoch || this._destroyed) return;
+            if (this._ordersGeneration !== joined && !this._refreshTimer) {
+                void this._refresh(false);
+                return;
+            }
+            this._notify(error);
+        }
     }
     connectionStatus() { return this._connectionStatus; }
     currentAccount() { return this._account; }
@@ -224,7 +260,19 @@ export default class Broker {
     }
     async _loadOrders() {
         const context = await this._context();
-        if (this._ordersSnapshot?.epoch === context.epoch) return this._ordersSnapshot.mapped;
+        const generation = this._ordersGeneration;
+        if (this._ordersSnapshot?.epoch === context.epoch && this._ordersSnapshot.generation === generation) return this._ordersSnapshot.mapped;
+        if (this._ordersInflight?.epoch === context.epoch) return this._ordersInflight.promise;
+        const promise = this._readOrders(context, generation);
+        this._ordersInflight = { epoch: context.epoch, generation, promise };
+        // The caller observes `promise`. This side chain must not surface the same rejection again.
+        promise.finally(() => {
+            if (this._ordersInflight?.promise === promise) this._ordersInflight = undefined;
+            this._armPoll();
+        }).catch(() => {});
+        return promise;
+    }
+    async _readOrders(context, generation) {
         const to = Date.now();
         let requests = 0;
         const readRange = async (from, until) => {
@@ -248,7 +296,7 @@ export default class Broker {
         // Initial data is returned through orders()/ordersHistory(). Replaying
         // it through orderUpdate would announce old fills/cancellations again.
         this._orderSignatures ??= new Map(mapped.map(order => [order.id, orderSignature(order)]));
-        this._ordersSnapshot = { epoch: context.epoch, mapped };
+        this._ordersSnapshot = { epoch: context.epoch, generation, mapped };
         return mapped;
     }
     async orders() {

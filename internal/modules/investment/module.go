@@ -35,6 +35,7 @@ type Dependencies struct {
 	FutuOpenDBinary   string
 	FutuOpenDAddress  string
 	FutuAllowNonLocal bool
+	ChartCacheDir     string
 }
 
 type HTTPRoute struct {
@@ -85,7 +86,7 @@ func New(deps Dependencies) (*Module, error) {
 		schwabAPI: defaultSchwabAPI,
 		tvOrigin:  defaultTVOrigin,
 	}
-	module.tvProxy = newTVProxy(module.tvOrigin)
+	module.tvProxy = newTVProxy(module.tvOrigin, deps.ChartCacheDir)
 	location, err := time.LoadLocation("America/New_York")
 	if err != nil {
 		return nil, err

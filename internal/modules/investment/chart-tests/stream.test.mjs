@@ -24,13 +24,14 @@ test('browser reconnect waits for backend LOGIN readiness and replays all active
     sockets[0].onmessage({ data: '{"stream":{"status":"ready"}}' });
     await until(() => subscriptions.length === 1);
     assert.deepEqual(subscriptions[0].keys.split(',').sort(), ['AAPL', 'MSFT', 'TSLA']);
+    assert.equal(resets, 0, 'initial readiness must preserve the first history load');
     sockets[0].close();
     await until(() => sockets.length === 2);
     assert.equal(stream.ready, false);
     sockets[1].onmessage({ data: '{"stream":{"status":"ready"}}' });
     await until(() => subscriptions.length === 2);
     assert.deepEqual(subscriptions[1].keys.split(',').sort(), ['AAPL', 'MSFT', 'TSLA']);
-    assert.equal(resets, 2);
+    assert.equal(resets, 1, 'a real reconnect must reset historical bars');
 });
 
 test('bar subscriptions route by symbol and resolution, and stop after unsubscribe', () => {

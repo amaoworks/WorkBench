@@ -64,6 +64,7 @@ type App struct {
 	gateway            *ai.Gateway
 	textAI             *ai.TextService
 	builtins           []builtinBinding
+	investment         *investment.Module
 }
 
 func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
@@ -111,7 +112,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	if cfg.FutuRuntimeDir == "" {
 		cfg.FutuRuntimeDir = filepath.Join(filepath.Dir(cfg.DataPath), "futu-opend")
 	}
-	investmentModule, err := investment.New(investment.Dependencies{DB: database.SQL(), Notifications: notificationService, Logger: logger.With("component", "investment"), FutuConfigDir: cfg.FutuConfigDir, FutuRuntimeDir: cfg.FutuRuntimeDir, FutuOpenDBinary: cfg.FutuOpenDBinary, FutuOpenDAddress: cfg.FutuOpenDAddress, FutuAllowNonLocal: cfg.FutuAllowNonLocal})
+	investmentModule, err := investment.New(investment.Dependencies{DB: database.SQL(), Notifications: notificationService, Logger: logger.With("component", "investment"), FutuConfigDir: cfg.FutuConfigDir, FutuRuntimeDir: cfg.FutuRuntimeDir, FutuOpenDBinary: cfg.FutuOpenDBinary, FutuOpenDAddress: cfg.FutuOpenDAddress, FutuAllowNonLocal: cfg.FutuAllowNonLocal, ChartCacheDir: filepath.Join(filepath.Dir(cfg.DataPath), "chart-library")})
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +179,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 		config: cfg, logger: logger, logLevel: logLevel, database: database, registry: registry,
 		dispatcher: dispatcher, scheduler: scheduled, auth: authService,
 		telegram: telegram, telegramDispatcher: telegramDispatcher,
-		builtins: builtins,
+		builtins: builtins, investment: investmentModule,
 	}
 	application.gateway = gateway
 	application.textAI = textAI
@@ -488,6 +489,9 @@ func (a *App) Run(ctx context.Context) error {
 		serverDone <- a.server.Serve(listener)
 	}()
 	a.logger.Info("workbench started", "component", "app", "address", listener.Addr().String(), "authMode", a.config.AuthMode, "publicURL", a.config.PublicURL)
+	if a.investment != nil {
+		a.investment.WarmChartLibrary(runCtx)
+	}
 
 	select {
 	case <-ctx.Done():

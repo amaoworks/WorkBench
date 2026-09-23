@@ -152,6 +152,10 @@ const history = [
         if (useApp && path === "/api/modules/investment/schwab") {
           return await route.fulfill({ json: { appKey: "fixture", callbackUrl: "https://example.test/oauth/schwab", hasAppSecret: true, connected: true, reauthorizationRequired: false, lastError: "" } });
         }
+        if (path === "/api/modules/investment/overnight") {
+          assert.equal(route.request().method(), "GET");
+          return await route.fulfill({ json: { enabled: false, provider: "futu", providerEnabled: false } });
+        }
         if (path === "/api/modules/investment/futu") {
           assert.equal(route.request().method(), "GET");
           return await route.fulfill({ json: { host: "127.0.0.1", port: 11111, enabled: false, allowNonLocal: false, connected: false, qotLogined: false, lastError: "" } });

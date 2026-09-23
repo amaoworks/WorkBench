@@ -202,8 +202,109 @@ test('old GTC orders remain visible and capped result windows are split', async 
         }
         return json([{ ...rawOrder, orderId: rangeCalls === 2 ? 42 : 43 }]);
     });
-    assert.deepEqual((await broker.orders()).map(o => o.id), ['42', '43']);
+    const [working, history] = await Promise.all([broker.orders(), broker.ordersHistory()]);
+    assert.deepEqual(working.map(o => o.id), ['42', '43']);
+    assert.deepEqual(history, []);
     assert.equal(rangeCalls, 3);
+});
+
+test('startup shares one full-year order read and the poll waits until it finishes', async t => {
+    let release;
+    let holdFirst = true;
+    let current = [rawOrder];
+    const calls = [], updates = [];
+    const events = new EventTarget();
+    const broker = new Broker({
+        connectionStatusUpdate() {}, currentAccountUpdate() {},
+        ordersFullUpdate() {}, positionsFullUpdate() {},
+        orderUpdate(value) { updates.push(value); }, positionUpdate() {}, showNotification() {},
+    }, {
+        events, pollInterval: 10,
+        request: async path => {
+            calls.push(path);
+            if (path.endsWith('/accountNumbers')) {
+                events.dispatchEvent(new Event('SCHWAB_STREAM_READY'));
+                return json([{ hashValue: 'A', accountNumber: '111' }, { hashValue: 'B', accountNumber: '222' }]);
+            }
+            if (path.includes('?fields=positions')) return json({ securitiesAccount: { positions: [] } });
+            if (path.includes('/orders?')) {
+                if (holdFirst) {
+                    holdFirst = false;
+                    return new Promise(resolve => { release = () => resolve(json(current)); });
+                }
+                return json(current);
+            }
+            throw new Error(path);
+        }
+    });
+    t.after(() => broker.destroy());
+    events.dispatchEvent(new Event('SCHWAB_STREAM_READY'));
+    const pending = Promise.all([broker.orders(), broker.ordersHistory()]);
+    const orderCalls = () => calls.filter(path => path.includes('/orders?'));
+    await until(() => orderCalls().length === 1);
+    await sleep(250);
+    assert.equal(orderCalls().length, 1);
+    assert.equal(broker._poll, undefined);
+    assert.equal(calls.filter(path => path.endsWith('/accountNumbers')).length, 1);
+    release();
+    const [working, history] = await pending;
+    assert.ok(broker._poll);
+    clearInterval(broker._poll);
+    clearTimeout(broker._refreshTimer);
+    broker._refreshTimer = undefined;
+    assert.deepEqual(working.map(order => order.id), ['42']);
+    assert.deepEqual(history, []);
+    assert.equal(orderCalls().length, 1);
+    assert.deepEqual(updates, []);
+    current = [{ ...rawOrder, price: 125 }];
+    await broker._refresh();
+    assert.equal(orderCalls().length, 2);
+    assert.deepEqual(updates.map(order => [order.id, order.limitPrice]), [['42', 125]]);
+});
+
+test('activity during the shared order read is fetched once afterward and published', async t => {
+    let release;
+    let current = [rawOrder];
+    const calls = [], updates = [];
+    const events = new EventTarget();
+    const broker = new Broker({
+        connectionStatusUpdate() {}, currentAccountUpdate() {},
+        ordersFullUpdate() {}, positionsFullUpdate() {},
+        orderUpdate(value) { updates.push(value); }, positionUpdate() {}, showNotification() {},
+    }, {
+        events, pollInterval: 0,
+        request: async path => {
+            calls.push(path);
+            if (path.endsWith('/accountNumbers')) return json([{ hashValue: 'A', accountNumber: '111' }]);
+            if (path.includes('?fields=positions')) return json({ securitiesAccount: { positions: [] } });
+            if (path.includes('/orders?')) {
+                if (!release) {
+                    const original = [rawOrder];
+                    return new Promise(resolve => { release = () => resolve(json(original)); });
+                }
+                return json(current);
+            }
+            throw new Error(path);
+        }
+    });
+    t.after(() => broker.destroy());
+    const pending = broker.orders();
+    const orderCalls = () => calls.filter(path => path.includes('/orders?'));
+    await until(() => release);
+    current = [{ ...rawOrder, status: 'FILLED', price: 125 }];
+    events.dispatchEvent(new CustomEvent('ACCT_ACTIVITY', { detail: { content: [{}] } }));
+    release();
+    const initial = await pending;
+    assert.equal(initial.length, 1);
+    assert.equal(initial[0].status, 6);
+    assert.equal(initial[0].limitPrice, 100);
+    assert.equal(orderCalls().length, 1);
+    await until(() => updates.length === 1);
+    assert.equal(orderCalls().length, 2);
+    assert.deepEqual(updates.map(order => [order.id, order.status, order.limitPrice]), [['42', 2, 125]]);
+    await sleep(250);
+    assert.equal(orderCalls().length, 2);
+    assert.equal(updates.length, 1);
 });
 
 test('switching accounts discards late responses and clears the previous cache', async t => {

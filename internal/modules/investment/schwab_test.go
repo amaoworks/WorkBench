@@ -174,7 +174,7 @@ func TestChartingLibraryProxyStripsCookiesAndFrameOptions(t *testing.T) {
 	defer upstream.Close()
 	module := openInvestmentModule(t)
 	module.tvOrigin = upstream.URL
-	module.tvProxy = newTVProxy(upstream.URL)
+	module.tvProxy = newTVProxy(upstream.URL, "")
 	router := chi.NewRouter()
 	router.Get("/charting_library/*", module.proxyChartingLibrary)
 	got := httptest.NewRecorder()

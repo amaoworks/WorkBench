@@ -33,6 +33,13 @@ export async function futuFetch(path = "", init = {}) {
     return response;
 }
 
+export async function overnightFetch() {
+    return fetch("/api/modules/investment/overnight", {
+        method: "GET",
+        credentials: "same-origin",
+    });
+}
+
 export const FUTU_WS = PREFIX + "/quote/ws";
 export const NIGHT_RESOLUTIONS = new Set(["1", "5", "15", "30"]);
 
@@ -65,7 +72,7 @@ export function usesFutuTicks(subsessionId, timestamp) {
 }
 
 export class FutuStream {
-    constructor({ events = window, socket = createWebSocket, url = FUTU_WS, retryDelay = 3000, status = futuFetch } = {}) {
+    constructor({ events = window, socket = createWebSocket, url = FUTU_WS, retryDelay = 3000, status = overnightFetch } = {}) {
         this.events = events;
         this.socket = socket;
         this.url = url;
@@ -89,16 +96,20 @@ export class FutuStream {
         if (this.closed || !this.wanted) return;
         try {
             const response = await this.status("");
+            if (this.closed || !this.wanted) return;
             if (response.status === 409) {
                 this.wanted = false;
                 return;
             }
+            if (!response.ok) throw new Error("无法读取夜盘设置");
             const body = await response.clone().json().catch(() => ({}));
-            if (!body.enabled || !body.overnightEnabled) {
+            if (this.closed || !this.wanted) return;
+            if (!body.enabled || !body.providerEnabled) {
                 this.wanted = false;
                 return;
             }
         } catch {
+            if (this.closed || !this.wanted) return;
             this.timer = setTimeout(() => this.connect(), this.retryDelay);
             return;
         }

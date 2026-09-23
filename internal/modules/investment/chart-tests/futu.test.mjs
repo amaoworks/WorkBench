@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import Datafeed from '../chart/datafeed.js';
-import { FutuStream, isOvernightET, seriesKey } from '../chart/futu.js';
+import { FutuStream, isOvernightET, overnightFetch, seriesKey } from '../chart/futu.js';
 
 const timestamp = Date.parse('2026-09-10T14:30:00Z');
 const nightTime = Date.parse('2026-01-15T02:00:00Z'); // 21:00 EST
@@ -31,9 +31,9 @@ test('night and regular live bars do not clobber each other', async (t) => {
     const feed = new Datafeed({
         events, stream: { ready: false },
         request: async () => json([candle]),
+        overnightRequest: async () => new Response(JSON.stringify({ enabled: true, providerEnabled: true })),
         futuRequest: async (path) => {
             if (String(path).startsWith('/kline')) return json([{ time: nightTime, open: 200, high: 200, low: 200, close: 200, volume: 5 }]);
-            if (String(path) === '') return new Response(JSON.stringify({ enabled: true, overnightEnabled: true }));
             return new Response('{}');
         },
     });
@@ -59,15 +59,18 @@ test('night and regular live bars do not clobber each other', async (t) => {
 
 test('night 10-minute history is noData and does not call kline', async (t) => {
     const futuCalls = [];
+    const overnightCalls = [];
     const feed = new Datafeed({
         events: new EventTarget(), stream: { ready: false },
         request: async () => json([candle]),
-        futuRequest: async (path) => { futuCalls.push(path); return new Response(JSON.stringify({ enabled: true, overnightEnabled: true })); },
+        overnightRequest: async () => { overnightCalls.push(true); return new Response(JSON.stringify({ enabled: true, providerEnabled: true })); },
+        futuRequest: async (path) => { futuCalls.push(path); return json([]); },
     });
     t.after(() => feed.destroy());
     const { metadata } = await history(feed, { name: 'AAPL', subsession_id: 'night' }, '10');
     assert.equal(metadata.noData, true);
-    assert.deepEqual(futuCalls, ['']);
+    assert.deepEqual(overnightCalls, [true]);
+    assert.deepEqual(futuCalls, []);
 });
 
 test('24h 10-minute stays on Schwab', async (t) => {
@@ -75,7 +78,7 @@ test('24h 10-minute stays on Schwab', async (t) => {
     const feed = new Datafeed({
         events: new EventTarget(), stream: { ready: false },
         request: async () => json([candle]),
-        futuRequest: async (path) => { futuCalls.push(path); return new Response(JSON.stringify({ enabled: true, overnightEnabled: true })); },
+        futuRequest: async (path) => { futuCalls.push(path); return new Response(JSON.stringify({ enabled: true, providerEnabled: true })); },
     });
     t.after(() => feed.destroy());
     const { bars } = await history(feed, { name: 'AAPL', subsession_id: '24h' }, '10');
@@ -89,8 +92,8 @@ test('24h history loads both providers concurrently and merges only after both f
     const feed = new Datafeed({
         events: new EventTarget(), stream: { ready: false },
         request: () => { calls.push('schwab'); return schwab.promise; },
+        overnightRequest: () => Promise.resolve(new Response(JSON.stringify({ enabled: true, providerEnabled: true }))),
         futuRequest: path => {
-            if (path === '') return Promise.resolve(new Response(JSON.stringify({ enabled: true, overnightEnabled: true })));
             calls.push('futu');
             return futu.promise;
         },
@@ -112,9 +115,8 @@ test('24h history rejects a reconnect while the last response body is still bein
     const events = new EventTarget(), futu = Promise.withResolvers();
     const feed = new Datafeed({
         events, stream: { ready: false }, request: async () => json([candle]),
-        futuRequest: async path => path === ''
-            ? new Response(JSON.stringify({ enabled: true, overnightEnabled: true }))
-            : { ok: true, json: () => futu.promise },
+        overnightRequest: async () => new Response(JSON.stringify({ enabled: true, providerEnabled: true })),
+        futuRequest: async () => ({ ok: true, json: () => futu.promise }),
     });
     t.after(() => feed.destroy());
     const pending = history(feed, { name: 'AAPL', subsession_id: '24h' });
@@ -135,14 +137,14 @@ test('isOvernightET uses America/New_York including DST', () => {
 });
 
 test('night data and stream require both provider and business switches', async (t) => {
-    for (const [enabled, overnightEnabled] of [[false, false], [true, false], [false, true]]) {
+    for (const [enabled, providerEnabled] of [[false, false], [true, false], [false, true]]) {
         const calls = [];
-        const status = async () => new Response(JSON.stringify({ enabled, overnightEnabled }));
-        const feed = new Datafeed({ events: new EventTarget(), stream: { ready: false }, futuRequest: async (path) => { calls.push(path); return status(); } });
+        const status = async () => new Response(JSON.stringify({ enabled, providerEnabled }));
+        const feed = new Datafeed({ events: new EventTarget(), stream: { ready: false }, overnightRequest: async () => { calls.push(true); return status(); } });
         t.after(() => feed.destroy());
         const result = await history(feed, { name: 'AAPL', subsession_id: 'night' });
         assert.equal(result.metadata.noData, true);
-        assert.deepEqual(calls, ['']);
+        assert.deepEqual(calls, [true]);
         let sockets = 0;
         const stream = new FutuStream({ events: new EventTarget(), status, socket: () => { sockets++; return {}; } });
         stream.wanted = true;
@@ -151,4 +153,68 @@ test('night data and stream require both provider and business switches', async 
         assert.equal(stream.wanted, false);
         stream.close();
     }
+});
+
+test('overnightFetch reads the lightweight settings endpoint with same-origin credentials', async (t) => {
+    let call;
+    t.mock.method(globalThis, 'fetch', async (...args) => {
+        call = args;
+        return new Response('{}');
+    });
+    const response = await overnightFetch();
+    assert.equal(response.ok, true);
+    assert.deepEqual(call, ['/api/modules/investment/overnight', { method: 'GET', credentials: 'same-origin' }]);
+});
+
+test('regular symbol resolution does not call the slow Futu status endpoint and keeps overnight sessions', async (t) => {
+    let futuCalls = 0;
+    const feed = new Datafeed({
+        events: new EventTarget(),
+        stream: { ready: false },
+        futuRequest: () => { futuCalls++; return new Promise(() => {}); },
+        overnightRequest: async () => new Response(JSON.stringify({ enabled: true, providerEnabled: true })),
+        futuStream: { start() {}, stop() {} },
+    });
+    t.after(() => feed.destroy());
+    const info = await new Promise((resolve, reject) => feed.resolveSymbol('AAPL', resolve, reject));
+    assert.equal(futuCalls, 0);
+    assert.ok(info.subsessions.some(session => session.id === 'night'));
+    assert.ok(info.subsessions.some(session => session.id === '24h'));
+});
+
+test('concurrent symbol resolutions share the overnight settings request', async (t) => {
+    const settings = Promise.withResolvers();
+    let requests = 0, starts = 0;
+    const feed = new Datafeed({
+        events: new EventTarget(),
+        stream: { ready: false },
+        overnightRequest: () => { requests++; return settings.promise; },
+        futuStream: { start() { starts++; }, stop() {} },
+    });
+    t.after(() => feed.destroy());
+    const resolve = symbol => new Promise((ok, fail) => feed.resolveSymbol(symbol, ok, fail));
+    const first = resolve('AAPL'), second = resolve('MSFT');
+    await new Promise(setImmediate);
+    assert.equal(requests, 1);
+    settings.resolve(new Response(JSON.stringify({ enabled: true, providerEnabled: true })));
+    const [aapl, msft] = await Promise.all([first, second]);
+    assert.ok(aapl.subsessions.some(session => session.id === 'night'));
+    assert.ok(msft.subsessions.some(session => session.id === '24h'));
+    assert.equal(starts, 1);
+});
+
+test('destroying while overnight settings are pending does not start Futu', async (t) => {
+    const settings = Promise.withResolvers();
+    let starts = 0;
+    const feed = new Datafeed({
+        events: new EventTarget(),
+        stream: { ready: false },
+        overnightRequest: () => settings.promise,
+        futuStream: { start() { starts++; }, stop() {} },
+    });
+    const pending = feed.ensureFutuOverlay();
+    feed.destroy();
+    settings.resolve(new Response(JSON.stringify({ enabled: true, providerEnabled: true })));
+    await pending;
+    assert.equal(starts, 0);
 });

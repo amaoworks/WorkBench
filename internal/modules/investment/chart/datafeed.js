@@ -1,5 +1,5 @@
 import { schwabFetch } from './schwab.js';
-import { futuFetch, NIGHT_RESOLUTIONS, seriesKey, usesFutuTicks } from './futu.js';
+import { futuFetch, overnightFetch, NIGHT_RESOLUTIONS, seriesKey, usesFutuTicks } from './futu.js';
 import { identifyAssetType, getAssetSubsessions } from './datafeed-symbols.js';
 import { mapSchwabQuote, updateSchwabBars } from './datafeed-realtime.js';
 import { getFutuNightBars, getSchwabBars, mergeSessionBars } from './datafeed-bars.js';
@@ -7,9 +7,10 @@ import { getFutuNightBars, getSchwabBars, mergeSessionBars } from './datafeed-ba
 // Owns TradingView callbacks, connection epochs, caches and subscription lifetime.
 // Provider conversion and history normalization live in the datafeed-* modules.
 export default class Datafeed {
-    constructor({ request = schwabFetch, futuRequest = futuFetch, events = window, stream = window.ws, futuStream, resetCharts = () => {} } = {}) {
+    constructor({ request = schwabFetch, futuRequest = futuFetch, overnightRequest = overnightFetch, events = window, stream = window.ws, futuStream, resetCharts = () => {} } = {}) {
         this.request = request;
         this.futuRequest = futuRequest;
+        this.overnightRequest = overnightRequest;
         this.events = events;
         this.streamReady = stream?.ready === true;
         this.streamEpoch = 0;
@@ -19,6 +20,7 @@ export default class Datafeed {
         this.futuStream = futuStream;
         this.overlayCache = { enabled: false };
         this.overlayCachedAt = 0;
+        this.overlayInflight = undefined;
 
         this.quotesListeners = new Map();
         this.barListeners = new Map();
@@ -77,7 +79,12 @@ export default class Datafeed {
             }
         };
         this.onStreamReady = () => {
+            const firstReady = this.streamEpoch === 0 && !this.streamReady;
             this.streamReady = true;
+            if (firstReady) {
+                this.queueSubscriptions();
+                return;
+            }
             this.streamEpoch++;
             this.SUB.clear();
             this.snapshot_cache.clear();
@@ -126,18 +133,33 @@ export default class Datafeed {
 
     async ensureFutuOverlay() {
         const now = Date.now();
+        if (this.destroyed) return this.overlayCache;
         if (this.overlayCache && now - this.overlayCachedAt < 30_000) return this.overlayCache;
+        if (this.overlayInflight) return this.overlayInflight;
+        const pending = (async () => {
+            let overlay;
+            try {
+                const response = await this.overnightRequest();
+                if (!response.ok) throw new Error('读取夜盘设置失败');
+                const body = await response.json();
+                overlay = { enabled: body.enabled === true && body.providerEnabled === true };
+            } catch {
+                overlay = { enabled: false };
+            }
+            this.overlayCache = overlay;
+            this.overlayCachedAt = Date.now();
+            if (!this.destroyed) {
+                if (overlay.enabled) this.futuStream?.start?.();
+                else this.futuStream?.stop?.();
+            }
+            return overlay;
+        })();
+        this.overlayInflight = pending;
         try {
-            const response = await this.futuRequest('');
-            const body = await response.json();
-            this.overlayCache = { enabled: body.enabled === true && body.overnightEnabled === true };
-        } catch {
-            this.overlayCache = { enabled: false };
+            return await pending;
+        } finally {
+            if (this.overlayInflight === pending) this.overlayInflight = undefined;
         }
-        this.overlayCachedAt = now;
-        if (this.overlayCache.enabled) this.futuStream?.start?.();
-        else this.futuStream?.stop?.();
-        return this.overlayCache;
     }
 
     onReady(callback) {

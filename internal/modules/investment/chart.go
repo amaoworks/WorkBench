@@ -15,12 +15,16 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func newTVProxy(origin string) *httputil.ReverseProxy {
+func newTVProxy(origin, cacheDir string) *httputil.ReverseProxy {
 	target, err := url.Parse(origin)
 	if err != nil {
 		target, _ = url.Parse(defaultTVOrigin)
 	}
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	upstream := http.DefaultTransport.(*http.Transport).Clone()
+	upstream.MaxIdleConnsPerHost = 16
+	upstream.ResponseHeaderTimeout = 15 * time.Second
+	proxy.Transport = &chartLibraryTransport{base: upstream, dir: cacheDir}
 	director := proxy.Director
 	proxy.Director = func(req *http.Request) {
 		director(req)
@@ -30,8 +34,8 @@ func newTVProxy(origin string) *httputil.ReverseProxy {
 		req.Header.Del("Cookie")
 		req.Header.Del("Authorization")
 		req.Header.Del("X-CSRF-Token")
-		// Forward the browser's supported encodings so large chart bundles can
-		// stay compressed on both hops. Do not negotiate on the browser's behalf.
+		// Keep unsupported asset requests explicit; cacheable chart resources
+		// negotiate a supported representation in chartLibraryTransport.
 		if req.Header.Get("Accept-Encoding") == "" {
 			req.Header.Set("Accept-Encoding", "identity")
 		}

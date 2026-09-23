@@ -28,7 +28,7 @@ test('both providers initialize and reconnect with a browser that rejects relati
     const schwab = new SchwabStream({ events: new EventTarget(), retryDelay: 1 });
     const futu = new FutuStream({
         events: new EventTarget(), retryDelay: 1,
-        status: async () => new Response(JSON.stringify({ enabled: true, overnightEnabled: true })),
+        status: async () => new Response(JSON.stringify({ enabled: true, providerEnabled: true })),
     });
     t.after(() => { schwab.close(); futu.close(); });
     futu.wanted = true;
@@ -42,4 +42,23 @@ test('both providers initialize and reconnect with a browser that rejects relati
         'wss://workbench.test:8443/api/modules/investment/schwab/trader/ws',
         'wss://workbench.test:8443/api/modules/investment/futu/quote/ws',
     ]);
+});
+
+test('stopping or closing Futu while overnight settings are pending does not open a socket', async () => {
+    for (const action of ['stop', 'close']) {
+        const status = Promise.withResolvers();
+        let opened = 0;
+        const futu = new FutuStream({
+            events: new EventTarget(),
+            status: () => status.promise,
+            socket: () => { opened++; return { close() { this.onclose?.(); } }; },
+        });
+        futu.wanted = true;
+        const connecting = futu.connect();
+        futu[action]();
+        status.resolve(new Response(JSON.stringify({ enabled: true, providerEnabled: true })));
+        await connecting;
+        assert.equal(opened, 0, `socket opened after ${action}`);
+        futu.close();
+    }
 });

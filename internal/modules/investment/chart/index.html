@@ -89,21 +89,37 @@
       }
     });
     unbindTheme = bindTheme(widget, theme);
+    const showWatchlistError = message => {
+      const panel = document.getElementById('watchlist-status');
+      panel.hidden = false;
+      document.getElementById('watchlist-message').textContent = message;
+    };
     widget.chartReady().then(async () => {
+      if (disposed) return;
+      // The chart can paint before watchlist restoration. Keeping the cover up
+      // waits on another widget bundle and hides an already drawn chart.
+      window.terminalLoad.ready();
       const saved = await savedWatchlists;
       if (disposed) return;
-      if (saved.error) throw saved.error;
-      watchlistSync = await bindWatchlists(widget, saved.value, error => {
-        const panel = document.getElementById('watchlist-status');
-        panel.hidden = !error;
-        if (!error) return;
-        document.getElementById('watchlist-message').textContent = error.message;
-        const retry = document.getElementById('watchlist-retry');
-        retry.textContent = error.conflict ? '加载工作台版本' : '重试保存';
-        retry.onclick = () => { if (error.conflict) { watchlistSync?.dispose({ discard: true }); saved.value.discardDraft(); location.reload(); } else void watchlistSync?.retry(); };
-      });
-      if (disposed) { watchlistSync.dispose(); return; }
-      window.terminalLoad.ready();
+      if (saved.error) {
+        showWatchlistError(saved.error.message);
+        return;
+      }
+      try {
+        watchlistSync = await bindWatchlists(widget, saved.value, error => {
+          const panel = document.getElementById('watchlist-status');
+          panel.hidden = !error;
+          if (!error) return;
+          document.getElementById('watchlist-message').textContent = error.message;
+          const retry = document.getElementById('watchlist-retry');
+          retry.textContent = error.conflict ? '加载工作台版本' : '重试保存';
+          retry.onclick = () => { if (error.conflict) { watchlistSync?.dispose({ discard: true }); saved.value.discardDraft(); location.reload(); } else void watchlistSync?.retry(); };
+        });
+      } catch (error) {
+        showWatchlistError(error.message);
+        return;
+      }
+      if (disposed) watchlistSync.dispose();
     }).catch(error => window.terminalLoad.fail(error.message));
   </script>
 </body>
