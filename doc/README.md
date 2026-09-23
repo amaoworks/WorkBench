@@ -1,8 +1,6 @@
 # 项目文档
 
-这里描述 Workbench 当前代码实现、模块边界和开发方式。代码、数据库迁移与可执行测试是核对行为的依据；发现文档与实现不符时，应核对需求并同步修正文档。
-
-后续开发以当前需求为准。这些文档说明现状，不构成固定路线图，也不要求延续早期阶段的范围、目标或实施顺序。修改架构时同步更新相应说明，不另保留一套相互冲突的现行设计。
+Workbench 技术文档索引：
 
 | 文档 | 内容 |
 |---|---|
@@ -12,14 +10,14 @@
 | [数据设计](data-model.md) | 表归属、迁移、事务、生成查询、备份与维护 |
 | [部署与发布](deployment.md) | 二进制、Compose、systemd、反向代理、升级与 GitHub Actions |
 | [配置与运行](configuration.md) | 构建、启动参数、设置、开发服务、备份恢复 |
-| [安全边界](security.md) | 当前鉴权、请求保护、凭据和外部服务处理 |
+| [安全边界](security.md) | 鉴权模式、请求保护、凭据与外部服务处理 |
+| [文案与文档规范](copywriting-guidelines.md) | 界面文案与技术文档编写规范 |
 | [Todo](modules/todo.md) | 待办、分页、提醒、AI Tool 和代码入口 |
-| [Wallos 联动](modules/todo-wallos.md) | Todo 内的订阅同步、账期去重与金额说明 |
-| [Investment](modules/investment.md) | Schwab 行情、持仓、订单、TradingView 终端和后台价格预警 |
-| [Telegram 通知](notifications.md) | 推送配置、测试发送、重试与有效期 |
+| [Wallos 联动](modules/todo-wallos.md) | Todo 内的订阅同步与账期管理 |
+| [Investment](modules/investment.md) | Schwab 行情、持仓、订单、TradingView 终端与价格预警 |
+| [Telegram 通知](notifications.md) | 价格预警推送配置、测试与重试策略 |
 
-根 [README](../README.md) 面向使用和启动，各代码目录中的 README 说明本目录职责。新增或调整功能时更新对应主题及入口链接；不把临时执行计划、完成清单和一次性验收记录作为长期开发依据。
+## 外部模块
 
-## 相关说明
+- [外部业务模块协议](external-modules-phase-1.md)：外部模块接入契约与规范。
 
-- [外部业务模块第一阶段](external-modules-phase-1.md)：协议、执行记录和验收对照。现行接口以本目录主题文档及代码为准。

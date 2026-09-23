@@ -49,11 +49,15 @@ export default function InvestmentPage() {
 
   return <div className="page investment-page" data-expanded={expanded}>
     <div hidden={expanded}>
-      <PageHeader title="投资" description="查看行情、持仓和订单，管理价格监控与预警。" />
-      <div className="mb-4 flex gap-2" aria-label="投资视图">
-        <Button variant={monitoring ? "secondary" : "primary"} aria-pressed={!monitoring} onClick={() => setSearchParams((current) => { const next = new URLSearchParams(current); next.delete("tab"); return next; })}>交易终端</Button>
-        <Button variant={monitoring ? "primary" : "secondary"} aria-pressed={monitoring} onClick={() => setSearchParams((current) => { const next = new URLSearchParams(current); next.set("tab", "monitor"); return next; })}>价格监控</Button>
-      </div>
+      <PageHeader
+        title="投资"
+        action={
+          <div className="flex gap-2" aria-label="投资视图">
+            <Button size="sm" variant={monitoring ? "secondary" : "primary"} aria-pressed={!monitoring} onClick={() => setSearchParams((current) => { const next = new URLSearchParams(current); next.delete("tab"); return next; })}>交易终端</Button>
+            <Button size="sm" variant={monitoring ? "primary" : "secondary"} aria-pressed={monitoring} onClick={() => setSearchParams((current) => { const next = new URLSearchParams(current); next.set("tab", "monitor"); return next; })}>价格监控</Button>
+          </div>
+        }
+      />
     </div>
     <section ref={terminal} className="investment-view" aria-label="投资终端" style={monitoring ? { display: "none" } : undefined}>
       <div className="investment-toolbar">

@@ -17,8 +17,8 @@ export default function NotificationsPage() {
   const markAll = useMutation({ mutationFn: () => api("/api/notifications/read-all", { method: "PUT", body: "{}" }), onSuccess: refresh, onError });
   const markRead = useMutation({ mutationFn: (id: string) => api("/api/notifications/read", { method: "PUT", body: JSON.stringify({ ids: [id] }) }), onSuccess: refresh, onError });
   const archive = useMutation({ mutationFn: (id: string) => api("/api/notifications/archive", { method: "PUT", body: JSON.stringify({ ids: [id] }) }), onSuccess: refresh, onError });
-  return <div className="page">
-    <PageHeader title="通知" description="集中查看提醒和工作空间的重要变化。" />
+  return <div className="page notifications-page">
+    <PageHeader title="通知" />
     <Card><CardHeader title="最近通知" action={<Button variant="secondary" size="sm" disabled={markAll.isPending || !notifications.data?.items.some((item) => !item.readAt)} onClick={() => markAll.mutate()}><CheckCheck size={15} />全部已读</Button>} />
       {notifications.isLoading && <div className="space-y-3 p-4"><Skeleton className="h-20" /><Skeleton className="h-20" /></div>}
       {notifications.isError && <p role="alert" className="p-5 text-danger">通知加载失败：{notifications.error.message}</p>}

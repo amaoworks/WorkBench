@@ -58,7 +58,7 @@ export function Layout() {
   return (
     <ThemeContext.Provider value={dark ? "dark" : "light"}>
     <div className="workbench-shell min-h-screen">
-      <aside className={cn("workspace-sidebar fixed inset-y-0 left-0 z-20 flex flex-col border-r border-[var(--border)] bg-[var(--surface)] transition-[width]", collapsed ? "w-16" : "w-56")}>
+      <aside data-collapsed={collapsed} className={cn("workspace-sidebar fixed inset-y-0 left-0 z-20 flex flex-col border-r border-[var(--border)] bg-[var(--surface)] transition-[width]", collapsed ? "w-16" : "w-56")}>
         <div className="workspace-logo flex h-20 items-center gap-3 px-4"><div className="brand-mark"><Aperture size={23} strokeWidth={1.5} /></div>{!collapsed && <span className="sidebar-label font-semibold tracking-tight">Workbench</span>}</div>
         <nav className="flex-1 space-y-1 p-2" aria-label="主导航">
           <SideLink to="/" icon={LayoutDashboard} label="总览" collapsed={collapsed} />
@@ -73,7 +73,7 @@ export function Layout() {
           <button onClick={() => setCommandOpen(true)} className="workspace-search focus-ring flex w-72 items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-left text-sm text-[var(--muted)]"><Command size={16} /><span className="flex-1">搜索页面</span><kbd className="rounded border border-[var(--border)] px-1.5 text-xs">Ctrl / ⌘ K</kbd></button>
           <div className="flex items-center gap-1"><Button variant="ghost" size="icon" disabled={appearance.isPending || !settings.data} onClick={() => appearance.mutate({ theme: dark ? "light" : "dark", motion }, { onError: (err) => toast.error(err.message) })} aria-label="切换主题">{dark ? <Sun size={18} /> : <Moon size={18} />}</Button><Button variant="ghost" size="icon" onClick={() => setAIOpen(true)} aria-label="打开 AI"><Bot size={19} /></Button></div>
         </header>
-        <main className="mx-auto max-w-7xl p-6 lg:p-8">
+        <main className="workspace-main mx-auto w-full">
           <Suspense fallback={<div className="space-y-4"><Skeleton className="h-9 w-48" /><Skeleton className="h-72" /></div>}>
             <Routes>
               <Route index element={<DashboardPage />} />

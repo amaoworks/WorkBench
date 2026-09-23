@@ -29,13 +29,13 @@ export function ModulesPanel() {
         toast.message(enabled ? "正在启用" : "业务入口已关闭，等待服务确认停用");
         return;
       }
-      toast.success(enabled ? "业务已启用" : "业务已停用，历史数据已保留");
+      toast.success(enabled ? "业务已启用" : "业务已停用");
     }, onError: async (err) => { await refresh(); toast.error(err.message); }
   });
   if (modules.isPending) return <Skeleton className="h-32" />;
   if (modules.isError) return <p role="alert">模块加载失败：{modules.error.message}</p>;
   return <div className="studio-form">
-    <div className="control-heading"><div><h3>业务模块</h3><p>管理项目已注册的业务模块。停用后隐藏页面和总览卡片，数据会保留。</p></div></div>
+    <div className="control-heading"><div><h3>业务模块</h3></div></div>
     {modules.data.items.map((module) => <div key={module.id} className="module-row">
       <div>
         <h3>{module.name}</h3>

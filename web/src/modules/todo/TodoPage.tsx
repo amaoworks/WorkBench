@@ -29,8 +29,8 @@ export default function TodoPage() {
   const remove = useMutation({ mutationFn: deleteTask, onSuccess: () => { deleteTrigger.current = null; setDeleting(null); refresh(); toast.success("待办已删除"); }, onError: (error) => toast.error(error.message) });
   function submit(event: FormEvent) { event.preventDefault(); if (title.trim()) create.mutate(); }
   return (
-    <div className="page">
-      <PageHeader title="待办" description="记录下一步行动，按自己的节奏推进。" />
+    <div className="page todo-page">
+      <PageHeader title="待办" />
       <Card className="mb-4 p-4">
         <form onSubmit={submit} className="task-create flex gap-3">
           <input ref={titleInput} aria-label="待办标题" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="添加一项待办…" className="ui-input min-w-0 flex-1" />

@@ -108,9 +108,9 @@ git push origin v0.1.1
 - [部署与发布](doc/deployment.md)：二进制、Docker Compose、反向代理与 GitHub Actions
 - [配置与运行](doc/configuration.md)
 - [安全边界](doc/security.md)
+- [文案与文档规范](doc/copywriting-guidelines.md)
 - [Todo](doc/modules/todo.md)、[Wallos 联动](doc/modules/todo-wallos.md)、[Investment](doc/modules/investment.md)
 
-文档以当前代码、迁移和测试为依据。后续开发按实际需求推进，现状说明不构成固定功能范围或路线图；变更实现时同步更新相关文档。
 
 ## 目录
 

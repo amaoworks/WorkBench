@@ -32,24 +32,22 @@ export function InvestmentMonitor() {
     <Card className="p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><h2 className="flex items-center gap-2 font-medium"><Bell size={18} />{data ? states[data.status] : "正在读取监控状态…"}</h2>
-          <p className="mt-2 text-sm text-[var(--muted)]">美股 / ETF · 相对前一交易日收盘价 · 常规交易时段每分钟检查</p>
-          <p className="mt-1 text-xs text-[var(--muted)]">最近后台检查：{time(data?.checkedAt ?? null)}</p>
+          <p className="mt-1 text-xs text-[var(--muted)]">常规交易时段每分钟检查 · 最近检查：{time(data?.checkedAt ?? null)}</p>
         </div>
         <div className="flex flex-wrap gap-2"><Button variant="secondary" size="sm" disabled={monitor.isFetching} onClick={() => { void refresh(); }}><RefreshCw size={14} />刷新状态</Button>
           <Button ref={addButton} size="sm" disabled={editing !== null} onClick={() => setEditing("new")}><Plus size={14} />添加规则</Button></div>
       </div>
       {(monitor.isError || data?.lastError) && <p role="alert" className="mt-3 text-sm text-danger">{monitor.error?.message || data?.lastError}</p>}
-      <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
-        <span>{telegram.isError ? "无法读取 TG 状态" : telegram.isPending ? "正在读取 TG 状态…" : telegram.data.enabled ? "TG 推送已启用" : "TG 推送未启用，提醒会保留在站内"}</span>
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+        <span>{telegram.isError ? "无法读取 TG 状态" : telegram.isPending ? "正在读取 TG 状态…" : telegram.data.enabled ? "TG 推送已启用" : "TG 推送未启用"}</span>
         <ButtonLink variant="ghost" size="sm" to="/settings?tab=notifications">配置 Telegram</ButtonLink>
       </div>
       {telegram.data?.enabled && telegram.data.status.lastError && <p className="mt-2 text-sm text-danger">TG：{telegram.data.status.lastError}</p>}
-      <p className="mt-2 text-xs text-[var(--muted)]">每条规则每个美东交易日提醒一次。关闭网页不影响后台监控，服务器需保持运行；分钟检查可能遗漏短暂越线，超过三分钟未更新的成交行情不会触发提醒。</p>
     </Card>
     {editing !== null && <RuleForm key={typeof editing === "string" ? editing : editing.id} rule={editing === "new" ? undefined : editing}
       onClose={() => { setEditing(null); addButton.current?.focus(); }} onSaved={refresh} />}
     <Card>
-      <CardHeader title="监控规则" description={`${data?.items.length ?? 0} / 100 条 · 首次检查已达到阈值也会提醒`} />
+      <CardHeader title="监控规则" description={`${data?.items.length ?? 0} / 100 条`} />
       {data?.items.length === 0 && <EmptyState title="尚无监控标的" description="添加股票或 ETF，例如 AAPL、SPY，并设置上涨或下跌阈值。" />}
       <div className="divide-y divide-[var(--border)]">{data?.items.map((rule) => <div key={rule.id} className="p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">

@@ -42,11 +42,11 @@ function SchwabForm({ initial }: { initial: Settings }) {
       <label className="block text-sm">App Secret<input type="password" autoComplete="new-password" value={form.appSecret} onChange={(e) => change({ appSecret: e.target.value })} placeholder={initial.hasAppSecret ? "已保存，留空保留" : "填写 Schwab App Secret"} className="ui-input mt-1 w-full" /></label>
       <label className="block text-sm">OAuth 回调地址<input type="url" required value={form.callbackUrl} onChange={(e) => change({ callbackUrl: e.target.value })} placeholder="https://workbench.example.com/oauth/schwab" className="ui-input mt-1 w-full" /></label>
     </fieldset>
-    {initial.connected && <p className="text-xs text-[var(--muted)]">已连接{initial.tokenExpiresAt ? `，访问令牌到期 ${new Date(initial.tokenExpiresAt).toLocaleString()}` : ""}。</p>}
-    {initial.reauthorizationRequired && <p role="alert" className="text-sm text-danger">Schwab 授权已失效。请点击“重新授权”，完成后自动恢复连接。</p>}
-    {!initial.connected && !initial.reauthorizationRequired && initial.hasAppSecret && <p className="text-xs text-[var(--muted)]">配置已保存，尚未完成 OAuth 授权。</p>}
-    {initial.callbackUrl && !initial.callbackUrl.startsWith("https://") && <p role="alert" className="text-sm text-danger">已保存的回调地址不是 HTTPS，请修正后再登录 Schwab。</p>}
-    {initial.lastError && !initial.reauthorizationRequired && <p role="alert" className="text-sm text-danger">最近错误：{initial.lastError}</p>}
+    {initial.connected && <p className="text-xs text-[var(--muted)]">已连接{initial.tokenExpiresAt ? ` · 令牌到期 ${new Date(initial.tokenExpiresAt).toLocaleString()}` : ""}</p>}
+    {initial.reauthorizationRequired && <p role="alert" className="text-sm text-danger">授权已失效，请重新授权。</p>}
+    {!initial.connected && !initial.reauthorizationRequired && initial.hasAppSecret && <p className="text-xs text-[var(--muted)]">尚未完成 OAuth 授权。</p>}
+    {initial.callbackUrl && !initial.callbackUrl.startsWith("https://") && <p role="alert" className="text-sm text-danger">回调地址须为 HTTPS。</p>}
+    {initial.lastError && !initial.reauthorizationRequired && <p role="alert" className="text-sm text-danger">错误：{initial.lastError}</p>}
     <div className="flex flex-wrap gap-2">
       <Button disabled={busy}>{save.isPending ? "保存中…" : "保存配置"}</Button>
       <Button type="button" variant={initial.reauthorizationRequired ? "primary" : "secondary"} disabled={busy || dirty || !initial.hasAppSecret || !initial.callbackUrl.startsWith("https://")} onClick={() => { window.location.href = "/api/modules/investment/schwab/oauth/login"; }}>{initial.reauthorizationRequired ? "重新授权" : "登录 Schwab"}</Button>

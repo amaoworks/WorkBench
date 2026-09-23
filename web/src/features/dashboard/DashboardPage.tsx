@@ -1,12 +1,11 @@
 import { Component, Suspense, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { api } from "../../shared/api";
 import { dashboardSchema, widgetCatalogSchema, type ConfigurableWidget } from "../../shared/schema";
 import { widgetRegistry } from "../../modules/registry";
 import { Card } from "../../components/ui/Card";
-import { Button } from "../../components/ui/Button";
+import { Button, ButtonLink } from "../../components/ui/Button";
 import { EmptyState, Skeleton } from "../../components/ui/States";
 import { PageHeader } from "../../components/ui/PageHeader";
 
@@ -15,8 +14,15 @@ export default function DashboardPage() {
   const dashboard = useQuery({ queryKey: ["dashboard"], queryFn: async () => dashboardSchema.parse(await api("/api/dashboard")) });
   const catalog = useQuery({ queryKey: ["dashboard", "catalog"], queryFn: async () => widgetCatalogSchema.parse(await api("/api/dashboard/widgets")), enabled: editing });
   return <div className="page">
-    <PageHeader title="总览" description="查看工作进展，安排接下来的行动。" />
-    <div className="mb-4 flex flex-wrap gap-3"><Button variant="secondary" onClick={() => setEditing(!editing)}>{editing ? "关闭配置" : "配置总览"}</Button><Link className="studio-button secondary" to="/settings?tab=modules">管理业务</Link></div>
+    <PageHeader
+      title="总览"
+      action={
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" size="sm" onClick={() => setEditing(!editing)}>{editing ? "关闭配置" : "配置总览"}</Button>
+          <ButtonLink variant="secondary" size="sm" to="/settings?tab=modules">管理业务</ButtonLink>
+        </div>
+      }
+    />
     {editing && <Card className="mb-5 p-5">{catalog.isPending ? <Skeleton className="h-32" /> : catalog.isError ? <p role="alert">配置加载失败：{catalog.error.message}</p> : <LayoutEditor key={JSON.stringify(catalog.data)} widgets={catalog.data.widgets} />}</Card>}
     {dashboard.isPending && <Skeleton className="h-32" />}
     {dashboard.isError && <Card className="p-6 text-danger" role="alert">总览加载失败：{dashboard.error.message}</Card>}
