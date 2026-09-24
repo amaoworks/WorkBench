@@ -131,6 +131,17 @@ doc/                    当前设计与开发运行说明
 
 ## 从源码构建与运行
 
+日常修改前端可使用开发模式。首次安装前端依赖后，一条命令启动 Go 后端和 Vite：
+
+```bash
+npm ci --prefix web
+./scripts/dev.sh -auth password -listen 127.0.0.1:9090 -allowed-host w.vm2.de5.net
+```
+
+浏览器访问启动摘要中的前端地址（默认 `http://127.0.0.1:5173`）。React 和 CSS 保存后热更新，投资终端 HTML/JS 保存后自动刷新。Go 仅在启动脚本时编译；修改 Go 后，按 Ctrl+C 完整退出，再执行同一条命令。现有后端参数和环境变量继续有效。开发模式使用指定的 `-data` 工作空间，未指定时仍使用默认数据库。
+
+通过域名调试时，反向代理的上游须指向 **Vite 前端端口**，并支持 WebSocket；`-allowed-host` 本身不会更改反向代理。开发参数、HTTPS 示例和退出机制见[开发脚本](scripts/README.md#开发模式)。
+
 使用 Go 1.27.1、Node.js 24+、npm 11+；Go 要求以 `go.mod` 为准，前端依赖以锁文件为准。检查 SQL 生成结果还需要 sqlc 1.31.x。
 
 ```bash

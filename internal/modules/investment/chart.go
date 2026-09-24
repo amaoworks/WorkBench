@@ -82,7 +82,16 @@ func (m *Module) serveTerminal(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	payload, err := fs.ReadFile(chartAssets, path.Join("chart", name))
+	assets := m.terminalAssets
+	if assets == nil {
+		var err error
+		assets, err = terminalChartAssets()
+		if err != nil {
+			http.Error(w, "terminal chart assets unavailable", http.StatusInternalServerError)
+			return
+		}
+	}
+	payload, err := fs.ReadFile(assets, name)
 	if err != nil {
 		http.NotFound(w, r)
 		return

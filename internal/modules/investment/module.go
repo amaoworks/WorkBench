@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"embed"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
@@ -46,6 +47,7 @@ type HTTPRoute struct {
 
 type Module struct {
 	deps           Dependencies
+	terminalAssets fs.FS
 	queries        *investmentsqlc.Queries
 	now            func() time.Time
 	httpClient     *http.Client
@@ -69,14 +71,19 @@ func New(deps Dependencies) (*Module, error) {
 	if deps.DB == nil {
 		return nil, errors.New("investment dependencies are required")
 	}
+	terminalAssets, err := terminalChartAssets()
+	if err != nil {
+		return nil, err
+	}
 	if deps.Logger == nil {
 		deps.Logger = slog.Default()
 	}
 	module := &Module{
-		deps:    deps,
-		logger:  deps.Logger,
-		queries: investmentsqlc.New(deps.DB),
-		now:     time.Now,
+		deps:           deps,
+		terminalAssets: terminalAssets,
+		logger:         deps.Logger,
+		queries:        investmentsqlc.New(deps.DB),
+		now:            time.Now,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 			CheckRedirect: func(*http.Request, []*http.Request) error {

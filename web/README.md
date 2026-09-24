@@ -39,6 +39,8 @@ src/styles.css          主题变量和共享样式
 
 ## 开发与构建
 
+推荐在仓库根目录执行 `./scripts/dev.sh`，统一启动后端和 Vite。脚本透传后端参数，自动匹配代理地址与允许的 Host；支持 `--web-port`、`--web-host` 和 `--dev-url`。React/CSS 使用热更新，投资终端的磁盘资源修改后自动刷新。Go 不监听文件，重新执行脚本才编译。启动与退出说明见 [scripts/README](../scripts/README.md#开发模式)。
+
 在本目录执行 `npm ci`，使用 `npm run dev` 开发、`npm run lint` 检查、`npm run test:contracts` 验证真实后端响应与前端 schema、`npm run build` 执行类型检查和生产构建。产物直接写入 `internal/webui/dist/` 并检入，随后可嵌入 Go 程序。
 
 Vite 代理和 Host 配置见[配置与运行](../doc/configuration.md)，完整检查及浏览器回归见 [scripts/README](../scripts/README.md)。

@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 go_bin=${GO_BIN:-go}
 if [ -n "${SQLC_BIN:-}" ]; then
     sqlc_bin=$SQLC_BIN
@@ -30,6 +30,8 @@ if ! diff -ru "$generated_check/before" "$generated_check/after"; then
     exit 1
 fi
 "$go_bin" test ./...
+"$go_bin" test -tags dev ./internal/modules/investment -run '^TestDevChart'
+node --test scripts/dev.test.mjs
 
 cd "$repo_root/web"
 npm run lint

@@ -76,6 +76,18 @@ Session 和 CSRF Cookie 的 Secure 属性、CSRF 的 HTTPS 来源判断均依据
 
 ## 前端开发和验证
 
+推荐使用 `./scripts/dev.sh` 同时启动 Go 与 Vite，例如：
+
+```bash
+./scripts/dev.sh -auth password -listen 127.0.0.1:9090 -allowed-host w.vm2.de5.net
+```
+
+脚本支持现有程序参数和环境变量，自动配置 Vite 的后端代理及开发 Host。`--web-port` 设置前端端口（默认 5173），`--web-host` 设置前端监听地址（默认 127.0.0.1），`--dev-url` 指定经反代访问的外部来源。端口占用时报错退出，不自动更换端口。React/CSS 保存后热更新；开发构建从磁盘读取投资终端 HTML/JS，修改后自动刷新。Go 修改需要退出并重新执行脚本，脚本每次启动会重新编译后端。
+
+域名访问时反代上游需改为 Vite 前端端口，并保留 Host、支持 WebSocket 和 SSE。HTTPS 入口同时配置 `-public-url` 以正确设置 Cookie 和来源校验；仅传 `--dev-url` 不会改变后端的安全配置。完整示例、参数与退出行为见[开发脚本](../scripts/README.md#开发模式)。
+
+也可单独启动前端：
+
 在根目录启动后端。另一个终端进入 `web/` 执行：
 
 ```bash

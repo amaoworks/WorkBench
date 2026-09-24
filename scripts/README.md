@@ -1,5 +1,44 @@
 # 构建和验证脚本
 
+## 开发模式
+
+需要项目要求的 Go、Node.js 和 npm。首次执行 `npm ci --prefix web` 安装依赖，之后从仓库根目录运行：
+
+```bash
+./scripts/dev.sh -auth password \
+  -listen 127.0.0.1:9090 \
+  -allowed-host w.vm2.de5.net
+```
+
+首次使用密码模式时，沿用 `WORKBENCH_PASSWORD` 设置初始密码。`-data`、`-public-url`、`-log-level`、重复的 `-allowed-host` 等后端参数原样支持，对应环境变量也继续生效；命令行优先于环境变量。未传 `-data` 时仍使用 `~/.workbench/data.db`，如需独立开发数据，可指定 `-data .workbench/dev/data.db`。
+
+脚本每次启动编译一次 Go，然后运行后端和 Vite。访问启动摘要中的前端地址；默认是 `http://127.0.0.1:5173`。访问后端端口仍会得到内嵌的生产页面。开发代理要求 `-listen` 使用 1–65535 的固定数字端口，不支持随机端口 `:0`。
+
+| 开发参数 | 用途 |
+|---|---|
+| `--web-port 5173` | Vite 前端端口；占用时失败，不自动改端口 |
+| `--web-host 127.0.0.1` | Vite 监听地址 |
+| `--dev-url https://w.vm2.de5.net` | 浏览器访问的外部来源，用于热更新连接；默认采用已有 `-public-url` |
+| `--help` | 查看开发脚本用法 |
+
+`-version` 和 `-healthcheck` 会在编译后仅执行对应后端命令，保留退出码，不启动 Vite；健康检查沿用原始后端参数和 Host 配置。
+
+React 和 CSS 使用 Vite 热更新。投资终端 HTML/JS 通过开发构建从磁盘读取，文件修改触发页面刷新。TradingView 上游图表库继续使用现有代理和缓存。修改 Go 后按 Ctrl+C，再执行同一条开发命令；脚本不监听 Go 文件，也不执行生产前端构建。
+
+通过 HTTPS 域名调试的完整示例：
+
+```bash
+./scripts/dev.sh -auth password \
+  -listen 127.0.0.1:9090 \
+  -allowed-host w.vm2.de5.net \
+  -public-url https://w.vm2.de5.net \
+  --web-port 5173
+```
+
+反向代理应把这个域名转发到 `http://127.0.0.1:5173`。可参考 [Nginx 模板](../deploy/nginx.conf.example)，将 `proxy_pass` 的端口改为前端端口；保留原始 Host、WebSocket Upgrade 和关闭响应缓冲的设置。Vite 再把 API、投资终端、OAuth 回调等请求转发至 `127.0.0.1:9090`。脚本不会修改服务器上的反代配置。`--dev-url` 只配置开发服务器；HTTPS 的后端 Cookie 和来源检查仍由 `-public-url` 决定。
+
+Ctrl+C、SIGTERM、关闭终端产生的 SIGHUP、启动失败或任一服务退出都会触发清理：先通知本次启动的进程组退出，超时再强制终止，最后清理临时编译产物。脚本不按进程名或端口杀进程，不会终止已在运行的其他服务。生产打包继续使用 `build.sh`，终端资源仍嵌入二进制。
+
 ## 常规检查
 
 在仓库根目录执行：
@@ -8,7 +47,7 @@
 ./scripts/test.sh
 ```
 
-脚本按顺序检查 sqlc 重新生成前后的平台/全部业务生成目录、运行 Go 测试、前端及终端 JS lint、前后端契约测试、投资适配器 Node 测试和生产构建。它不要求工作区无未提交改动，也不自动运行浏览器测试。
+脚本按顺序检查 sqlc 重新生成前后的平台/全部业务生成目录、运行 Go 测试、开发资源与进程清理测试、前端及终端 JS lint、前后端契约测试、投资适配器 Node 测试和生产构建。它不要求工作区无未提交改动，也不自动运行浏览器测试。
 
 `SQLC_BIN` 可指定 sqlc 1.31.x 路径；未设置时查找 `.tools/bin/sqlc`，再使用 PATH。`GO_BIN` 可指定 Go 可执行文件。首次运行前先在 `web/` 执行 `npm ci`。部分 Go 测试使用本机临时 HTTP 服务，测试环境须允许监听 loopback 端口。
 
