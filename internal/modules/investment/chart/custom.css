@@ -1,0 +1,8 @@
+/* 隐藏「详情」面板中最新价下方的买入/卖出（bid/ask）价格。
+   K 线图与价格轴已有最新价，这两个小字价格在此重复。
+   类名来自 TradingView symbol-details chunk（语义名 + 构建哈希）；
+   该容器只包裹 bid/ask 两个值，不影响面板其余内容。
+   图表库升级后若类名失效，需从新的 symbol-details chunk 重新提取。 */
+[class*="container-hO37ndqM"] {
+  display: none !important;
+}

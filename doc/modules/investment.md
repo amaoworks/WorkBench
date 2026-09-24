@@ -96,7 +96,7 @@ Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后
 
 工作台启动后在后台加载磁盘缓存，并预取入口列出的首屏分包；不会遍历运行时清单下载数百个非首屏分包。其余分包首次使用时缓存。并发请求共用一次有超时的下载，离开页面会及时停止该页面的等待，但不会取消新页面仍需使用的共用下载。预热失败会记录日志，可在下次请求重试。
 
-内嵌终端脚本用内容 ETag 校验缓存，未变化时返回 304，程序升级后会返回新脚本；终端 HTML 保持 `no-store`。数据源就绪回调在下一个任务中执行，遵循 [TradingView 异步回调约定](https://www.tradingview.com/charting-library-docs/latest/connecting_data/Datafeed-API/#asynchronous-callbacks)，无需固定等待一秒。图表就绪后先显示图表，再异步恢复自选表。标的解析和夜盘连接只读取 `/api/modules/investment/overnight` 的本地开关配置，不等待富途设置页的 OpenD 连接、订阅额度和历史额度检查。
+内嵌终端脚本用内容 ETag 校验缓存，未变化时返回 304，程序升级后会返回新脚本；终端 HTML 保持 `no-store`。行情的买入/卖出价还提供给图例区快捷下单按钮和侧栏「详情」面板；详情面板大号价格下方的 bid/ask 行与 K 线重复，由 `custom.css`（经 `custom_css_url` 注入）单独隐藏，报价数据本身保留。该规则依赖 TradingView 语义类名的构建哈希，库升级后若失效应从 symbol-details 分包重新提取；`investment-terminal.e2e.cjs` 用真实库校验该行已被隐藏且其余面板内容仍在。数据源就绪回调在下一个任务中执行，遵循 [TradingView 异步回调约定](https://www.tradingview.com/charting-library-docs/latest/connecting_data/Datafeed-API/#asynchronous-callbacks)，无需固定等待一秒。图表就绪后先显示图表，再异步恢复自选表。标的解析和夜盘连接只读取 `/api/modules/investment/overnight` 的本地开关配置，不等待富途设置页的 OpenD 连接、订阅额度和历史额度检查。
 
 这个演示资源接入不等同于取得库的部署授权。TradingView FAQ 区分了 Widgets、Advanced Charts 和 Trading Platform；自托管交易功能需使用获得授权的 Trading Platform 包。参见 [官方 FAQ](https://www.tradingview.com/charting-library-docs/latest/resources/Frequently-Asked-Questions/)。
 

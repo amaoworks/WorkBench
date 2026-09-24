@@ -120,7 +120,7 @@ const history = [
             assert(body.includes("unbindTheme = bindTheme(widget, theme);"));
             body = body.replace("unbindTheme = bindTheme(widget, theme);", "unbindTheme = bindTheme(widget, theme); window.__widget = widget;");
           }
-          return await route.fulfill({ contentType: file.endsWith(".html") ? "text/html" : "text/javascript", body,
+          return await route.fulfill({ contentType: file.endsWith(".html") ? "text/html" : file.endsWith(".css") ? "text/css" : "text/javascript", body,
             // Exercise the nested iframe path without allowing blob navigation.
             headers: mobile && file === "index.html" ? { "Content-Security-Policy": "frame-src 'self'" } : {},
           });
@@ -262,6 +262,15 @@ const history = [
       assert.equal(await page.evaluate(() => window.__widget.activeChart().symbol() === window.__originalSymbol), true);
       assert.equal(await page.evaluate(() => window.__widget.activeChart().resolution() === window.__originalResolution), true);
     }
+    // The Details panel renders bid/ask under the main price. custom.css hides
+    // that row while the quote data and the rest of the panel stay intact.
+    const detailBody = chart.locator('[data-test-id-widget-type="detail"] .widgetbar-widgetbody');
+    const bidAskRow = detailBody.locator('[class*="container-hO37ndqM"]');
+    await bidAskRow.waitFor({ state: "attached" });
+    assert.match(await detailBody.locator('[class*="bid-hO37ndqM"]').innerText(), /\d/, "details panel must still receive bid quotes");
+    assert.match(await detailBody.locator('[class*="ask-hO37ndqM"]').innerText(), /\d/, "details panel must still receive ask quotes");
+    assert.equal(await bidAskRow.evaluate(el => getComputedStyle(el).display), "none", "custom.css must hide the details bid/ask row");
+    assert.match(await detailBody.innerText(), /当日价格范围/, "the rest of the details panel must stay visible");
     await page.evaluate(() => window.__broker._refresh());
     assert.deepEqual(await page.evaluate(() => window.__orderUpdates), [], "initial history must not generate order notifications");
     assert.match(await chart.getByRole("row").filter({ hasText: "AAPL" }).innerText(), /7/);
