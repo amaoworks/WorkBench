@@ -46,6 +46,9 @@ func newTVProxy(origin, cacheDir string) *httputil.ReverseProxy {
 		resp.Header.Del("Strict-Transport-Security")
 		resp.Header.Del("Access-Control-Allow-Origin")
 		resp.Header.Del("Set-Cookie")
+		if resp.Request != nil {
+			applyHashedChartCacheHeaders(resp.Request.URL.Path, resp.Header, resp.StatusCode)
+		}
 		return nil
 	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, _ error) {

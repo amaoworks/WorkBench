@@ -135,6 +135,60 @@ func TestLoginCreatesServerSideSession(t *testing.T) {
 	}
 }
 
+func TestLoadDoesNotWriteSessionCookie(t *testing.T) {
+	database := openAuthDatabase(t)
+	service, err := New(context.Background(), database.SQL(), Config{
+		Mode: ModePassword, ListenAddress: "127.0.0.1:8080", InitialPassword: testPassword,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/auth/login", service.LoginHandler)
+	mux.Handle("GET /protected", service.Require(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})))
+	save := service.LoadAndSave(mux)
+	load := service.Load(mux)
+
+	body, _ := json.Marshal(map[string]string{"password": testPassword})
+	login := httptest.NewRecorder()
+	save.ServeHTTP(login, httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body)))
+	if login.Code != http.StatusOK {
+		t.Fatalf("login status = %d, body = %s", login.Code, login.Body.String())
+	}
+	cookies := login.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("login did not set a session cookie")
+	}
+
+	withCookies := func(target string) *http.Request {
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		for _, cookie := range cookies {
+			req.AddCookie(cookie)
+		}
+		return req
+	}
+
+	loaded := httptest.NewRecorder()
+	load.ServeHTTP(loaded, withCookies("/protected"))
+	if loaded.Code != http.StatusNoContent {
+		t.Fatalf("load status = %d, body = %s", loaded.Code, loaded.Body.String())
+	}
+	if loaded.Header().Get("Set-Cookie") != "" {
+		t.Fatalf("load wrote a session cookie: %v", loaded.Result().Cookies())
+	}
+
+	saved := httptest.NewRecorder()
+	save.ServeHTTP(saved, withCookies("/protected"))
+	if saved.Code != http.StatusNoContent {
+		t.Fatalf("save status = %d, body = %s", saved.Code, saved.Body.String())
+	}
+	if saved.Header().Get("Set-Cookie") == "" {
+		t.Fatal("idle refresh should still write a session cookie on LoadAndSave")
+	}
+}
+
 func TestSessionStoreDoesNotReturnExpiredData(t *testing.T) {
 	database := openAuthDatabase(t)
 	store := NewSessionStore(database.SQL())

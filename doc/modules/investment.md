@@ -92,7 +92,7 @@ Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后
 
 当前 `/charting_library/` 从 `https://trading-terminal.tradingview-widget.com/charting_library/` 同源反代，保存图纸和新闻等依赖外部服务的功能关闭。行情与交易数据来自 Schwab；夜盘覆盖打开时，Night / 24h 的夜盘段来自 Futu OpenD。
 
-图表代理按浏览器支持情况统一使用 gzip 或未压缩正文，避免预热与浏览器请求因 br/zstd 协商不同而重复下载。内容哈希文件名的 JavaScript 与样式表成功取回后缓存在内存和数据目录旁的 `chart-library/`，进程重启后可复用。条件请求在本机校验 ETag；上游失败不写入缓存。`charting_library.esm.js` 与 `sameorigin.html` 使用最多五分钟的内存缓存（上游要求更短时从其要求），过期后重新取回；浏览器每次打开时向工作台校验，命中内存时无需访问外部入口资源。
+图表代理按浏览器支持情况统一使用 gzip 或未压缩正文，避免预热与浏览器请求因 br/zstd 协商不同而重复下载。内容哈希文件名的 JavaScript 与样式表成功取回后缓存在内存和数据目录旁的 `chart-library/`，进程重启后可复用。条件请求在本机校验 ETag；上游失败不写入缓存。这些哈希分包对浏览器使用 `Cache-Control: public, max-age=31536000, immutable`，响应不写入会话 Cookie，也不把 Cookie 列入 Vary，避免空闲续期把每次打开变成整库 304 校验。`charting_library.esm.js` 与 `sameorigin.html` 使用最多五分钟的内存缓存（上游要求更短时从其要求），过期后重新取回；浏览器每次打开时向工作台校验，命中内存时无需访问外部入口资源。
 
 工作台启动后在后台加载磁盘缓存，并预取入口列出的首屏分包；不会遍历运行时清单下载数百个非首屏分包。其余分包首次使用时缓存。并发请求共用一次有超时的下载，离开页面会及时停止该页面的等待，但不会取消新页面仍需使用的共用下载。预热失败会记录日志，可在下次请求重试。
 

@@ -155,6 +155,25 @@ func (s *Service) LoadAndSave(next http.Handler) http.Handler {
 	return s.sessions.LoadAndSave(next)
 }
 
+// Load exposes the current session to the handler without committing idle-timeout
+// refreshes or writing Set-Cookie. Hashed static assets use this so session
+// cookies cannot defeat immutable browser caching.
+func (s *Service) Load(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var token string
+		cookie, err := r.Cookie(s.sessions.Cookie.Name)
+		if err == nil {
+			token = cookie.Value
+		}
+		ctx, err := s.sessions.Load(r.Context(), token)
+		if err != nil {
+			s.sessions.ErrorFunc(w, r, err)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
 func (s *Service) Require(next http.Handler) http.Handler {
 	if s.mode == ModeLocal {
 		return next

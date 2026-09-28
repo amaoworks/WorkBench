@@ -210,7 +210,7 @@ func (a *App) routes(
 	router.Use(a.requestLogger)
 	router.Use(a.recoverPanic)
 	router.Use(a.auth.Security)
-	router.Use(a.auth.LoadAndSave)
+	router.Use(a.session)
 	router.Get("/health/live", func(w http.ResponseWriter, _ *http.Request) {
 		httpapi.Write(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
@@ -293,6 +293,22 @@ func (a *App) routes(
 	})
 	router.NotFound(ui.ServeHTTP)
 	return router
+}
+
+func (a *App) session(next http.Handler) http.Handler {
+	return applySession(a.auth.LoadAndSave, a.auth.Load, next)
+}
+
+func applySession(loadAndSave, load func(http.Handler) http.Handler, next http.Handler) http.Handler {
+	save := loadAndSave(next)
+	read := load(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if investment.HashedChartLibraryPath(r.URL.Path) {
+			read.ServeHTTP(investment.WrapHashedChartResponse(w), r)
+			return
+		}
+		save.ServeHTTP(w, r)
+	})
 }
 
 func bindBuiltinModules(definitions []contracts.Module) []builtinBinding {

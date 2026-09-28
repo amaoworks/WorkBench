@@ -15,6 +15,7 @@ import (
 
 var hashedChartBundle = regexp.MustCompile(`(?i)/bundles/[^/]*\.[0-9a-f]{8,}\.(?:js|css)$`)
 
+const hashedChartCacheControl = "public, max-age=31536000, immutable"
 const chartFetchTimeout = 30 * time.Second
 const chartEntryTTL = 5 * time.Minute
 const chartMaxAssetBytes = 32 << 20
@@ -42,6 +43,13 @@ type chartLibraryTransport struct {
 
 func chartEntryPoint(path string) bool {
 	return path == "/charting_library/charting_library.esm.js" || path == "/charting_library/sameorigin.html"
+}
+
+// HashedChartLibraryPath reports content-hashed TradingView JS/CSS. Those
+// bodies do not depend on the caller, so browsers can keep them without
+// revalidating on every chart opening.
+func HashedChartLibraryPath(path string) bool {
+	return hashedChartBundle.MatchString(path)
 }
 
 func (t *chartLibraryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -195,6 +203,7 @@ func (e *chartCacheEntry) response(req *http.Request, status int) *http.Response
 	} else {
 		header.Set("Content-Length", strconv.Itoa(len(body)))
 	}
+	applyHashedChartCacheHeaders(req.URL.Path, header, status)
 	return &http.Response{
 		Status: fmt.Sprintf("%d %s", status, http.StatusText(status)), StatusCode: status,
 		Header: header, Body: io.NopCloser(bytes.NewReader(body)), ContentLength: int64(len(body)),
@@ -213,4 +222,85 @@ func ifNoneMatch(header, etag string) bool {
 		}
 	}
 	return false
+}
+
+func applyHashedChartCacheHeaders(path string, header http.Header, status int) {
+	if !HashedChartLibraryPath(path) || (status != http.StatusOK && status != http.StatusNotModified) {
+		return
+	}
+	header.Set("Cache-Control", hashedChartCacheControl)
+}
+
+// WrapHashedChartResponse drops session cookies and Vary: Cookie from successful
+// hashed chart assets so idle-timeout rewrites cannot force a 304 waterfall.
+func WrapHashedChartResponse(w http.ResponseWriter) http.ResponseWriter {
+	return &hashedChartResponse{ResponseWriter: w}
+}
+
+type hashedChartResponse struct {
+	http.ResponseWriter
+	prepared bool
+}
+
+func (w *hashedChartResponse) prepare(status int) {
+	if w.prepared {
+		return
+	}
+	w.prepared = true
+	finalizeHashedChartBrowserHeaders(w.Header(), status)
+}
+
+func (w *hashedChartResponse) WriteHeader(status int) {
+	w.prepare(status)
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *hashedChartResponse) Write(p []byte) (int, error) {
+	w.prepare(http.StatusOK)
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *hashedChartResponse) Flush() {
+	w.prepare(http.StatusOK)
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *hashedChartResponse) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func finalizeHashedChartBrowserHeaders(header http.Header, status int) {
+	if status != http.StatusOK && status != http.StatusNotModified {
+		return
+	}
+	header.Del("Set-Cookie")
+	header.Set("Cache-Control", hashedChartCacheControl)
+	stripVaryToken(header, "Cookie")
+}
+
+func stripVaryToken(header http.Header, token string) {
+	values := header.Values("Vary")
+	if len(values) == 0 {
+		return
+	}
+	header.Del("Vary")
+	keep := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	want := http.CanonicalHeaderKey(token)
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			field := http.CanonicalHeaderKey(strings.TrimSpace(part))
+			if field == "" || field == want {
+				continue
+			}
+			if _, ok := seen[field]; ok {
+				continue
+			}
+			seen[field] = struct{}{}
+			keep = append(keep, field)
+		}
+	}
+	if len(keep) > 0 {
+		header.Set("Vary", strings.Join(keep, ", "))
+	}
 }

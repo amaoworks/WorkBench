@@ -155,6 +155,9 @@ func TestChartingLibraryProxyCachesBundles(t *testing.T) {
 	if jsGzip.Code != http.StatusOK || jsGzip.Header().Get("Content-Encoding") != "gzip" {
 		t.Fatalf("gzip bundle: %d %s", jsGzip.Code, jsGzip.Header().Get("Content-Encoding"))
 	}
+	if jsGzip.Header().Get("Cache-Control") != hashedChartCacheControl {
+		t.Fatalf("gzip bundle cache: %q", jsGzip.Header().Get("Cache-Control"))
+	}
 	jsIdentity := get(jsPath, "identity", "")
 	if jsIdentity.Code != http.StatusOK || jsIdentity.Header().Get("Content-Encoding") != "" || !bytes.Equal(jsIdentity.Body.Bytes(), []byte("library-v1")) {
 		t.Fatalf("identity bundle: %d %q", jsIdentity.Code, jsIdentity.Body.Bytes())
@@ -187,6 +190,9 @@ func TestChartingLibraryProxyCachesBundles(t *testing.T) {
 	if notModified.Code != http.StatusNotModified || notModified.Body.Len() != 0 || hits != afterMisses {
 		t.Fatalf("conditional bundle: %d body %d hits %d", notModified.Code, notModified.Body.Len(), hits)
 	}
+	if notModified.Header().Get("Cache-Control") != hashedChartCacheControl {
+		t.Fatalf("conditional bundle cache: %q", notModified.Header().Get("Cache-Control"))
+	}
 
 	files[jsPath].body = []byte("library-v2")
 	files[jsPath].etag = `"js-v2"`
@@ -200,6 +206,9 @@ func TestChartingLibraryProxyCachesBundles(t *testing.T) {
 	failed := get(failedPath, "identity", "")
 	if failed.Code != http.StatusBadGateway {
 		t.Fatalf("upstream error status = %d", failed.Code)
+	}
+	if strings.Contains(failed.Header().Get("Cache-Control"), "immutable") {
+		t.Fatalf("failed bundle was marked immutable: %q", failed.Header().Get("Cache-Control"))
 	}
 	failedHits := hits
 	files[failedPath] = &asset{body: []byte("recovered"), status: http.StatusOK, etag: `"recovered"`}
@@ -573,5 +582,67 @@ func TestChartWarmupReportsUpstreamFailure(t *testing.T) {
 	files, err := warmChartLibrary(context.Background(), newTVProxy(upstream.URL, ""))
 	if files != 0 || err == nil || !strings.Contains(err.Error(), "503") {
 		t.Fatalf("warmup: files=%d, error=%v", files, err)
+	}
+}
+
+func TestHashedChartLibraryPath(t *testing.T) {
+	for _, path := range []string{
+		"/charting_library/bundles/library.02a5618b954328b298b8.js",
+		"/charting_library/bundles/8816.a218c8a1ecc38e49a8f8.css",
+		"/charting_library/bundles/zh.24811.137ba51189d8685af984.js",
+	} {
+		if !HashedChartLibraryPath(path) {
+			t.Errorf("%s should be a hashed chart bundle", path)
+		}
+	}
+	for _, path := range []string{
+		"/charting_library/charting_library.esm.js",
+		"/charting_library/sameorigin.html",
+		"/investment/terminal/datafeed.js",
+		"/api/modules/investment/schwab",
+	} {
+		if HashedChartLibraryPath(path) {
+			t.Errorf("%s must not be treated as a hashed chart bundle", path)
+		}
+	}
+}
+
+func TestHashedChartResponseDropsSessionCookiesOnSuccess(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Add("Vary", "Cookie")
+		w.Header().Add("Vary", "Accept-Encoding")
+		w.Header().Set("Cache-Control", `no-cache="Set-Cookie"`)
+		w.Header().Add("Set-Cookie", "workbench_session=secret")
+		w.Header().Add("Set-Cookie", "workbench_csrf=token")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("bundle"))
+	})
+	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handler.ServeHTTP(WrapHashedChartResponse(w), r)
+	})
+
+	success := httptest.NewRecorder()
+	wrapped.ServeHTTP(success, httptest.NewRequest(http.MethodGet, "/charting_library/bundles/library.02a5618b954328b298b8.js", nil))
+	if success.Code != http.StatusOK || success.Body.String() != "bundle" {
+		t.Fatalf("success: %d %q", success.Code, success.Body.String())
+	}
+	if got := success.Header().Get("Cache-Control"); got != hashedChartCacheControl {
+		t.Fatalf("success cache: %q", got)
+	}
+	if success.Header().Get("Set-Cookie") != "" {
+		t.Fatalf("success leaked cookies: %v", success.Header().Values("Set-Cookie"))
+	}
+	if got := success.Header().Get("Vary"); got != "Accept-Encoding" {
+		t.Fatalf("success Vary: %q", got)
+	}
+
+	failing := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusBadGateway)
+	})
+	failed := httptest.NewRecorder()
+	failing.ServeHTTP(WrapHashedChartResponse(failed), httptest.NewRequest(http.MethodGet, "/charting_library/bundles/library.02a5618b954328b298b8.js", nil))
+	if failed.Code != http.StatusBadGateway || failed.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("failure was cached: %d %q", failed.Code, failed.Header().Get("Cache-Control"))
 	}
 }
