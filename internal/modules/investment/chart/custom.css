@@ -1,3 +1,6 @@
+/* 使用工作台统一的「行情时段」选择器，避免与 TradingView 内置 ETH/RTH 按钮重复。 */
+button[data-name="session-menu"] { display: none !important; }
+
 /* 隐藏「详情」面板中最新价下方的买入/卖出（bid/ask）价格。
    K 线图与价格轴已有最新价，这两个小字价格在此重复。
    类名来自 TradingView symbol-details chunk（语义名 + 构建哈希）；

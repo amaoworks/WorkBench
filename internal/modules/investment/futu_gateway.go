@@ -33,14 +33,33 @@ type futuGateway struct {
 	connectMu  sync.Mutex
 	mu         sync.Mutex
 	client     *opendClient
+	instanceID string
 	generation uint64
 	closed     bool
 	refs       map[subKey]*subLease
+	subOps     map[subOperationKey]*subOperation
 	clients    map[*futuWSClient]struct{}
 }
 
 func newFutuGateway(module *Module) *futuGateway {
-	return &futuGateway{module: module, refs: make(map[subKey]*subLease), clients: make(map[*futuWSClient]struct{})}
+	instanceID, err := randomHex(16)
+	if err != nil {
+		instanceID = strconv.FormatInt(time.Now().UnixNano(), 16)
+	}
+	return &futuGateway{module: module, instanceID: instanceID, refs: make(map[subKey]*subLease), subOps: make(map[subOperationKey]*subOperation), clients: make(map[*futuWSClient]struct{})}
+}
+
+func (g *futuGateway) generationTokenLocked() string {
+	return g.instanceID + ":" + strconv.FormatUint(g.generation, 10)
+}
+
+func (g *futuGateway) generationForClient(client *opendClient) (string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.closed || g.client != client {
+		return "", errors.New("富途连接代次已变更")
+	}
+	return g.generationTokenLocked(), nil
 }
 
 func (g *futuGateway) reset() {
@@ -172,7 +191,10 @@ func (g *futuGateway) addWS(ctx context.Context, client *futuWSClient) error {
 		return errors.New("OpenD 连接已断开")
 	}
 	g.clients[client] = struct{}{}
-	client.send <- []byte(`{"stream":{"status":"ready"}}`)
+	ready, _ := json.Marshal(map[string]any{"stream": map[string]any{
+		"status": "ready", "generation": g.generationTokenLocked(),
+	}})
+	client.send <- ready
 	return nil
 }
 

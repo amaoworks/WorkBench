@@ -42,32 +42,55 @@ export async function overnightFetch() {
 
 export const FUTU_WS = PREFIX + "/quote/ws";
 export const NIGHT_RESOLUTIONS = new Set(["1", "5", "15", "30"]);
+export const EQUITY_24H_SESSION = "equity24h";
 
 export function seriesKey(symbol, subsessionId) {
     return `${symbol}\0${subsessionId || "regular"}`;
 }
 
+const ET_CLOCK = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York", hour: "numeric", minute: "numeric", hourCycle: "h23",
+});
+const ET_DATE = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+});
+
+function etParts(formatter, ms) {
+    return Object.fromEntries(formatter.formatToParts(new Date(ms)).map(part => [part.type, part.value]));
+}
+
+export function etMinuteOfDay(ms) {
+    if (!Number.isFinite(Number(ms))) return NaN;
+    const parts = etParts(ET_CLOCK, Number(ms));
+    return Number(parts.hour) * 60 + Number(parts.minute);
+}
+
 export function isOvernightET(ms) {
-    const parts = new Intl.DateTimeFormat("en-US", {
-        timeZone: "America/New_York", hour: "numeric", minute: "numeric", hourCycle: "h23",
-    }).formatToParts(new Date(ms));
-    const hour = Number(parts.find((part) => part.type === "hour")?.value);
-    const minute = Number(parts.find((part) => part.type === "minute")?.value);
-    const minutes = hour * 60 + minute;
+    const minutes = etMinuteOfDay(ms);
     return minutes >= 20 * 60 || minutes < 4 * 60;
+}
+
+export function isSchwabExtendedET(ms) {
+    const minutes = etMinuteOfDay(ms);
+    return minutes >= 4 * 60 && minutes < 20 * 60;
+}
+
+export function equityTradingDateET(ms) {
+    const parts = etParts(ET_DATE, Number(ms) - 4 * 60 * 60 * 1000);
+    return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
 export function usesSchwabTicks(subsessionId, timestamp) {
     const id = subsessionId || "regular";
     if (id === "night") return false;
-    if (id === "24h") return !isOvernightET(timestamp);
+    if (id === EQUITY_24H_SESSION) return isSchwabExtendedET(timestamp);
     return true;
 }
 
 export function usesFutuTicks(subsessionId, timestamp) {
     const id = subsessionId || "regular";
     if (id === "night") return true;
-    if (id === "24h") return isOvernightET(timestamp);
+    if (id === EQUITY_24H_SESSION) return isOvernightET(timestamp);
     return false;
 }
 
@@ -121,7 +144,9 @@ export class FutuStream {
             try { message = JSON.parse(data); } catch { return; }
             if (message.stream?.status === "ready") {
                 this.ready = true;
-                this.events.dispatchEvent(new Event("FUTU_STREAM_READY"));
+                this.events.dispatchEvent(new CustomEvent("FUTU_STREAM_READY", {
+                    detail: { generation: message.stream.generation },
+                }));
             }
             for (const item of (message.data || [])) {
                 const service = item.service?.toUpperCase();

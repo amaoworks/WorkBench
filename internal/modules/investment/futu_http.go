@@ -32,7 +32,7 @@ func (m *Module) getFutuKline(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), futuKlineTimeout)
 	defer cancel()
-	bars, err := m.futu.kline(ctx, symbol, resolution, from, to)
+	bars, err := m.futu.kline(ctx, symbol, resolution, from, to, r.URL.Query().Get("requireHistory") == "true")
 	if err != nil {
 		if errors.Is(err, errOverlayOff) {
 			httpapi.Error(w, http.StatusConflict, "futu_disabled", err.Error())
@@ -97,6 +97,7 @@ func (m *Module) futuCommand(w http.ResponseWriter, r *http.Request) {
 		Command    string `json:"command"`
 		Symbol     string `json:"symbol"`
 		Resolution string `json:"resolution"`
+		Generation string `json:"generation"`
 	}
 	if httpapi.Decode(w, r, &input, 16<<10) != nil {
 		httpapi.Error(w, http.StatusBadRequest, "invalid_request", "无效的订阅命令")
@@ -110,11 +111,13 @@ func (m *Module) futuCommand(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
+	var generation string
+	var applied bool
 	var err error
 	if command == "ADD" {
-		err = m.futu.addSub(ctx, symbol, input.Resolution)
+		generation, applied, err = m.futu.addSub(ctx, symbol, input.Resolution, input.Generation)
 	} else {
-		err = m.futu.releaseSub(ctx, symbol, input.Resolution)
+		generation, applied, err = m.futu.releaseSub(ctx, symbol, input.Resolution, input.Generation)
 	}
 	if err != nil {
 		if errors.Is(err, errOverlayOff) {
@@ -124,5 +127,5 @@ func (m *Module) futuCommand(w http.ResponseWriter, r *http.Request) {
 		httpapi.Error(w, http.StatusServiceUnavailable, "futu_unavailable", err.Error())
 		return
 	}
-	httpapi.Write(w, http.StatusOK, map[string]bool{"success": true})
+	httpapi.Write(w, http.StatusOK, map[string]any{"success": true, "applied": applied, "generation": generation})
 }

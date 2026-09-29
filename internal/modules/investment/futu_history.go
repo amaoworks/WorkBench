@@ -9,10 +9,13 @@ import (
 	investmentsqlc "workbench/internal/modules/investment/sqlc"
 )
 
-func (g *futuGateway) kline(ctx context.Context, symbol, resolution string, fromMs, toMs int64) ([]futuBar, error) {
+func (g *futuGateway) kline(ctx context.Context, symbol, resolution string, fromMs, toMs int64, requireHistory bool) ([]futuBar, error) {
 	klType, subType, ok := futuKLTypes(resolution)
 	if !ok {
 		return []futuBar{}, nil
+	}
+	if requireHistory && fromMs <= 0 {
+		return nil, errors.New("全天历史行情缺少有效起始时间")
 	}
 	client, err := g.ensureOverlay(ctx)
 	if err != nil {
@@ -22,10 +25,15 @@ func (g *futuGateway) kline(ctx context.Context, symbol, resolution string, from
 		return nil, err
 	}
 	if err := g.hold(ctx, client, symbol, subType, true); err != nil {
+		_ = g.release(ctx, client, symbol, subTypeBasic)
 		return nil, err
 	}
-	g.release(ctx, client, symbol, subType)
-	g.release(ctx, client, symbol, subTypeBasic)
+	if err := g.release(ctx, client, symbol, subType); err != nil {
+		return nil, err
+	}
+	if err := g.release(ctx, client, symbol, subTypeBasic); err != nil {
+		return nil, err
+	}
 
 	bars, err := client.getKL(ctx, symbol, klType, 1000)
 	if err != nil {
@@ -45,8 +53,17 @@ func (g *futuGateway) kline(ctx context.Context, symbol, resolution string, from
 	if err := g.storeBars(ctx, symbol, resolution, bars); err != nil {
 		return nil, err
 	}
-	if err := g.maybeHistory(ctx, client, symbol, resolution, klType, fromMs); err != nil {
-		g.module.logger.Warn("富途牛牛history fallback skipped", "errorType", fmt.Sprintf("%T", err))
+	var historyErr error
+	if requireHistory {
+		historyErr = g.fetchHistoryRange(ctx, client, symbol, resolution, klType, fromMs, toMs)
+	} else {
+		historyErr = g.maybeHistory(ctx, client, symbol, resolution, klType, fromMs)
+	}
+	if historyErr != nil {
+		g.module.logger.Warn("富途牛牛history fallback skipped", "errorType", fmt.Sprintf("%T", historyErr))
+		if requireHistory {
+			return nil, fmt.Errorf("富途历史 K 线不完整: %w", historyErr)
+		}
 	}
 	return g.loadBars(ctx, symbol, resolution, fromMs, toMs)
 }
@@ -59,6 +76,24 @@ func (g *futuGateway) maybeHistory(ctx context.Context, client *opendClient, sym
 	if err == nil && oldest <= fromMs {
 		return nil
 	}
+	begin := time.UnixMilli(fromMs).In(nyZone).Format("2006-01-02")
+	end := time.Now().In(nyZone).Format("2006-01-02")
+	return g.fetchHistoryDates(ctx, client, symbol, resolution, klType, begin, end)
+}
+
+// Strict 24H reads request the entire exact date span every time. An old cached
+// bar proves only that one timestamp exists, not that the requested range has
+// no holes while OpenD was disconnected. Empty successful history is valid.
+func (g *futuGateway) fetchHistoryRange(ctx context.Context, client *opendClient, symbol, resolution string, klType int, fromMs, toMs int64) error {
+	if fromMs <= 0 || toMs <= fromMs {
+		return errors.New("全天历史行情范围无效")
+	}
+	begin := time.UnixMilli(fromMs).In(nyZone).Format("2006-01-02")
+	end := time.UnixMilli(toMs - 1).In(nyZone).Format("2006-01-02")
+	return g.fetchHistoryDates(ctx, client, symbol, resolution, klType, begin, end)
+}
+
+func (g *futuGateway) fetchHistoryDates(ctx context.Context, client *opendClient, symbol, resolution string, klType int, begin, end string) error {
 	remain, used, err := client.historyQuota(ctx)
 	if err != nil {
 		return err
@@ -68,8 +103,6 @@ func (g *futuGateway) maybeHistory(ctx context.Context, client *opendClient, sym
 			return errors.New("历史 K 线额度不足")
 		}
 	}
-	begin := time.UnixMilli(fromMs).In(nyZone).Format("2006-01-02")
-	end := time.Now().In(nyZone).Format("2006-01-02")
 	hist, err := client.requestHistoryKL(ctx, symbol, klType, begin, end)
 	if err != nil {
 		return err

@@ -1,4 +1,4 @@
-import { seriesKey, usesSchwabTicks } from './futu.js';
+import { EQUITY_24H_SESSION, equityTradingDateET, seriesKey, usesSchwabTicks } from './futu.js';
 import { getBucketTime } from './datafeed-bars.js';
 
 // Convert provider fields without changing their fallback or missing-value rules.
@@ -118,8 +118,64 @@ export function mapSchwabQuote(service, snapshot, timestamp) {
     return quote;
 }
 
+const SCHWAB_TRADE_FIELDS = {
+    LEVELONE_EQUITIES: { volume: ['8'] },
+    LEVELONE_OPTIONS: { volume: ['8'] },
+    LEVELONE_FUTURES: { volume: ['8'] },
+    LEVELONE_FUTURES_OPTIONS: { volume: ['8'] },
+    LEVELONE_FOREX: { volume: ['6'] },
+};
+
+function numericField(source, fields) {
+    for (const field of fields) {
+        if (Object.hasOwn(source, field) && source[field] !== null && source[field] !== '') {
+            const value = Number(source[field]);
+            if (Number.isFinite(value)) return value;
+        }
+    }
+    return undefined;
+}
+
+// Streamer packets are sparse patches. Compare the final price that the chart
+// actually plots after merging, so a lower-priority fallback field cannot
+// manufacture a trade when the provider's primary field remains unchanged.
+function plottedPrice(service, snapshot) {
+    const quote = mapSchwabQuote(service, snapshot, 0);
+    const price = quote?.rtc ?? quote?.lp;
+    return Number.isFinite(price) ? price : undefined;
+}
+
+export function isSchwabTradeUpdate(service, incoming, previousSnapshot = {}) {
+    const fields = SCHWAB_TRADE_FIELDS[service];
+    if (!fields) return false;
+    const cleanedPatch = Object.fromEntries(Object.entries(incoming).filter(([, value]) => value !== null && value !== undefined));
+    const nextSnapshot = { ...previousSnapshot, ...cleanedPatch };
+    const nextPrice = plottedPrice(service, nextSnapshot);
+    const previousPrice = plottedPrice(service, previousSnapshot);
+    if (nextPrice !== undefined && previousPrice !== undefined && nextPrice !== previousPrice) return true;
+    const nextVolume = numericField(incoming, fields.volume);
+    const previousVolume = numericField(previousSnapshot, fields.volume);
+    return nextVolume !== undefined && previousVolume !== undefined && nextVolume > previousVolume;
+}
+
+export function seedSchwabVolumeBaseline(listeners, cumulativeVolumes, cumulativeVolumeDates, symbolKey, volume, timestamp) {
+    if (!Number.isFinite(volume)) return;
+    for (const { symbol, resolution, subsessionId } of listeners.values()) {
+        if (symbol !== symbolKey || !usesSchwabTicks(subsessionId, timestamp)) continue;
+        const key = seriesKey(symbolKey, subsessionId);
+        const volumeKey = `${key}\0${resolution}`;
+        const volumeDate = subsessionId === EQUITY_24H_SESSION ? equityTradingDateET(timestamp) : '';
+        const priorDate = cumulativeVolumeDates.get(volumeKey);
+        const priorVolume = cumulativeVolumes.get(volumeKey);
+        if (!cumulativeVolumes.has(volumeKey) || volume < priorVolume || (subsessionId === EQUITY_24H_SESSION && priorDate !== volumeDate)) {
+            cumulativeVolumes.set(volumeKey, volume);
+            cumulativeVolumeDates.set(volumeKey, volumeDate);
+        }
+    }
+}
+
 // Each series is updated once before cloned bars are delivered to its listeners.
-export function updateSchwabBars(listeners, latestBars, cumulativeVolumes, symbolKey, quote, timestamp) {
+export function updateSchwabBars(listeners, latestBars, cumulativeVolumes, symbolKey, quote, timestamp, cumulativeVolumeDates = new Map()) {
     const VOLUME = quote.volume;
     const LAST_PRICE = quote.rtc ?? quote.lp;
     if (!Number.isFinite(LAST_PRICE) || LAST_PRICE <= 0 || !Number.isFinite(VOLUME)) return;
@@ -134,11 +190,18 @@ export function updateSchwabBars(listeners, latestBars, cumulativeVolumes, symbo
             onTick?.({ ...seriesUpdated.get(resolution) });
             continue;
         }
-        const prevVolume = cumulativeVolumes.get(key) ?? VOLUME;
-        const volumeDelta = Math.max(0, VOLUME - prevVolume);
-        cumulativeVolumes.set(key, VOLUME);
         const lastBar = symbolCache.get(resolution);
         if (!lastBar) continue;
+        const volumeKey = `${key}\0${resolution}`;
+        const volumeDate = subsessionId === EQUITY_24H_SESSION ? equityTradingDateET(timestamp) : '';
+        const previousDate = cumulativeVolumeDates.get(volumeKey);
+        const previousVolume = cumulativeVolumes.get(volumeKey);
+        const prevVolume = subsessionId === EQUITY_24H_SESSION && previousDate !== volumeDate
+            ? VOLUME
+            : (previousVolume ?? VOLUME);
+        const volumeDelta = Math.max(0, VOLUME - prevVolume);
+        cumulativeVolumes.set(volumeKey, VOLUME);
+        cumulativeVolumeDates.set(volumeKey, volumeDate);
         const bucketTime = getBucketTime(resolution, timestamp);
         if (!Number.isFinite(bucketTime) || bucketTime < lastBar.time) continue;
         const isNewBucket = bucketTime > lastBar.time;

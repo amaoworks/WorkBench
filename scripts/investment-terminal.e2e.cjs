@@ -1,5 +1,5 @@
-// Real TradingView library + repository terminal code. Every Schwab request is
-// intercepted with fictional data; no workspace credentials or trades are used.
+// Real TradingView library + repository terminal code. All Schwab/Futu requests
+// are intercepted with fictional data; no workspace credentials or trades are used.
 const assert = require("node:assert/strict");
 const { readFile, writeFile, mkdir, mkdtemp, rm } = require("node:fs/promises");
 const { spawn } = require("node:child_process");
@@ -10,6 +10,9 @@ const { chromium, webkit, devices } = require(process.env.PLAYWRIGHT_MODULE || "
 
 const useWebKit = process.argv.includes("--webkit");
 const useApp = process.argv.includes("--app");
+const testNight = process.argv.includes("--night");
+const test24h = process.argv.includes("--24h") || testNight;
+const testSessions = testNight || test24h;
 const mobile = useApp || useWebKit || process.argv.includes("--mobile");
 const origin = useApp ? "http://127.0.0.1:18140" : mobile ? "https://workbench.test" : "http://workbench.test";
 const libraryOrigin = "https://trading-terminal.tradingview-widget.com";
@@ -29,6 +32,44 @@ const history = [
   { ...order, orderId: 40, status: "FILLED", filledQuantity: 2 },
   { ...order, orderId: 41, status: "CANCELED" },
 ];
+let overnightEnabled = testSessions;
+let fullDayFixtures = false;
+
+const etFixtureClock = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York", weekday: "short", hour: "numeric", minute: "numeric", hourCycle: "h23",
+});
+function minuteParts(time) {
+  const parts = Object.fromEntries(etFixtureClock.formatToParts(new Date(time)).map(part => [part.type, part.value]));
+  return { weekday: parts.weekday, minute: Number(parts.hour) * 60 + Number(parts.minute) };
+}
+function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries = false) {
+  const step = Math.max(1, Number(resolution) || 1) * 60_000;
+  const lookback = Math.min(5 * 86_400_000, step * 2500);
+  const start = Math.max(Number(fromMs) || 0, toMs - lookback);
+  const first = Math.ceil(start / step) * step;
+  const candles = [];
+  for (let time = first; time < toMs && candles.length < 3000; time += step) {
+    const { weekday, minute } = minuteParts(time);
+    const weekdaySession = ["Mon", "Tue", "Wed", "Thu", "Fri"].includes(weekday);
+    let include = false, poison = false;
+    if (source === "schwab") {
+      include = weekdaySession && minute >= 4 * 60 && minute < 20 * 60;
+      poison = poisonBoundaries && weekdaySession && (minute === 3 * 60 + 55 || minute === 20 * 60);
+    } else {
+      const nightWindow = minute >= 20 * 60 || minute < 4 * 60;
+      const nightWeekday = minute >= 20 * 60
+        ? ["Sun", "Mon", "Tue", "Wed", "Thu"].includes(weekday)
+        : weekdaySession;
+      include = nightWindow && nightWeekday;
+      poison = poisonBoundaries && weekdaySession && (minute === 4 * 60 || minute === 19 * 60 + 55);
+    }
+    if (!include && !poison) continue;
+    const close = poison ? (source === "schwab" ? 990 : 880) : (source === "schwab" ? 100 : 200);
+    const candle = { open: close, high: close + 0.5, low: close - 0.5, close, volume: 25 };
+    candles.push(source === "schwab" ? { datetime: time, ...candle } : { time, ...candle });
+  }
+  return candles;
+}
 
 (async () => {
   await mkdir(cache, { recursive: true });
@@ -69,6 +110,9 @@ const history = [
     await page.routeWebSocket("**/trader/ws", socket => {
       sockets.push(socket);
       socket.send(JSON.stringify({ stream: { status: "ready" } }));
+    });
+    if (testSessions) await page.routeWebSocket("**/futu/quote/ws", socket => {
+      socket.send(JSON.stringify({ stream: { status: "ready", generation: "fixture-futu-1" } }));
     });
     await page.route(`${origin}/**`, async route => {
       const url = new URL(route.request().url()), path = url.pathname;
@@ -119,6 +163,21 @@ const history = [
             body = body.replace("broker = new Broker(host); return broker;", "window.__host = host; window.__orderUpdates = []; const update = host.orderUpdate.bind(host); host.orderUpdate = order => { window.__orderUpdates.push(order); update(order); }; broker = new Broker(host); window.__broker = broker; return broker;");
             assert(body.includes("unbindTheme = bindTheme(widget, theme);"));
             body = body.replace("unbindTheme = bindTheme(widget, theme);", "unbindTheme = bindTheme(widget, theme); window.__widget = widget;");
+            const pagehide = "    window.addEventListener('pagehide', () => {";
+            assert(body.includes(pagehide));
+            body = body.replace(pagehide, `
+              window.__datafeed = datafeed;
+              window.__barResults = [];
+              const getBars = datafeed.getBars.bind(datafeed);
+              datafeed.getBars = (info, resolution, params, onResult, onError) => getBars(info, resolution, params, (bars, metadata) => {
+                window.__barResults.push({
+                  symbol: info.name, session: info.subsession_id || 'regular', resolution,
+                  count: bars.length, times: bars.map(bar => bar.time), hasPoison: bars.some(bar => bar.close >= 800), noData: metadata?.noData === true,
+                });
+                onResult(bars, metadata);
+              }, onError);
+              ${pagehide}
+            `);
           }
           return await route.fulfill({ contentType: file.endsWith(".html") ? "text/html" : file.endsWith(".css") ? "text/css" : "text/javascript", body,
             // Exercise the nested iframe path without allowing blob navigation.
@@ -154,14 +213,29 @@ const history = [
         }
         if (path === "/api/modules/investment/overnight") {
           assert.equal(route.request().method(), "GET");
-          return await route.fulfill({ json: { enabled: false, provider: "futu", providerEnabled: false } });
+          return await route.fulfill({ json: { enabled: overnightEnabled, provider: "futu", providerEnabled: overnightEnabled } });
+        }
+        if (testSessions && path.startsWith("/api/modules/investment/futu/")) {
+          if (path.endsWith('/kline')) {
+            const from = Number(url.searchParams.get('from')) * 1000;
+            const to = Number(url.searchParams.get('to')) * 1000;
+            const resolution = url.searchParams.get('resolution') || '5';
+            const strict = url.searchParams.get('requireHistory') === 'true';
+            const candles = minuteHistoryFixture(from, to, resolution, 'futu', strict && fullDayFixtures);
+            calls.push({ path, method: route.request().method(), search: url.search, source: 'futu', barCount: candles.length });
+            return await route.fulfill({ json: { candles } });
+          }
+          calls.push({ path, method: route.request().method(), search: url.search, source: 'futu' });
+          const command = route.request().postDataJSON();
+          assert.equal(command.generation, 'fixture-futu-1', 'Futu commands must be bound to the READY generation');
+          return await route.fulfill({ json: { success: true, applied: true, generation: 'fixture-futu-1' } });
         }
         if (path === "/api/modules/investment/futu") {
           assert.equal(route.request().method(), "GET");
           return await route.fulfill({ json: { host: "127.0.0.1", port: 11111, enabled: false, allowNonLocal: false, connected: false, qotLogined: false, lastError: "" } });
         }
         if (useApp && !path.startsWith("/api/modules/investment/")) return await route.continue();
-        calls.push({ path, method: route.request().method() });
+        calls.push({ path, method: route.request().method(), search: url.search });
         assert(path.startsWith("/api/modules/investment/schwab/"), "unexpected API route");
         if (path.endsWith("/ws/command")) {
           const subscription = route.request().postDataJSON();
@@ -180,11 +254,20 @@ const history = [
         if (path.endsWith("/transactions")) return await route.fulfill({ json: [] });
         if (path.endsWith("/instruments")) return await route.fulfill({ json: { instruments: [{ symbol: "AAPL", description: "Apple", assetType: "EQUITY", exchange: "NASDAQ" }] } });
         if (path.endsWith("/pricehistory")) {
-          const candles = [], start = Number(url.searchParams.get("startDate")), end = Number(url.searchParams.get("endDate"));
+          const start = Number(url.searchParams.get("startDate")), end = Number(url.searchParams.get("endDate"));
+          if (testSessions && url.searchParams.get('frequencyType') === 'minute') {
+            const candles = minuteHistoryFixture(start, end, url.searchParams.get('frequency'), 'schwab', fullDayFixtures);
+            calls.at(-1).source = 'schwab';
+            calls.at(-1).barCount = candles.length;
+            return await route.fulfill({ json: { candles } });
+          }
+          const candles = [];
           for (let time = Math.floor(start / 86400000) * 86400000; time < end && candles.length < 2000; time += 86400000) {
             if ([0, 6].includes(new Date(time).getUTCDay())) continue;
             candles.push({ datetime: time, open: 100, high: 105, low: 98, close: 102, volume: 1000 });
           }
+          calls.at(-1).source = 'schwab';
+          calls.at(-1).barCount = candles.length;
           return await route.fulfill({ json: { candles } });
         }
         throw new Error(`unexpected fixture API: ${path}`);
@@ -205,6 +288,166 @@ const history = [
     const chart = terminal.childFrames()[0];
     assert(chart, "TradingView chart iframe missing");
     assert.equal(new URL(chart.url()).pathname, "/charting_library/sameorigin.html", "chart must use a real same-origin document");
+    if (testSessions) {
+      const sessionButton = label => chart.getByRole('button', { name: new RegExp(`^行情时段：${label}。`) });
+      const chooseSession = async (currentLabel, itemTitle, nextLabel) => {
+        await sessionButton(currentLabel).click();
+        await chart.getByText(itemTitle, { exact: true }).click();
+        await sessionButton(nextLabel).waitFor({ state: 'visible' });
+      };
+      await sessionButton('常规').waitFor({ state: 'visible' }).catch(async error => {
+        console.error({ errors, buttons: await chart.getByRole('button').evaluateAll(buttons => buttons.map(button => ({ text: button.textContent, label: button.getAttribute('aria-label'), title: button.getAttribute('title') }))) });
+        throw error;
+      });
+      await sessionButton('常规').click();
+      for (const item of ['✓ 常规 (RTH)', '扩展 (ETH)', '夜盘 (Night)', '全天 (24H)']) {
+        await chart.getByText(item, { exact: true }).waitFor({ state: 'visible' });
+      }
+      assert.equal(await chart.getByText(/夜盘周期说明/).count(), 0, 'the menu must not add a Night explanation item');
+      assert.equal(await chart.getByText(/24H说明/).count(), 0, 'the menu must not add a 24H explanation item');
+      await page.keyboard.press('Escape');
+      if (testNight) {
+        await sessionButton('常规').click();
+        await chart.getByText('夜盘 (Night)', { exact: true }).click();
+        await sessionButton('夜盘').waitFor({ state: 'visible' });
+        await terminal.waitForFunction(() => window.__widget.activeChart().resolution() === '5');
+        await terminal.locator('#session-toast').filter({ hasText: '已切换到 5 分钟' }).waitFor({ state: 'visible' });
+        await terminal.waitForFunction(() => window.__barResults.some(result => result.session === 'night' && result.count > 0));
+        assert(calls.some(call => call.path.endsWith('/futu/kline') && call.barCount > 0 && !call.search.includes('requireHistory=true')), 'Night must load non-empty fictional Futu bars');
+      }
+      if (mobile) {
+        const currentLabel = testNight ? '夜盘' : '常规';
+        const bounds = await sessionButton(currentLabel).boundingBox();
+        await page.screenshot({ path: join(tmpdir(), 'workbench-investment-session-mobile.png'), animations: 'disabled', scale: 'css' });
+        assert(bounds && bounds.x >= 0 && bounds.x + bounds.width <= page.viewportSize().width, `compact session button must fit the mobile header: ${JSON.stringify({ bounds, viewport: page.viewportSize() })}`);
+        assert(await terminal.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'terminal must not gain horizontal overflow');
+      }
+
+      if (testNight) {
+        const schwabBeforeNight = calls.filter(call => call.path.endsWith('/pricehistory')).length;
+        await page.waitForTimeout(500);
+        assert.equal(calls.filter(call => call.path.endsWith('/pricehistory')).length, schwabBeforeNight, 'Night must not request Schwab K lines');
+        await terminal.evaluate(() => { void window.__widget.activeChart().setResolution('10'); });
+        await terminal.locator('#session-toast').filter({ hasText: '已切换到 5 分钟' }).waitFor({ state: 'visible' });
+        await terminal.waitForFunction(() => window.__widget.activeChart().resolution() === '5');
+        await chooseSession('夜盘', '扩展 (ETH)', '扩展');
+        const nativeSession = chart.locator('button[data-name="session-menu"]');
+        await nativeSession.waitFor({ state: 'attached' });
+        assert.equal(await nativeSession.evaluate(el => getComputedStyle(el).display), 'none', 'do not expose two conflicting session controls');
+        await terminal.waitForFunction(() => window.__barResults.some(result => result.session === 'extended' && result.count > 0));
+        assert(calls.some(call => call.path.endsWith('/pricehistory') && call.search.includes('needExtendedHoursData=true')), 'ETH must return to Schwab history');
+        await chooseSession('扩展', '常规 (RTH)', '常规');
+        await terminal.waitForFunction(() => window.__barResults.some(result => result.session === 'regular' && result.count > 0), null, { timeout: 30000 });
+      }
+      const waitForSessionBars = async (session, resolution = '5') => {
+        await terminal.waitForFunction(({ session, resolution }) => window.__barResults.some(result => result.session === session && result.resolution === resolution && result.count > 0), { session, resolution });
+      };
+      const etClock = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: 'numeric', hourCycle: 'h23' });
+      if (test24h) {
+        fullDayFixtures = true;
+        const beforeFullDay = calls.length;
+        const currentLabel = '常规';
+        await chooseSession(currentLabel, '全天 (24H)', '全天');
+        await terminal.waitForFunction(() => window.__widget.activeChart().resolution() === '5');
+        await waitForSessionBars('equity24h', '5');
+        await terminal.waitForFunction(() => window.__widget.activeChart().dataReady());
+        const fullDayBars = await terminal.evaluate(() => window.__barResults.findLast(result => result.session === 'equity24h' && result.resolution === '5' && result.count > 0));
+        assert(fullDayBars && fullDayBars.count > 20, `TradingView must receive non-empty merged 24H bars: ${JSON.stringify(fullDayBars)}`);
+        assert.equal(fullDayBars.hasPoison, false, 'out-of-session Schwab/Futu boundary fixtures must be filtered');
+        const etMinutes = fullDayBars.times.map(time => {
+          const parts = Object.fromEntries(etClock.formatToParts(new Date(time)).map(part => [part.type, part.value]));
+          return Number(parts.hour) * 60 + Number(parts.minute);
+        });
+        assert(etMinutes.some(minute => minute === 4 * 60), '24H merged data must contain the 04:00 ET Schwab boundary');
+        assert(etMinutes.some(minute => minute === 20 * 60), '24H merged data must contain the 20:00 ET Futu boundary');
+        assert(etMinutes.some(minute => minute >= 4 * 60 && minute < 20 * 60), '24H data must include Schwab daytime candles');
+        assert(etMinutes.some(minute => minute >= 20 * 60 || minute < 4 * 60), '24H data must include Futu overnight candles');
+        const visible = await terminal.evaluate(() => window.__widget.activeChart().getVisibleRange());
+        assert(fullDayBars.times.some(time => time / 1000 >= visible.from && time / 1000 <= visible.to), 'non-empty merged bars must intersect the actual TradingView visible range');
+        const dualSourceCalls = calls.slice(beforeFullDay);
+        assert(dualSourceCalls.some(call => call.source === 'schwab' && call.barCount > 0 && call.search.includes('needExtendedHoursData=true')), '24H must fetch non-empty extended Schwab history');
+        assert(dualSourceCalls.some(call => call.source === 'futu' && call.path.endsWith('/kline') && call.barCount > 0 && call.search.includes('requireHistory=true')), '24H must fetch non-empty strict Futu history');
+
+        for (const resolution of ['1', '5', '15', '30']) {
+          await terminal.evaluate(value => window.__widget.activeChart().setResolution(value), resolution);
+          await terminal.waitForFunction(value => window.__widget.activeChart().resolution() === value, resolution);
+          await waitForSessionBars('equity24h', resolution);
+        }
+        await terminal.evaluate(() => window.__widget.activeChart().setResolution('10'));
+        await terminal.locator('#session-toast').filter({ hasText: '全天行情仅支持 1、5、15、30 分钟，已切换到 5 分钟' }).waitFor({ state: 'visible' });
+        await terminal.waitForFunction(() => window.__widget.activeChart().resolution() === '5');
+
+        await chooseSession('全天', '常规 (RTH)', '常规');
+        await waitForSessionBars('regular', '5');
+        const cachedRegularBars = await terminal.evaluate(() => window.__barResults.findLast(result => result.session === 'regular' && result.resolution === '5' && result.count > 0));
+        assert(cachedRegularBars, 'cached 24H → RTH switch must restore regular-session bars');
+        await chooseSession('常规', '全天 (24H)', '全天');
+        await waitForSessionBars('equity24h', '5');
+        const cached24Bars = await terminal.evaluate(() => window.__barResults.findLast(result => result.session === 'equity24h' && result.resolution === '5' && result.count > 0));
+        assert(cached24Bars && cached24Bars.count > 20, 'cached RTH → 24H switch must restore the full-day session and its merged bars without rebuilding the chart');
+
+        overnightEnabled = false;
+        const futuBeforeDisabledSymbol = calls.filter(call => call.path.endsWith('/futu/kline')).length;
+        await terminal.evaluate(() => { window.__datafeed.overlayCachedAt = 0; window.__widget.setSymbol('MSFT', '5'); });
+        await terminal.waitForFunction(() => window.__widget.activeChart().symbol() === 'MSFT' && window.__barResults.some(result => result.symbol === 'MSFT' && result.session === 'regular'));
+        await sessionButton('常规').click();
+        assert.equal(await chart.getByText('夜盘 (Night)', { exact: true }).count(), 0, 'disabled overnight coverage must hide Night');
+        assert.equal(await chart.getByText('全天 (24H)', { exact: true }).count(), 0, 'disabled overnight coverage must hide 24H');
+        await page.keyboard.press('Escape');
+        assert.equal(calls.filter(call => call.path.endsWith('/futu/kline')).length, futuBeforeDisabledSymbol, 'disabled full-day coverage must not query Futu or degrade to Schwab-only bars');
+
+        overnightEnabled = true;
+        await terminal.evaluate(() => { window.__datafeed.overlayCachedAt = 0; window.__widget.setSymbol('AAPL', '5'); });
+        await terminal.waitForFunction(() => window.__widget.activeChart().symbol() === 'AAPL' && window.__barResults.some(result => result.symbol === 'AAPL'));
+        await chooseSession('常规', '全天 (24H)', '全天');
+        await waitForSessionBars('equity24h', '5');
+        await terminal.evaluate(() => window.__widget.setSymbol('AAPL 270115C00200000', '5'));
+        await terminal.waitForFunction(() => window.__widget.activeChart().symbol().includes('AAPL 270115C00200000'));
+        await sessionButton('常规').waitFor({ state: 'visible' });
+        await sessionButton('常规').click();
+        assert.equal(await chart.getByText('全天 (24H)', { exact: true }).count(), 0, 'non-equity symbols must not offer 24H');
+        assert.equal(await chart.getByText('夜盘 (Night)', { exact: true }).count(), 0, 'non-equity symbols must not offer Night');
+        await page.keyboard.press('Escape');
+      }
+      assert.equal(await terminal.locator('#session-toolbar, #session-select, #night-interval-hint').count(), 0, 'no standalone session row may remain');
+      assert(await terminal.evaluate(() => {
+        const bounds = document.getElementById('tv_chart_container').getBoundingClientRect();
+        return bounds.top === 0 && Math.abs(bounds.height - document.documentElement.clientHeight) < 2;
+      }), 'the chart must recover the full terminal height');
+      await terminal.evaluate(() => { window.__originalWidget = window.__widget; });
+      for (const theme of ['dark', 'light']) {
+        await page.evaluate(value => {
+          const frame = document.querySelector('iframe[title="TradingView 投资终端"], iframe[name="investment-terminal"]');
+          (frame?.contentWindow || window).postMessage({ type: 'workbench.theme', theme: value }, location.origin);
+        }, theme);
+        await terminal.waitForFunction(value => window.__widget.getTheme() === value && document.documentElement.style.colorScheme === value, theme);
+        await sessionButton('常规').click();
+        await chart.getByText('✓ 常规 (RTH)', { exact: true }).waitFor({ state: 'visible' });
+        await page.keyboard.press('Escape');
+      }
+      if (mobile) {
+        for (const viewport of [{ width: 320, height: 568 }, { width: 844, height: 390 }, { width: 390, height: 844 }]) {
+          await page.setViewportSize(viewport);
+          await sessionButton('常规').filter({ hasText: viewport.width <= 600 ? /^常规$/ : /^行情：常规$/ }).waitFor({ state: 'visible' });
+          await sessionButton('常规').click();
+          await chart.getByText('✓ 常规 (RTH)', { exact: true }).waitFor({ state: 'visible' });
+          const bounds = await sessionButton('常规').boundingBox();
+          assert(bounds && bounds.x >= 0 && bounds.x + bounds.width <= viewport.width, `session menu must stay reachable at ${viewport.width}px`);
+          assert(await terminal.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'resizing must not add page overflow');
+          await page.screenshot({ path: join(tmpdir(), `workbench-investment-session-${useWebKit ? 'webkit-' : ''}${viewport.width}.png`), animations: 'disabled', scale: 'css' });
+          await page.keyboard.press('Escape');
+        }
+      } else {
+        await sessionButton('常规').click();
+        await page.screenshot({ path: join(tmpdir(), 'workbench-investment-session-desktop.png'), animations: 'disabled', scale: 'css' });
+        await page.keyboard.press('Escape');
+      }
+      assert.equal(await terminal.evaluate(() => window.__widget === window.__originalWidget), true, 'theme and responsive menu changes must preserve the chart');
+      assert.equal(await chart.getByText(/夜盘周期说明|全天行情说明|24H说明/).count(), 0, 'the session menu must have no extra explanation items');
+      assert.deepEqual(errors, []);
+      console.log(`PASS (${useWebKit ? 'WebKit' : 'Chromium'}, ${mobile ? 'mobile' : 'desktop'}): four-option header menu, ${testNight ? 'Night Futu-only bars and ' : ''}non-empty ET-filtered 24H Schwab/Futu merge, interval limits, cached session switches, coverage/symbol gating, full chart height, themes and responsive sizing.`);
+      return;
+    }
     if (mobile) {
       await terminal.waitForFunction(() => window.__widget.activeChart().dataReady());
       assert(calls.some(call => call.path.endsWith("/pricehistory")), "mobile chart must load historical bars");
@@ -221,8 +464,8 @@ const history = [
           const bounds = document.querySelector("#tv_chart_container iframe")?.getBoundingClientRect();
           // Mobile WebKit can retain browser chrome space in the CSS layout
           // viewport while innerHeight already reports the expanded viewport.
-          const root = document.documentElement;
-          return bounds && bounds.height > 200 && Math.abs(bounds.width - expectedWidth) < 2 && Math.abs(bounds.height - root.clientHeight) < 2;
+          const container = document.getElementById('tv_chart_container');
+          return bounds && bounds.height > 200 && Math.abs(bounds.width - expectedWidth) < 2 && Math.abs(bounds.height - container.clientHeight) < 2;
         }, viewport.width);
         const bounds = await iframe.boundingBox();
         await page.touchscreen.tap(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);

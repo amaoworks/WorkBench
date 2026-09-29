@@ -3,6 +3,7 @@ package investment
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"time"
 	_ "time/tzdata"
@@ -238,10 +239,14 @@ func (c *opendClient) historyQuota(ctx context.Context) (remain int, usedCodes m
 
 func (c *opendClient) requestHistoryKL(ctx context.Context, code string, klType int, begin, end string) ([]futuBar, error) {
 	var (
-		all []futuBar
-		key any
+		all      []futuBar
+		key      any
+		seenKeys = make(map[string]struct{})
 	)
-	for {
+	for page := 0; ; page++ {
+		if page >= 10_000 {
+			return nil, errors.New("Futu 历史 K 线分页未完整结束")
+		}
 		c2s := map[string]any{
 			"rehabType": rehabNone, "klType": klType,
 			"security":  map[string]any{"market": marketUS, "code": code},
@@ -254,11 +259,24 @@ func (c *opendClient) requestHistoryKL(ctx context.Context, code string, klType 
 		if err != nil {
 			return nil, err
 		}
-		all = append(all, parseKLList(s2c["klList"])...)
+		list, ok := s2c["klList"].([]any)
+		if !ok {
+			return nil, errors.New("Futu 历史 K 线分页格式无效")
+		}
+		all = append(all, parseKLList(list)...)
 		next, ok := s2c["nextReqKey"]
 		if !ok || next == nil || next == "" {
 			break
 		}
+		keyBytes, err := json.Marshal(next)
+		if err != nil {
+			return nil, errors.New("Futu 历史 K 线分页游标无效")
+		}
+		keyString := string(keyBytes)
+		if _, seen := seenKeys[keyString]; seen {
+			return nil, errors.New("Futu 历史 K 线分页游标未前进")
+		}
+		seenKeys[keyString] = struct{}{}
 		key = next
 	}
 	return all, nil

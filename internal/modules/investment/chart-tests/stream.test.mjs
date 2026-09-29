@@ -40,7 +40,10 @@ test('bar subscriptions route by symbol and resolution, and stop after unsubscri
     const now = Date.now(), bars = [];
     feed.latestBars.set(seriesKey('AAPL', 'regular'), new Map([['1', { time: Math.floor(now / 60000) * 60000, open: 100, high: 100, low: 100, close: 100, volume: 1 }]]));
     feed.subscribeBars({ name: 'AAPL' }, '1', bar => bars.push(bar), 'some-random-guid');
-    const update = () => events.dispatchEvent(new CustomEvent('LEVELONE_ANY', { detail: { service: 'LEVELONE_EQUITIES', timestamp: now, content: [{ key: 'AAPL', '3': 110, '8': 100 }] } }));
+    const update = () => {
+        events.dispatchEvent(new CustomEvent('LEVELONE_ANY', { detail: { service: 'LEVELONE_EQUITIES', timestamp: now, content: [{ key: 'AAPL', '3': 100, '8': 100 }] } })); // snapshot
+        events.dispatchEvent(new CustomEvent('LEVELONE_ANY', { detail: { service: 'LEVELONE_EQUITIES', timestamp: now, content: [{ key: 'AAPL', '3': 110, '8': 100 }] } })); // trade
+    };
     update();
     assert.equal(bars.length, 1);
     assert.equal(bars[0].close, 110);

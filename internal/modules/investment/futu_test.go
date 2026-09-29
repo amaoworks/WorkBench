@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -159,6 +160,370 @@ func TestFutuKlineUsesCurrentWindowAndHistoryFallback(t *testing.T) {
 	if ten.Code != 200 || !strings.Contains(ten.Body.String(), `"candles":[]`) {
 		t.Fatalf("resolution 10: %s", ten.Body.String())
 	}
+}
+
+func TestFutuCommandLeaseGenerationChangesAfterGatewayReset(t *testing.T) {
+	fake := startFakeOpenD(t)
+	module := openInvestmentModule(t)
+	module.deps.FutuOpenDAddress = fake.addr()
+	provider := httptest.NewRecorder()
+	module.saveFutu(provider, httptest.NewRequest(http.MethodPut, "/api/modules/investment/futu", strings.NewReader(`{"enabled":true}`)))
+	if provider.Code != http.StatusOK {
+		t.Fatal(provider.Body.String())
+	}
+	night := httptest.NewRecorder()
+	module.saveOvernight(night, httptest.NewRequest(http.MethodPut, "/api/modules/investment/overnight", strings.NewReader(`{"enabled":true}`)))
+	if night.Code != http.StatusOK {
+		t.Fatal(night.Body.String())
+	}
+	command := func() string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		module.futuCommand(rec, httptest.NewRequest(http.MethodPost, "/api/modules/investment/futu/quote/ws/command", strings.NewReader(`{"command":"ADD","symbol":"AAPL","resolution":"5"}`)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("ADD: %d %s", rec.Code, rec.Body.String())
+		}
+		var response struct {
+			Success    bool   `json:"success"`
+			Applied    bool   `json:"applied"`
+			Generation string `json:"generation"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil || !response.Success || !response.Applied || response.Generation == "" {
+			t.Fatalf("bootstrap ADD must be applied and report its lease generation: %s (%v)", rec.Body.String(), err)
+		}
+		return response.Generation
+	}
+	first := command()
+	module.futu.reset()
+	second := command()
+	if first == second {
+		t.Fatalf("gateway reset reused the lease generation %q", first)
+	}
+	other := newFutuGateway(module)
+	other.mu.Lock()
+	otherGeneration := other.generationTokenLocked()
+	other.mu.Unlock()
+	if otherGeneration == second {
+		t.Fatalf("new gateway instance reused lease generation %q", second)
+	}
+}
+
+func TestFutuHTTPRejectsDelayedOldGenerationUnsubWithoutChangingReferences(t *testing.T) {
+	fake := startFakeOpenD(t)
+	module := openInvestmentModule(t)
+	module.deps.FutuOpenDAddress = fake.addr()
+	provider := httptest.NewRecorder()
+	module.saveFutu(provider, httptest.NewRequest(http.MethodPut, "/api/modules/investment/futu", strings.NewReader(`{"enabled":true}`)))
+	if provider.Code != http.StatusOK {
+		t.Fatal(provider.Body.String())
+	}
+	night := httptest.NewRecorder()
+	module.saveOvernight(night, httptest.NewRequest(http.MethodPut, "/api/modules/investment/overnight", strings.NewReader(`{"enabled":true}`)))
+	if night.Code != http.StatusOK {
+		t.Fatal(night.Body.String())
+	}
+
+	type commandResult struct {
+		Success    bool   `json:"success"`
+		Applied    bool   `json:"applied"`
+		Generation string `json:"generation"`
+	}
+	command := func(name, generation string) commandResult {
+		t.Helper()
+		body := map[string]any{"command": name, "symbol": "AAPL", "resolution": "5"}
+		if generation != "" {
+			body["generation"] = generation
+		}
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		recorder := httptest.NewRecorder()
+		module.futuCommand(recorder, httptest.NewRequest(http.MethodPost, "/api/modules/investment/futu/quote/ws/command", strings.NewReader(string(encoded))))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", name, recorder.Code, recorder.Body.String())
+		}
+		var result commandResult
+		if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil || !result.Success || result.Generation == "" {
+			t.Fatalf("invalid %s response: %s (%v)", name, recorder.Body.String(), err)
+		}
+		return result
+	}
+
+	// Tab A's lease belongs to generation 1. Reset, then let tabs B and C
+	// establish independent references in generation 2 before A's delayed
+	// UNSUB reaches the HTTP handler.
+	tabA := command("ADD", "") // first ADD may bootstrap without a token
+	if !tabA.Applied {
+		t.Fatal("bootstrap ADD was not applied")
+	}
+	module.futu.reset()
+	tabB := command("ADD", "") // a new tab also learns the current token from its response
+	if !tabB.Applied || tabB.Generation == tabA.Generation {
+		t.Fatalf("tab B did not establish a new generation: A=%+v B=%+v", tabA, tabB)
+	}
+	if tabC := command("ADD", tabB.Generation); !tabC.Applied || tabC.Generation != tabB.Generation {
+		t.Fatalf("tab C ADD: %+v", tabC)
+	}
+
+	if stale := command("UNSUB", tabA.Generation); stale.Applied || stale.Generation != tabB.Generation {
+		t.Fatalf("delayed old UNSUB must be reported unapplied with the current token: %+v", stale)
+	}
+	if unversioned := command("UNSUB", ""); unversioned.Applied || unversioned.Generation != tabB.Generation {
+		t.Fatalf("unversioned UNSUB must not release a current lease: %+v", unversioned)
+	}
+
+	_, subType, _ := futuKLTypes("5")
+	module.futu.mu.Lock()
+	defer module.futu.mu.Unlock()
+	for _, sub := range []int{subTypeBasic, subType} {
+		lease := module.futu.refs[subKey{symbol: "AAPL", sub: sub}]
+		if lease == nil || lease.count != 2 || lease.generation != module.futu.generation {
+			t.Fatalf("old UNSUB changed generation-2 subscription %d: generation=%d lease=%+v", sub, module.futu.generation, lease)
+		}
+	}
+}
+
+func TestFutuKlineStrictHistoryRejectsPartialCurrentWindow(t *testing.T) {
+	fake := startFakeOpenD(t)
+	fake.mu.Lock()
+	fake.historyFail = true
+	fake.mu.Unlock()
+	module := openInvestmentModule(t)
+	module.deps.FutuOpenDAddress = fake.addr()
+	provider := httptest.NewRecorder()
+	module.saveFutu(provider, httptest.NewRequest(http.MethodPut, "/api/modules/investment/futu", strings.NewReader(`{"enabled":true}`)))
+	if provider.Code != http.StatusOK {
+		t.Fatal(provider.Body.String())
+	}
+	night := httptest.NewRecorder()
+	module.saveOvernight(night, httptest.NewRequest(http.MethodPut, "/api/modules/investment/overnight", strings.NewReader(`{"enabled":true}`)))
+	if night.Code != http.StatusOK {
+		t.Fatal(night.Body.String())
+	}
+
+	from := time.Date(2026, 1, 14, 20, 0, 0, 0, nyZone).Unix()
+	to := time.Date(2026, 1, 16, 4, 0, 0, 0, nyZone).Unix()
+	// An old edge bar alone cannot prove that the middle of the requested range exists.
+	if _, err := module.deps.DB.Exec(`INSERT INTO investment_futu_bars(symbol,resolution,time_ms,open,high,low,close,volume) VALUES(?,?,?,?,?,?,?,?)`,
+		"AAPL", "1", from*1000, 100, 100, 100, 100, 1); err != nil {
+		t.Fatal(err)
+	}
+	url := "/api/modules/investment/futu/kline?symbol=AAPL&resolution=1&requireHistory=true&from=" + strconv.FormatInt(from, 10) + "&to=" + strconv.FormatInt(to, 10)
+	rec := httptest.NewRecorder()
+	module.getFutuKline(rec, httptest.NewRequest(http.MethodGet, url, nil))
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "futu_unavailable") {
+		t.Fatalf("incomplete strict history must fail instead of returning current-window bars: %d %s", rec.Code, rec.Body.String())
+	}
+	fake.mu.Lock()
+	historyN, historyBegin, historyEnd := fake.historyN, fake.historyBegin, fake.historyEnd
+	fake.mu.Unlock()
+	if historyN != 1 || historyBegin != "2026-01-14" || historyEnd != "2026-01-16" {
+		t.Fatalf("strict request must retry the entire date range despite an old edge bar, requests=%d range=%s..%s", historyN, historyBegin, historyEnd)
+	}
+}
+
+func TestFutuResetDuringOldHoldPreservesNewGenerationTabReferences(t *testing.T) {
+	fake := startFakeOpenD(t)
+	fake.subStarted = make(chan struct{}, 1)
+	fake.releaseSub = make(chan struct{})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	oldClient, err := dialOpend(ctx, fake.addr(), "workbench-old-lease-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateway := &futuGateway{client: oldClient, generation: 1, refs: make(map[subKey]*subLease)}
+	key := subKey{symbol: "AAPL", sub: subTypeKL5Min}
+	oldHold := make(chan error, 1)
+	go func() { oldHold <- gateway.hold(ctx, oldClient, key.symbol, key.sub, true) }()
+	select {
+	case <-fake.subStarted:
+	case <-ctx.Done():
+		t.Fatal("old-generation hold never reached the controlled OpenD subscription")
+	}
+	gateway.reset()
+	select {
+	case err := <-oldHold:
+		if err == nil {
+			t.Fatal("hold interrupted by reset unexpectedly succeeded")
+		}
+	case <-ctx.Done():
+		t.Fatal("hold did not notice the reset")
+	}
+	close(fake.releaseSub)
+
+	currentClient, err := dialOpend(ctx, fake.addr(), "workbench-new-lease-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateway.mu.Lock()
+	gateway.client = currentClient
+	gateway.mu.Unlock()
+	for range 2 { // two independent browser tabs restore one reference apiece
+		if err := gateway.hold(ctx, currentClient, key.symbol, key.sub, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gateway.mu.Lock()
+	lease := gateway.refs[key]
+	generation := gateway.generation
+	gateway.mu.Unlock()
+	if generation != 2 || lease == nil || lease.generation != generation || lease.count != 2 {
+		t.Fatalf("reset-era old hold contaminated new references: generation=%d lease=%+v", generation, lease)
+	}
+	gateway.reset()
+}
+
+func TestFutuExpirySerializesUnsubscribeBeforeSameGenerationNewHold(t *testing.T) {
+	fake := startFakeOpenD(t)
+	fake.unsubStarted = make(chan struct{}, 1)
+	fake.releaseUnsub = make(chan struct{})
+	var releaseOnce sync.Once
+	releaseUnsub := func() { releaseOnce.Do(func() { close(fake.releaseUnsub) }) }
+	defer releaseUnsub()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	client, err := dialOpend(ctx, fake.addr(), "workbench-expiry-order-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateway := &futuGateway{client: client, generation: 1, refs: make(map[subKey]*subLease)}
+	key := subKey{symbol: "AAPL", sub: subTypeKL5Min}
+	lease := &subLease{since: time.Now(), generation: 1}
+	gateway.refs[key] = lease
+	client.mu.Lock()
+	initialSerial := client.serial
+	client.mu.Unlock()
+
+	expiryDone := make(chan struct{})
+	go func() {
+		gateway.expireSub(client, 1, key, lease, key.symbol, key.sub)
+		close(expiryDone)
+	}()
+	select {
+	case <-fake.unsubStarted:
+	case <-ctx.Done():
+		t.Fatal("lease expiry did not reach controlled UNSUB")
+	}
+	unsubSerial := func() uint32 {
+		client.mu.Lock()
+		defer client.mu.Unlock()
+		return client.serial
+	}()
+	if unsubSerial != initialSerial+1 {
+		t.Fatalf("UNSUB request serial=%d want %d", unsubSerial, initialSerial+1)
+	}
+
+	newHold := make(chan error, 1)
+	go func() { newHold <- gateway.hold(ctx, client, key.symbol, key.sub, true) }()
+	// The in-flight network UNSUB must finish before a same-generation SUB is
+	// sent, while the gateway mutex remains available to unrelated work.
+	mutexAvailable := make(chan struct{})
+	go func() { gateway.mu.Lock(); gateway.mu.Unlock(); close(mutexAvailable) }()
+	select {
+	case <-mutexAvailable:
+	case <-ctx.Done():
+		t.Fatal("gateway mutex was held while the timer awaited OpenD")
+	}
+	timer := time.NewTimer(40 * time.Millisecond)
+	select {
+	case err := <-newHold:
+		t.Fatalf("new hold overtook the pending timer UNSUB: %v", err)
+	case <-timer.C:
+	}
+	client.mu.Lock()
+	serialBeforeUnsubCompletes := client.serial
+	client.mu.Unlock()
+	if serialBeforeUnsubCompletes != unsubSerial {
+		t.Fatalf("new SUB was sent before UNSUB completed: serial=%d want %d", serialBeforeUnsubCompletes, unsubSerial)
+	}
+
+	releaseUnsub()
+	select {
+	case <-expiryDone:
+	case <-ctx.Done():
+		t.Fatal("timer UNSUB did not finish")
+	}
+	select {
+	case err := <-newHold:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("new hold did not run after the serialized UNSUB")
+	}
+	fake.mu.Lock()
+	actions := append([]bool(nil), fake.subActions...)
+	fake.mu.Unlock()
+	if len(actions) != 2 || actions[0] || !actions[1] {
+		t.Fatalf("same-generation sub operations ran in wrong order: %v", actions)
+	}
+	gateway.mu.Lock()
+	currentLease := gateway.refs[key]
+	gateway.mu.Unlock()
+	if currentLease == nil || currentLease.count != 1 || currentLease.generation != 1 {
+		t.Fatalf("timer removed the new same-generation lease: %+v", currentLease)
+	}
+	gateway.reset()
+}
+
+func TestFutuStaleClientCannotHoldReleaseOrExpireNewGenerationLeases(t *testing.T) {
+	newClient := func() *opendClient {
+		return &opendClient{conn: discardConn{}, pending: make(map[uint32]chan opendReply), stop: make(chan struct{})}
+	}
+	oldClient := newClient()
+	gateway := &futuGateway{client: oldClient, generation: 1, refs: make(map[subKey]*subLease)}
+	ctx := context.Background()
+	key := subKey{symbol: "AAPL", sub: subTypeKL5Min}
+
+	// Two old-generation tabs hold the same lease. Both can release their own
+	// references; the final release leaves a timer bound to that exact lease.
+	if err := gateway.hold(ctx, oldClient, key.symbol, key.sub, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := gateway.hold(ctx, oldClient, key.symbol, key.sub, false); err != nil {
+		t.Fatal(err)
+	}
+	oldLease := gateway.refs[key]
+	if err := gateway.release(ctx, oldClient, key.symbol, key.sub); err != nil {
+		t.Fatal(err)
+	}
+	if err := gateway.release(ctx, oldClient, key.symbol, key.sub); err != nil {
+		t.Fatal(err)
+	}
+	if oldLease.count != 0 || oldLease.idle == nil {
+		t.Fatalf("old lease was not scheduled for release: %+v", oldLease)
+	}
+	oldGeneration := gateway.generation
+
+	gateway.reset()
+	currentClient := newClient()
+	gateway.mu.Lock()
+	gateway.client = currentClient
+	gateway.mu.Unlock()
+	if err := gateway.hold(ctx, currentClient, key.symbol, key.sub, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := gateway.hold(ctx, currentClient, key.symbol, key.sub, false); err != nil {
+		t.Fatal(err)
+	}
+	currentLease := gateway.refs[key]
+	if currentLease.count != 2 {
+		t.Fatalf("new generation should have two independent tab references, got %d", currentLease.count)
+	}
+
+	if err := gateway.hold(ctx, oldClient, key.symbol, key.sub, false); err == nil {
+		t.Fatal("stale client hold unexpectedly succeeded")
+	}
+	if err := gateway.release(ctx, oldClient, key.symbol, key.sub); err == nil {
+		t.Fatal("stale client release unexpectedly succeeded")
+	}
+	gateway.expireSub(oldClient, oldGeneration, key, oldLease, key.symbol, key.sub)
+	if gateway.refs[key] != currentLease || currentLease.count != 2 {
+		t.Fatalf("old hold/release/timer corrupted current-generation lease: refs=%p current=%p count=%d", gateway.refs[key], currentLease, currentLease.count)
+	}
+	gateway.reset()
 }
 
 func TestFutuDisconnectStopsOverlay(t *testing.T) {

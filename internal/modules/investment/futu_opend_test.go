@@ -12,15 +12,24 @@ import (
 )
 
 type fakeOpenD struct {
-	ln          net.Listener
-	mu          sync.Mutex
-	initPayload map[string]any
-	subPayload  map[string]any
-	historyN    int
-	klList      []map[string]any
-	histList    []map[string]any
-	remain      int
-	usedCodes   []string
+	ln             net.Listener
+	mu             sync.Mutex
+	initPayload    map[string]any
+	subPayload     map[string]any
+	historyN       int
+	historyFail    bool
+	historyBegin   string
+	historyEnd     string
+	historyNextKey any
+	klList         []map[string]any
+	histList       []map[string]any
+	remain         int
+	usedCodes      []string
+	subStarted     chan struct{}
+	releaseSub     chan struct{}
+	unsubStarted   chan struct{}
+	releaseUnsub   chan struct{}
+	subActions     []bool
 }
 
 func startFakeOpenD(t *testing.T) *fakeOpenD {
@@ -73,6 +82,7 @@ func (f *fakeOpenD) serve(conn net.Conn) {
 		_ = json.Unmarshal(body, &req)
 		c2s, _ := req["c2s"].(map[string]any)
 		s2c := map[string]any{}
+		retType, retMsg := retSucceed, ""
 		switch proto {
 		case protoInitConnect:
 			f.mu.Lock()
@@ -84,9 +94,31 @@ func (f *fakeOpenD) serve(conn net.Conn) {
 		case protoGetGlobalState:
 			s2c = map[string]any{"qotLogined": true, "trdLogined": false}
 		case protoQotSub:
+			isSubscribe, _ := c2s["isSubOrUnSub"].(bool)
 			f.mu.Lock()
 			f.subPayload = c2s
+			f.subActions = append(f.subActions, isSubscribe)
+			subStarted, releaseSub := f.subStarted, f.releaseSub
+			unsubStarted, releaseUnsub := f.unsubStarted, f.releaseUnsub
 			f.mu.Unlock()
+			if isSubscribe && subStarted != nil {
+				select {
+				case subStarted <- struct{}{}:
+				default:
+				}
+			}
+			if isSubscribe && releaseSub != nil {
+				<-releaseSub
+			}
+			if !isSubscribe && unsubStarted != nil {
+				select {
+				case unsubStarted <- struct{}{}:
+				default:
+				}
+			}
+			if !isSubscribe && releaseUnsub != nil {
+				<-releaseUnsub
+			}
 		case protoQotGetKL:
 			s2c = map[string]any{"klList": f.klList, "security": map[string]any{"market": marketUS, "code": "AAPL"}}
 		case protoQotRequestHistoryKLQuota:
@@ -98,14 +130,25 @@ func (f *fakeOpenD) serve(conn net.Conn) {
 		case protoQotRequestHistoryKL:
 			f.mu.Lock()
 			f.historyN++
+			f.historyBegin, _ = c2s["beginTime"].(string)
+			f.historyEnd, _ = c2s["endTime"].(string)
+			failed, nextKey, history := f.historyFail, f.historyNextKey, f.histList
 			f.mu.Unlock()
-			s2c = map[string]any{"klList": f.histList, "security": map[string]any{"market": marketUS, "code": "AAPL"}}
+			if failed {
+				retType, retMsg = -1, "fixture history failure"
+				s2c = map[string]any{}
+			} else {
+				s2c = map[string]any{"klList": history, "security": map[string]any{"market": marketUS, "code": "AAPL"}}
+				if nextKey != nil {
+					s2c["nextReqKey"] = nextKey
+				}
+			}
 		case protoQotGetSubInfo:
 			s2c = map[string]any{"remainQuota": 90, "totalQuota": 100}
 		default:
 			s2c = map[string]any{}
 		}
-		resp, _ := json.Marshal(map[string]any{"retType": 0, "retMsg": "", "errCode": 0, "s2c": s2c})
+		resp, _ := json.Marshal(map[string]any{"retType": retType, "retMsg": retMsg, "errCode": 0, "s2c": s2c})
 		if err := writeOpendPacket(conn, proto, serial, resp); err != nil {
 			return
 		}
@@ -121,6 +164,47 @@ func TestCanSendRejectsTradeAndUnknown(t *testing.T) {
 	}
 	if err := canSendProto(protoQotRequestHistoryKL); err != nil {
 		t.Fatalf("3103 should be allowed as fallback: %v", err)
+	}
+}
+
+func TestFutuHistoryRejectsRepeatedPaginationCursor(t *testing.T) {
+	fake := startFakeOpenD(t)
+	fake.mu.Lock()
+	fake.historyNextKey = "repeated-cursor"
+	fake.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	client, err := dialOpend(ctx, fake.addr(), "workbench-history-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.close()
+	if _, err := client.requestHistoryKL(ctx, "AAPL", klType1Min, "2026-01-01", "2026-01-03"); err == nil {
+		t.Fatal("repeated nextReqKey must not be reported as complete history")
+	}
+	fake.mu.Lock()
+	requests := fake.historyN
+	fake.mu.Unlock()
+	if requests != 2 {
+		t.Fatalf("requests=%d want two pages before detecting the stuck cursor", requests)
+	}
+}
+
+func TestFutuHistoryAcceptsSuccessfulEmptyFinalPage(t *testing.T) {
+	fake := startFakeOpenD(t)
+	fake.mu.Lock()
+	fake.histList = []map[string]any{}
+	fake.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	client, err := dialOpend(ctx, fake.addr(), "workbench-empty-history-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.close()
+	bars, err := client.requestHistoryKL(ctx, "AAPL", klType1Min, "2026-01-01", "2026-01-03")
+	if err != nil || len(bars) != 0 {
+		t.Fatalf("successful empty range should mean no historical trades: bars=%+v err=%v", bars, err)
 	}
 }
 

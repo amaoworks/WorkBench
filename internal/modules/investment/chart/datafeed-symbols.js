@@ -1,4 +1,5 @@
 // Symbol classification and TradingView trading-session descriptions.
+import { EQUITY_24H_SESSION } from './futu.js';
 
 export function identifyAssetType(symbolName) {
     if (!symbolName) return "EQUITIES";
@@ -34,7 +35,7 @@ export function getAssetSubsessions(assetType, overlayEnabled = false) {
             if (overlayEnabled && assetType === "EQUITIES") {
                 sessions.push(
                     { "description": "Night", "id": "night", "session": "2000-0400" },
-                    { "description": "24h", "id": "24h", "session": "2000-2000" }
+                    { "description": "24H", "id": EQUITY_24H_SESSION, "session": "0400-0400" },
                 );
             }
             return sessions;

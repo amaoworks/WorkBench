@@ -27,6 +27,10 @@ const { chromium, webkit, devices } = require(process.env.PLAYWRIGHT_MODULE || "
           export class widget {
             constructor() { ${mode === "exception" ? "throw new Error('fixture initialization failed');" : ""} }
             chartReady() { return ready; }
+            activeChart() { return Object.fromEntries(['onIntervalChanged', 'onSymbolChanged'].map(name => [name, () => ({ subscribe() {}, unsubscribe() {} })])); }
+            headerReady() { return ready; }
+            createDropdown() { return Promise.resolve({ applyOptions() {}, remove() {} }); }
+            showNoticeDialog() { return Promise.resolve(); }
             changeTheme() { return Promise.resolve(); }
             resetCache() {}
             chartsCount() { return 0; }

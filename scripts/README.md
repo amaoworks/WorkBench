@@ -189,15 +189,25 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 
 ### 投资账户管理器
 
-`investment-terminal.e2e.cjs` 在 Chromium 中加载仓库内的终端代码和实际 TradingView 库，验证连续切换主题后图表颜色、实例、标的和周期，以及账户初始化、持仓与订单渲染、订单标的跳转、账户切换及断线重连；打开原生下单面板，检查有效期/交易时段的名称、可选值及已有订单的回填；验证首次加载和刷新不重播历史订单通知，新的成交仍推送一次。Schwab HTTP 和 WebSocket 请求全部使用虚构响应，无需启动工作台、配置凭据或提交交易。
+`investment-terminal.e2e.cjs` 在 Chromium 中加载仓库内的终端代码和实际 TradingView 库，验证主题、账户和下单面板，以及完整图表实例保留。增加 `--night` 会运行 Night 与 24H 时段回归；`--24h` 可单独运行全天行情回归。时段回归检查图表顶栏恰有常规、扩展、夜盘、全天四个选项且无说明项；Night 只用非空 Futu K 线，24H 使用非空虚构 Schwab/Futu K 线并检查 04:00/20:00 ET 边界过滤、跨午夜合并、真实可见图表数据、缓存会话切回、1/5/15/30 分钟及不支持周期回退、夜盘关闭和非正股门控、主题及图表高度。`--night --mobile`、`--night --webkit` 另外覆盖 320/390/844px 窄屏、横屏和菜单可达性。券商与 Futu API 均由脚本拦截为虚构响应；不读取凭据、不连接真实账户、不提交交易。
 
 ```bash
 PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
   CHROMIUM_PATH=/usr/bin/chromium \
   node scripts/investment-terminal.e2e.cjs
+
+# 实际 TradingView 时段菜单与非空虚构行情回归
+PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
+  CHROMIUM_PATH=/usr/bin/chromium \
+  node scripts/investment-terminal.e2e.cjs --night
+
+# 独立 24H；--mobile / --webkit 复用同一测试场景
+PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
+  CHROMIUM_PATH=/usr/bin/chromium \
+  node scripts/investment-terminal.e2e.cjs --24h --mobile
 ```
 
-脚本需要访问 TradingView 静态资源站，带内容哈希的库文件缓存在系统临时目录 `workbench-tv-test-cache/`。截图写入 `/tmp/workbench-investment-account-manager.png` 和 `/tmp/workbench-investment-order-ticket.png`。终端 JS 通过 Go embed 编入程序；修改后需重新编译并启动工作台进程，再刷新浏览器。
+脚本需要访问 TradingView 静态资源站，带内容哈希的库文件缓存在系统临时目录 `workbench-tv-test-cache/`。截图写入 `/tmp/workbench-investment-account-manager.png` 和 `/tmp/workbench-investment-order-ticket.png`；`--night`/`--24h` 时段截图写入 `/tmp/workbench-investment-session-desktop.png`，手机模式为 `/tmp/workbench-investment-session-{320,390,844}.png`（WebKit 文件名增加 `webkit-`）。终端 JS 通过 Go embed 编入程序；修改后需重新编译并启动工作台进程，再刷新浏览器。
 
 桌面模式还验证工作台自选表保存：多列表的名称、分组、标的顺序和当前列表在清空浏览器本地存储后恢复，删除非当前列表会保存，保存失败可重试，清空列表后刷新不会恢复旧标的；旧保存请求未返回时刷新仍恢复最新编辑，跨设备冲突后可保留本页草稿或载入工作台版本。后端版本冲突、迟到请求、CSRF 和进程重启持久化另由 Go 测试覆盖。
 

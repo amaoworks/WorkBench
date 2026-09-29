@@ -1,14 +1,16 @@
-import { isOvernightET } from './futu.js';
-
 // History normalization and time buckets shared with live bar aggregation.
-export async function getFutuNightBars(request, name, resolution, from, to, assertCurrent) {
+import { isOvernightET, isSchwabExtendedET } from './futu.js';
+
+export async function getFutuNightBars(request, name, resolution, from, to, assertCurrent, { requireCompleteHistory = false } = {}) {
     const params = new URLSearchParams({ symbol: name, resolution });
     if (from) params.set('from', String(from));
     if (to) params.set('to', String(to));
+    if (requireCompleteHistory) params.set('requireHistory', 'true');
     const response = await request('/kline?' + params.toString());
     assertCurrent();
     if (!response.ok) throw new Error('获取夜盘数据失败' + name);
     const data = await response.json();
+    assertCurrent();
     if (!Array.isArray(data.candles)) throw new Error('夜盘历史数据格式无效');
     return data.candles.map((item) => ({
         time: Number(item.time), open: Number(item.open), high: Number(item.high),
@@ -16,12 +18,44 @@ export async function getFutuNightBars(request, name, resolution, from, to, asse
     })).filter((bar) => Object.values(bar).every(Number.isFinite));
 }
 
-export async function getSchwabBars(request, name, resolution, periodParams, extended, assertCurrent) {
+export async function get24HourBars(request, futuRequest, name, resolution, periodParams, assertCurrent) {
+    const { to } = periodParams;
+    const { from } = getSchwabHistoryRange(resolution, periodParams);
+    const [schwab, futu] = await Promise.all([
+        getSchwabBars(request, name, resolution, periodParams, true, assertCurrent),
+        getFutuNightBars(futuRequest, name, resolution, from, to, assertCurrent, { requireCompleteHistory: true }),
+    ]);
+    assertCurrent();
+    return merge24HourBars(schwab, futu);
+}
+
+export function merge24HourBars(schwabBars, futuBars) {
+    const unique = new Map();
+    for (const bar of schwabBars) {
+        if (isSchwabExtendedET(bar.time)) unique.set(bar.time, bar);
+    }
+    for (const bar of futuBars) {
+        if (isOvernightET(bar.time)) unique.set(bar.time, bar);
+    }
+    return [...unique.values()].sort((a, b) => a.time - b.time);
+}
+
+export function getSchwabHistoryRange(resolution, periodParams) {
     const { from, to } = periodParams;
-    const barsize = (resolution === "1D" || resolution === "1W" || resolution === "1M") ? ("&frequencyType=" + (resolution === "1D" ? "daily" : resolution === "1W" ? "weekly" : "monthly") + "&frequency=1&periodType=year") : ("&frequencyType=minute&frequency=" + resolution);
-    const diffTime = to - from;
-    const expandedFrom = from - Math.floor(diffTime * 0.5);
-    const timeParams = "&startDate=" + (expandedFrom * 1000) + "&endDate=" + (periodParams.to * 1000);
+    const daily = ['1D', '1W', '1M'].includes(resolution);
+    const expandedFrom = from - Math.floor((to - from) * 0.5);
+    // Both sources must use the same capped start for a 24H viewport. In
+    // particular, don't make Futu backfill a year when Schwab is capped at 46d.
+    const maxMinuteRange = resolution === '1' ? 46 * 86400 : 240 * 86400;
+    return { from: daily ? expandedFrom : Math.max(expandedFrom, to - maxMinuteRange), to };
+}
+
+export async function getSchwabBars(request, name, resolution, periodParams, extended, assertCurrent) {
+    const { to } = periodParams;
+    const daily = ['1D', '1W', '1M'].includes(resolution);
+    const barsize = daily ? ("&frequencyType=" + (resolution === "1D" ? "daily" : resolution === "1W" ? "weekly" : "monthly") + "&frequency=1&periodType=year") : ("&frequencyType=minute&frequency=" + resolution + "&periodType=day");
+    const { from: requestFrom } = getSchwabHistoryRange(resolution, periodParams);
+    const timeParams = "&startDate=" + (requestFrom * 1000) + "&endDate=" + (periodParams.to * 1000);
     const url = "/marketdata/v1/pricehistory?symbol=" + encodeURIComponent(name) + (extended ? "&needExtendedHoursData=true" : "") + barsize + timeParams;
     const response = await request(url);
     if (!response.ok) throw new Error("获取历史数据失败" + name);
@@ -46,15 +80,6 @@ const RESOLUTIONS_MS = {
     '120': 7_200_000, '180': 10_800_000, '240': 14_400_000, '480': 28_800_000,
     '1D': 86_400_000
 };
-
-export function mergeSessionBars(schwab, night) {
-    const unique = new Map();
-    for (const bar of schwab) {
-        if (!isOvernightET(bar.time)) unique.set(bar.time, bar);
-    }
-    for (const bar of night) unique.set(bar.time, bar);
-    return [...unique.values()].sort((a, b) => a.time - b.time);
-}
 
 export function getBucketTime(resolution, timestamp = Date.now()) {
     // Calendar months vary in length; align to their first day in UTC.

@@ -28,7 +28,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     const errors = [];
     context.on("page", page => page.on("pageerror", error => errors.push(error.message)));
     await context.route("**/api/modules/investment/schwab", route => route.fulfill({ json: {
-      appKey: "fixture", callbackUrl: "https://example.test/oauth/schwab", hasAppSecret: true, connected: true, lastError: "",
+      appKey: "fixture", callbackUrl: "https://example.test/oauth/schwab", hasAppSecret: true, connected: true, reauthorizationRequired: false, lastError: "",
     } }));
     let loads = 0;
     let releaseFirstTerminal, notifyFirstTerminal;
