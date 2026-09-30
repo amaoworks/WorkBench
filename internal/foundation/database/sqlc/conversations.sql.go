@@ -83,7 +83,7 @@ SELECT role, content_json FROM (
     SELECT role, content_json, created_at, id FROM ai_messages
     WHERE conversation_id = ? AND role IN ('user', 'assistant')
     ORDER BY created_at DESC, id DESC LIMIT ?
-) ORDER BY created_at, id
+) AS recent_messages ORDER BY created_at, id
 `
 
 type ListRecentConversationMessagesParams struct {

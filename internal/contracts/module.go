@@ -24,8 +24,9 @@ type NavigationItem struct {
 }
 
 type MigrationSet struct {
-	FS  fs.FS
-	Dir string
+	FS          fs.FS
+	Dir         string
+	PostgresDir string
 }
 
 type Module interface {

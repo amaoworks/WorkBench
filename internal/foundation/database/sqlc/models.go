@@ -44,9 +44,10 @@ type AiToolCall struct {
 }
 
 type AuthCredential struct {
-	ID           int64  `json:"id"`
-	PasswordHash string `json:"password_hash"`
-	UpdatedAt    int64  `json:"updated_at"`
+	ID                 int64  `json:"id"`
+	PasswordHash       string `json:"password_hash"`
+	UpdatedAt          int64  `json:"updated_at"`
+	MustChangePassword int64  `json:"must_change_password"`
 }
 
 type EventDelivery struct {

@@ -1,13 +1,13 @@
 # Workbench Agent 指南 (Agent Guidelines)
 
-Workbench 是本地优先、单用户的个人工作台，采用 Go 模块化单体、内嵌 React SPA 与共享 SQLite 工作空间。
+Workbench 是本地优先、单用户的个人工作台，采用 Go 模块化单体、内嵌 React SPA 与共享数据库工作空间；原生运行默认 SQLite，Docker Compose 默认 PostgreSQL，两者通过启动配置选择。
 在修改或扩展本代码库前，请务必遵守以下架构规则、命令规范与绝对红线。
 
 ---
 
 ## 一、核心技术栈与关键依赖
 
-* **后端**：Go 1.27.1，纯 Go SQLite 驱动（`modernc.org/sqlite`，开启 WAL 与单进程锁），`sqlc` v1.31.x。
+* **后端**：Go 1.27.1，SQLite 使用 `modernc.org/sqlite`，PostgreSQL 使用 `pgx` 的 `database/sql` 适配，`sqlc` v1.31.x。
 * **前端**：Node.js 24+，npm 11+，React 19，TypeScript，Vite，Tailwind CSS，Radix UI，TanStack Query，Zod。
 * **构建与嵌入**：前端产物输出至 `internal/webui/dist/`，通过 `embed.FS` 编入单一二进制文件。
 
@@ -22,11 +22,11 @@ Workbench 是本地优先、单用户的个人工作台，采用 Go 模块化单
 * 通用能力（AI、调度、通知、总览）只通过 `contracts` 接口向业务暴露，业务不直接依赖 `internal/capabilities` 具体实现。
 
 ### 2. 数据库设计与事务控制
-* 平台和内置业务共享一个 SQLite 数据库及其 `*sql.DB` 连接池，默认最多 4 个连接。业务表名使用 `<module_id>_` 前缀（如 `todo_tasks`）。
-* 平台迁移放在 `internal/foundation/database/migrations/`，业务迁移放在 `internal/modules/<id>/migrations/`；已有数据库升级通过添加后续迁移实现。
-* 固定查询集中在归属包的 `query/`，通过 `sqlc generate` 生成并提交 `sqlc/` 代码。动态 IN、SQLite PRAGMA、备份 VACUUM 及现有少量设置 SQL 可直接在实现中执行，具体归属与例外见[数据设计](doc/data-model.md#迁移和查询)。
+* 平台和内置业务共享所选数据库及其 `*sql.DB` 连接池，业务连接默认最多 4 个。业务表名使用 `<module_id>_` 前缀（如 `todo_tasks`）。
+* SQLite 迁移放在 `migrations/`，PostgreSQL 迁移放在同包的 `migrations-postgres/`；平台目录位于 `internal/foundation/database/`，业务目录位于 `internal/modules/<id>/`。两个方言使用相同迁移版本，新升级同时添加对应文件。
+* 固定查询集中在归属包的 `query/`，通过 SQLite engine 的 `sqlc generate` 生成并提交 `sqlc/` 代码。PostgreSQL 驱动适配生成查询中的 `?` 和 `?N` 占位符。动态 IN、SQLite PRAGMA、备份 VACUUM 及现有少量设置 SQL 可直接在实现中执行，具体归属与例外见[数据设计](doc/data-model.md#迁移和查询)。
 * 业务写入及其对应事件通过 `PublishTx` 在同一个事务 (`*sql.Tx`) 中提交；通知与业务写入需要原子提交时使用 `CreateTx`。独立事件或提醒可使用 `Publish` / `Create`，由服务管理自身事务。
-* 共享 SQLite 数据库运行在单进程模式下，依赖文件锁（`<db_path>.lock`）防止多实例竞争，测试与运行时切勿并发启动多个占用同一工作空间的进程。
+* 同一数据库只运行一个工作台进程。SQLite 使用 `<db_path>.lock` 文件锁；PostgreSQL 使用独立会话持有同一数据库和 schema 范围的 advisory lock。PostgreSQL 默认事务使用 Serializable 隔离级别，序列化冲突会回滚并返回错误。
 
 ### 3. 文案与文档编写规范
 * 严格执行 [doc/copywriting-guidelines.md](doc/copywriting-guidelines.md)。
@@ -57,7 +57,7 @@ Workbench 是本地优先、单用户的个人工作台，采用 Go 模块化单
 按本次修改涉及的职责选择步骤和文件。
 
 1. **调整数据模型或查询**：
-   * 涉及表结构变更时，在平台或业务所属的 `migrations/` 中添加后续迁移。
+   * 涉及表结构变更时，在平台或业务所属的 `migrations/` 与 `migrations-postgres/` 中添加同版本迁移。
    * 固定查询放在平台或业务所属的 `query/`。
    * 新增生成目标时在 [sqlc.yaml](sqlc.yaml) 登记路径；修改 SQL 后运行 `sqlc generate` 并提交生成结果。
 2. **实现后端服务**：
@@ -79,7 +79,7 @@ Workbench 是本地优先、单用户的个人工作台，采用 Go 模块化单
 * **系统架构与目录分层**：[doc/architecture.md](doc/architecture.md)
 * **业务模块开发 SOP**：[doc/business-development.md](doc/business-development.md)
 * **跨层接口与契约规范**：[doc/contracts.md](doc/contracts.md)
-* **SQLite 数据模型与维护**：[doc/data-model.md](doc/data-model.md)
+* **数据库模型与维护**：[doc/data-model.md](doc/data-model.md)
 * **文案与文档规范**：[doc/copywriting-guidelines.md](doc/copywriting-guidelines.md)
 * **部署与运维发布**：[doc/deployment.md](doc/deployment.md)
 * **配置参数与运行日志**：[doc/configuration.md](doc/configuration.md)

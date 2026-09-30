@@ -64,6 +64,13 @@ func openAuthDatabase(t *testing.T) *workbenchdb.Database {
 	return database
 }
 
+func markInitialPasswordChanged(t *testing.T, database *workbenchdb.Database) {
+	t.Helper()
+	if _, err := database.SQL().ExecContext(context.Background(), "UPDATE auth_credentials SET must_change_password = 0 WHERE id = 1"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestConfigRejectsUnsafeListenModes(t *testing.T) {
 	database := openAuthDatabase(t)
 	if _, err := New(context.Background(), database.SQL(), Config{Mode: ModeLocal, ListenAddress: "0.0.0.0:8080"}); err == nil {
@@ -105,6 +112,7 @@ func TestLoginCreatesServerSideSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	markInitialPasswordChanged(t, database)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/auth/login", service.LoginHandler)
 	mux.Handle("GET /protected", service.Require(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -143,6 +151,7 @@ func TestLoadDoesNotWriteSessionCookie(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	markInitialPasswordChanged(t, database)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/auth/login", service.LoginHandler)
 	mux.Handle("GET /protected", service.Require(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -186,6 +195,70 @@ func TestLoadDoesNotWriteSessionCookie(t *testing.T) {
 	}
 	if saved.Header().Get("Set-Cookie") == "" {
 		t.Fatal("idle refresh should still write a session cookie on LoadAndSave")
+	}
+}
+
+func TestInitialPasswordMustBeChangedBeforeProtectedAccess(t *testing.T) {
+	database := openAuthDatabase(t)
+	service, err := New(context.Background(), database.SQL(), Config{
+		Mode: ModePassword, ListenAddress: "127.0.0.1:8080", InitialPassword: testPassword,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/auth/login", service.LoginHandler)
+	mux.Handle("PUT /api/settings/password", service.Require(http.HandlerFunc(service.ChangePasswordHandler)))
+	mux.Handle("GET /protected", service.Require(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})))
+	handler := service.LoadAndSave(mux)
+
+	request := func(method, target, payload string, cookies []*http.Cookie) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(method, target, bytes.NewBufferString(payload))
+		req.Header.Set("Content-Type", "application/json")
+		for _, cookie := range cookies {
+			req.AddCookie(cookie)
+		}
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+		return recorder
+	}
+
+	loginBody, _ := json.Marshal(map[string]string{"password": testPassword})
+	login := request(http.MethodPost, "/api/auth/login", string(loginBody), nil)
+	if login.Code != http.StatusOK {
+		t.Fatalf("login status = %d, body = %s", login.Code, login.Body.String())
+	}
+	cookies := login.Result().Cookies()
+
+	protected := request(http.MethodGet, "/protected", "", cookies)
+	if protected.Code != http.StatusForbidden {
+		t.Fatalf("protected status = %d, want %d; body = %s", protected.Code, http.StatusForbidden, protected.Body.String())
+	}
+
+	samePassword := `{"currentPassword":"` + testPassword + `","newPassword":"` + testPassword + `"}`
+	unchanged := request(http.MethodPut, "/api/settings/password", samePassword, cookies)
+	if unchanged.Code != http.StatusBadRequest {
+		t.Fatalf("same-password change status = %d, want %d; body = %s", unchanged.Code, http.StatusBadRequest, unchanged.Body.String())
+	}
+
+	const newPassword = "Changed horse battery staple2!"
+	changeBody, _ := json.Marshal(map[string]string{"currentPassword": testPassword, "newPassword": newPassword})
+	changed := request(http.MethodPut, "/api/settings/password", string(changeBody), cookies)
+	if changed.Code != http.StatusOK {
+		t.Fatalf("password change status = %d, body = %s", changed.Code, changed.Body.String())
+	}
+
+	newLoginBody, _ := json.Marshal(map[string]string{"password": newPassword})
+	newLogin := request(http.MethodPost, "/api/auth/login", string(newLoginBody), nil)
+	if newLogin.Code != http.StatusOK {
+		t.Fatalf("new-password login status = %d, body = %s", newLogin.Code, newLogin.Body.String())
+	}
+	protected = request(http.MethodGet, "/protected", "", newLogin.Result().Cookies())
+	if protected.Code != http.StatusNoContent {
+		t.Fatalf("protected status after password change = %d, body = %s", protected.Code, protected.Body.String())
 	}
 }
 

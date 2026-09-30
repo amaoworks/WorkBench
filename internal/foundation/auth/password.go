@@ -27,6 +27,15 @@ var defaultArgonParams = argonParams{
 	memory: 64 * 1024, iterations: 3, parallelism: 2, saltLength: 16, keyLength: 32,
 }
 
+func generateInitialPassword() (string, error) {
+	// The suffix guarantees all four categories independently of random output.
+	var random [18]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return "", fmt.Errorf("generate initial password: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(random[:]) + "Aa1!", nil
+}
+
 func hashPassword(password string) (string, error) {
 	if utf8.RuneCountInString(password) < 8 {
 		return "", errors.New("password must contain at least 8 characters")

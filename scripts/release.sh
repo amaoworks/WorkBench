@@ -30,7 +30,7 @@ for arch in amd64 arm64; do
     cp -R doc deploy "$staging/$name/"
     tar -czf "$release_dir/$name.tar.gz" -C "$staging" "$name"
 done
-tar -czf "$release_dir/workbench_${VERSION}_deployment.tar.gz" compose.yaml .env.example deploy doc README.md
+tar -czf "$release_dir/workbench_${VERSION}_deployment.tar.gz" compose.image.yaml .env.example deploy doc README.md
 cd "$release_dir"
 sha256sum ./*.tar.gz > SHA256SUMS
 printf 'Release artifacts: %s\n' "$release_dir"

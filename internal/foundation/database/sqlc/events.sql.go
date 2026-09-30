@@ -98,7 +98,7 @@ func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) error 
 
 const markDeliveryFailed = `-- name: MarkDeliveryFailed :exec
 UPDATE event_deliveries
-SET status = ?1, next_attempt_at = NULLIF(?2, 0), locked_until = NULL,
+SET status = ?1, next_attempt_at = NULLIF(?2, CAST(0 AS BIGINT)), locked_until = NULL,
     last_error = ?3, updated_at = ?4
 WHERE event_id = ?5 AND consumer_id = ?6
 `

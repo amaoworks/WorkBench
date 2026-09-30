@@ -49,7 +49,7 @@ func (q *Queries) FinishScheduledJobRun(ctx context.Context, arg FinishScheduled
 }
 
 const getScheduledJobMaxAttempt = `-- name: GetScheduledJobMaxAttempt :one
-SELECT CAST(COALESCE(MAX(attempt), 0) AS INTEGER) FROM scheduled_job_runs
+SELECT CAST(COALESCE(MAX(attempt), 0) AS BIGINT) FROM scheduled_job_runs
 WHERE job_id = ? AND scheduled_at = ?
 `
 

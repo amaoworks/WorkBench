@@ -131,6 +131,11 @@ func TestAIConnectionErrorDoesNotExposeUpstreamSecrets(t *testing.T) {
 
 func TestPasswordChangeInvalidatesSessionsAndPersists(t *testing.T) {
 	cfg := Config{ListenAddress: "127.0.0.1:8080", DataPath: filepath.Join(t.TempDir(), "data.db"), AuthMode: auth.ModePassword, Password: "Oldpass1", ShutdownGrace: time.Second}
+	assertPasswordChangeInvalidatesSessionsAndPersists(t, cfg)
+}
+
+func assertPasswordChangeInvalidatesSessionsAndPersists(t *testing.T, cfg Config) {
+	t.Helper()
 	application, err := New(context.Background(), cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)

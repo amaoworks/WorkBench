@@ -20,6 +20,15 @@ func (q *Queries) CountAuthCredentials(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const deleteAllSessions = `-- name: DeleteAllSessions :exec
+DELETE FROM sessions
+`
+
+func (q *Queries) DeleteAllSessions(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, deleteAllSessions)
+	return err
+}
+
 const deleteExpiredSessions = `-- name: DeleteExpiredSessions :exec
 DELETE FROM sessions WHERE expiry <= ?
 `
@@ -54,6 +63,23 @@ func (q *Queries) FindSession(ctx context.Context, arg FindSessionParams) ([]byt
 	return data, err
 }
 
+const getAuthCredential = `-- name: GetAuthCredential :one
+SELECT password_hash, updated_at, must_change_password FROM auth_credentials WHERE id = 1
+`
+
+type GetAuthCredentialRow struct {
+	PasswordHash       string `json:"password_hash"`
+	UpdatedAt          int64  `json:"updated_at"`
+	MustChangePassword int64  `json:"must_change_password"`
+}
+
+func (q *Queries) GetAuthCredential(ctx context.Context) (GetAuthCredentialRow, error) {
+	row := q.db.QueryRowContext(ctx, getAuthCredential)
+	var i GetAuthCredentialRow
+	err := row.Scan(&i.PasswordHash, &i.UpdatedAt, &i.MustChangePassword)
+	return i, err
+}
+
 const getPasswordHash = `-- name: GetPasswordHash :one
 SELECT password_hash FROM auth_credentials WHERE id = 1
 `
@@ -66,7 +92,7 @@ func (q *Queries) GetPasswordHash(ctx context.Context) (string, error) {
 }
 
 const insertInitialPassword = `-- name: InsertInitialPassword :exec
-INSERT INTO auth_credentials(id, password_hash, updated_at) VALUES (1, ?, ?)
+INSERT INTO auth_credentials(id, password_hash, updated_at, must_change_password) VALUES (1, ?, ?, 1)
 `
 
 type InsertInitialPasswordParams struct {
@@ -77,6 +103,31 @@ type InsertInitialPasswordParams struct {
 func (q *Queries) InsertInitialPassword(ctx context.Context, arg InsertInitialPasswordParams) error {
 	_, err := q.db.ExecContext(ctx, insertInitialPassword, arg.PasswordHash, arg.UpdatedAt)
 	return err
+}
+
+const updatePasswordHashIfCurrent = `-- name: UpdatePasswordHashIfCurrent :execrows
+UPDATE auth_credentials
+SET password_hash = ?1,
+    must_change_password = 0,
+    updated_at = CASE
+        WHEN updated_at + 1 > CAST(?2 AS BIGINT) THEN updated_at + 1
+        ELSE CAST(?2 AS BIGINT)
+    END
+WHERE id = 1 AND password_hash = ?3
+`
+
+type UpdatePasswordHashIfCurrentParams struct {
+	PasswordHash string `json:"password_hash"`
+	UpdatedAt    int64  `json:"updated_at"`
+	PreviousHash string `json:"previous_hash"`
+}
+
+func (q *Queries) UpdatePasswordHashIfCurrent(ctx context.Context, arg UpdatePasswordHashIfCurrentParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updatePasswordHashIfCurrent, arg.PasswordHash, arg.UpdatedAt, arg.PreviousHash)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const upsertSession = `-- name: UpsertSession :exec

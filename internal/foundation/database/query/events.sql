@@ -36,6 +36,6 @@ WHERE event_id = ? AND consumer_id = ?;
 
 -- name: MarkDeliveryFailed :exec
 UPDATE event_deliveries
-SET status = sqlc.arg(status), next_attempt_at = NULLIF(sqlc.arg(next_attempt_at), 0), locked_until = NULL,
+SET status = sqlc.arg(status), next_attempt_at = NULLIF(sqlc.arg(next_attempt_at), CAST(0 AS BIGINT)), locked_until = NULL,
     last_error = sqlc.arg(last_error), updated_at = sqlc.arg(updated_at)
 WHERE event_id = sqlc.arg(event_id) AND consumer_id = sqlc.arg(consumer_id);

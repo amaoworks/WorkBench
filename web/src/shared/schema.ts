@@ -63,9 +63,10 @@ export const notificationSchema = z.object({
 export type Notification = z.infer<typeof notificationSchema>;
 export const notificationsPageSchema = z.object({ items: z.array(notificationSchema), nextCursor: z.string().optional() });
 
-export const authStatusSchema = z.object({ authenticated: z.boolean(), mode: z.enum(["local", "password"]) });
+export const authStatusSchema = z.object({ authenticated: z.boolean(), mode: z.enum(["local", "password"]), mustChangePassword: z.boolean() });
 export const unreadCountSchema = z.object({ count: z.number() });
 export const aiStatusSchema = z.object({ available: z.boolean() });
 export const apiErrorSchema = z.object({ code: z.string(), message: z.string() });
 
 export const savedSchema = z.object({ saved: z.literal(true) });
+export const reauthenticateSchema = z.object({ reauthenticate: z.literal(true) });

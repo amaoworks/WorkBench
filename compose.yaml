@@ -1,20 +1,20 @@
 services:
   workbench:
-    image: ${WORKBENCH_IMAGE:-ghcr.io/amaoworks/workbench}:${WORKBENCH_VERSION:?Set WORKBENCH_VERSION to a published release tag}
+    build: .
+    image: workbench:local
+    pull_policy: never
     restart: unless-stopped
-    environment:
-      WORKBENCH_LISTEN: 0.0.0.0:8080
-      WORKBENCH_DATA: /data/data.db
-      WORKBENCH_AUTH: password
-      WORKBENCH_PUBLIC_URL: ${WORKBENCH_PUBLIC_URL:?Set WORKBENCH_PUBLIC_URL to the HTTPS reverse proxy origin}
-      WORKBENCH_PASSWORD: ${WORKBENCH_PASSWORD:-}
-      WORKBENCH_LOG_LEVEL: ${WORKBENCH_LOG_LEVEL:-info}
-      WORKBENCH_FUTU_OPEND_ADDRESS: ${WORKBENCH_FUTU_OPEND_ADDRESS:-127.0.0.1:11111}
-      WORKBENCH_FUTU_ALLOW_NON_LOCAL: ${WORKBENCH_FUTU_ALLOW_NON_LOCAL:-false}
+    env_file:
+      - .env
     ports:
-      - "127.0.0.1:${WORKBENCH_PORT:-8080}:8080"
+      - "127.0.0.1:${WORKBENCH_PORT:-8080}:${WORKBENCH_HTTP_PORT:-8080}"
     volumes:
       - workbench_data:/data
+    networks:
+      - default
+    depends_on:
+      postgres:
+        condition: service_healthy
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m,mode=1777
@@ -35,5 +35,28 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-workbench}
+      POSTGRES_USER: ${POSTGRES_USER:-workbench}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-workbench-local}
+    command: ["postgres", "-p", "${POSTGRES_PORT:-5432}"]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "${POSTGRES_USER:-workbench}", "-d", "${POSTGRES_DB:-workbench}", "-p", "${POSTGRES_PORT:-5432}"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   workbench_data:
+  postgres_data:

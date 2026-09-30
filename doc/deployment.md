@@ -1,6 +1,6 @@
 # 部署与发布
 
-Workbench 发布 Linux amd64、arm64 二进制包，以及相同架构的 Docker 镜像。两种方式运行同一个 Go 程序：前端、数据库迁移和时区数据嵌入程序，SQLite 随工作空间保存。运行机器无需安装 Go、Node.js 或单独的数据库服务；Linux 主机需有 CA 根证书，镜像已包含根证书。
+Workbench 发布 Linux amd64、arm64 二进制包，以及相同架构的 Docker 镜像。两种方式运行同一个 Go 程序：前端、两种数据库方言的迁移和时区数据嵌入程序。二进制默认使用 SQLite，源码仓库和发布镜像的 Compose 默认启动 PostgreSQL 17 Alpine。运行机器无需安装 Go 或 Node.js；Linux 主机需有 CA 根证书，镜像已包含根证书。
 
 应用始终提供 HTTP 服务，HTTPS 由已有 Nginx、Caddy 等反向代理负责。浏览器访问工作台的 HTTPS 域名，代理转发到本机 HTTP 端口。应用使用 `WORKBENCH_PUBLIC_URL` 确定外部来源和安全 Cookie 属性；该地址不是监听地址，也不会让应用加载证书。
 
@@ -10,9 +10,12 @@ Workbench 发布 Linux amd64、arm64 二进制包，以及相同架构的 Docker
 |---|---|---|---|
 | 本机试用 | 解压二进制包 | `127.0.0.1:8080`，默认 local 模式 | `~/.workbench/data.db` |
 | 二进制 + systemd | 解压后安装 `workbench` | `127.0.0.1:8080`，密码模式 | `/var/lib/workbench/` |
-| Docker Compose | 从 GHCR 拉取指定版本镜像 | 容器内 `0.0.0.0:8080`，宿主机仅发布到 `127.0.0.1:8080` | Compose 命名卷 `/data` |
+| 源码 Docker Compose | 从当前源码构建本地镜像 | 容器内 `0.0.0.0:8080`，宿主机仅发布到 `127.0.0.1:8080` | PostgreSQL 与应用各使用命名卷 |
+| 发布镜像 Compose | 从 GHCR 拉取指定版本镜像 | 与源码 Compose 相同 | PostgreSQL 与应用各使用命名卷 |
 
-同一工作空间只运行一个实例。SQLite 使用文件锁和 WAL，应放在本地持久化磁盘；容器挂载整个 `/data`，包含主数据库、WAL、SHM、锁文件和 `backups/`。不要只挂载 `data.db` 或让多个实例共享同一数据库。
+Compose 的 `postgres_data` 卷保存默认数据库，`workbench_data` 卷保存应用运行文件。切换 SQLite 后，数据库和备份也保存到 `workbench_data`。
+
+同一数据库只运行一个 Workbench 实例。SQLite 使用文件锁和 WAL，应放在本地持久化磁盘；容器挂载整个 `/data`，包含主数据库、WAL、SHM、锁文件和 `backups/`。PostgreSQL 使用独立会话的 advisory lock 限制同一数据库和 schema 的第二个实例启动；锁连接丢失后，当前实例停止数据库读写并变为未就绪，需重启。连接须保持会话绑定，不能通过事务池模式的代理连接。
 
 投资模块的 TradingView 库仍由应用从外部静态服务代理加载；行情、券商、AI 和 Wallos 联动也需要访问各自服务。单文件部署不等于全部功能离线运行。
 
@@ -31,12 +34,11 @@ cd workbench_v0.1.1_linux_amd64
 本机试用访问 `http://127.0.0.1:8080`。服务器部署使用密码和外部访问地址，例如：
 
 ```bash
-export WORKBENCH_PASSWORD='替换为独立的强密码'
 ./workbench -listen 127.0.0.1:8080 -data ./data/data.db \
   -auth password -public-url https://workbench.example.com
 ```
 
-随后按下文配置反向代理，从 `https://workbench.example.com` 登录。首次密码至少 8 个 Unicode 字符，且包含大写、小写、数字、特殊符号四类中的至少三类。密码哈希保存到数据库后可以移除启动环境中的初始密码；已有凭据时不会被该环境变量覆盖。
+随后从日志读取自动生成的初始密码，按下文配置反向代理，从 `https://workbench.example.com` 登录。首次登录必须设置新密码；新密码至少 8 个 Unicode 字符，且包含大写、小写、数字、特殊符号四类中的至少三类。
 
 ### systemd 托管
 
@@ -50,7 +52,7 @@ sudo install -m 0600 deploy/workbench.env.example /etc/workbench/workbench.env
 sudo install -m 0644 deploy/workbench.service /etc/systemd/system/workbench.service
 ```
 
-编辑 `/etc/workbench/workbench.env`，填写实际的外部 HTTPS 地址和初始密码，再启动：
+编辑 `/etc/workbench/workbench.env`，填写实际的外部 HTTPS 地址，再启动：
 
 ```bash
 sudo systemctl daemon-reload
@@ -59,49 +61,89 @@ sudo systemctl status workbench
 sudo journalctl -u workbench -f
 ```
 
+首次启动的初始密码在 `journalctl` 中输出，登录后必须立即修改。
+
 systemd 负责创建并赋予 `/var/lib/workbench` 正确的所有权和 0700 权限。环境文件使用 systemd `EnvironmentFile` 语法，不会执行 shell 变量展开。修改环境文件后执行 `sudo systemctl restart workbench`。
+
+## PostgreSQL 新部署
+
+先在 PostgreSQL 服务中创建空数据库和有权建表、建索引的账号。连接串只通过 `WORKBENCH_DATABASE_URL` 传入，不提供命令行参数。远程数据库示例启用 TLS：
+
+```bash
+mkdir -p ./data
+export WORKBENCH_DB_DRIVER=postgres
+export WORKBENCH_DATABASE_URL='postgresql://workbench:替换密码@db.example.com:5432/workbench?sslmode=require'
+export WORKBENCH_DATA='./data/data.db'
+./workbench -listen 127.0.0.1:8080
+```
+
+`WORKBENCH_DATA` 在 PostgreSQL 模式下不保存数据库，其父目录仍用于图表缓存、OpenD 运行内容等本地文件。持续部署时持久化该目录，并用仅运行用户可读的环境文件保存连接串。
+
+Compose 默认创建 PostgreSQL 服务。连接外部数据库时，在 `.env` 中保留 `WORKBENCH_DB_DRIVER=postgres`，并把连接串替换为外部地址：
+
+```dotenv
+WORKBENCH_DB_DRIVER=postgres
+WORKBENCH_DATABASE_URL=postgresql://workbench:替换密码@db.example.com:5432/workbench?sslmode=require
+```
+
+密码中的 `@`、`:`、`/`、`?`、`#`、`%` 等保留字符必须进行 URL 编码。内置 PostgreSQL 容器仍会启动，但应用只连接外部 DSN；不要把外部数据库端口发布到宿主机。`/data` 卷仍需保留本地运行文件。PostgreSQL 选项面向新工作空间，应用不把已有 SQLite 数据自动迁移到 PostgreSQL。
 
 ## Docker Compose 部署
 
-从 Release 下载 `workbench_<版本>_deployment.tar.gz` 并解压，或在仓库根目录使用 `compose.yaml`。部署文件包包含 Compose、环境示例、代理配置和文档，无需拉取源码或在服务器编译。
+仓库根目录的 `compose.yaml` 从当前源码构建 `workbench:local`，并启动 PostgreSQL 17 Alpine。PostgreSQL 不发布宿主机端口，Workbench 在数据库健康后启动。
 
 ```bash
 cp .env.example .env
 chmod 600 .env
+docker compose up -d --build
+docker compose logs workbench
 ```
 
-编辑 `.env`：
+首次启动会自动生成初始密码并写入 `workbench` 容器日志。使用该密码登录后必须立即设置新密码。后续启动沿用数据库中的凭据，不再生成新密码。
 
-```dotenv
-WORKBENCH_IMAGE=ghcr.io/amaoworks/workbench
-WORKBENCH_VERSION=v0.1.1
-WORKBENCH_PORT=8080
-WORKBENCH_PUBLIC_URL=https://workbench.example.com
-WORKBENCH_PASSWORD='填写独立的强密码'
-```
+`.env.example` 默认监听宿主机 `127.0.0.1:8080`，使用内置 PostgreSQL，并以 `workbench-local` 作为开发数据库密码。运行前应替换 `POSTGRES_PASSWORD`；`WORKBENCH_DATABASE_URL` 使用 Compose 变量插值同步账号、密码、端口和数据库名。密码包含连接串保留字符时必须进行 URL 编码。`.env` 已被 Git 和 Docker 构建上下文排除。
 
-`WORKBENCH_VERSION` 必须为已发布的版本标签。密码包含 `$`、`#` 等字符时使用单引号，按 Compose 的 `.env` 规则保留字面值；`.env` 已被 Git 和 Docker 构建上下文排除。AI、Wallos、Schwab 和富途账号等业务配置在工作台设置页面保存；OpenD 连接地址和非本机许可由部署配置管理。
+本机同源访问保持 `WORKBENCH_PUBLIC_URL` 和 `WORKBENCH_CORS_ALLOW_ORIGIN` 为空。跨源前端调用时，后者填写以逗号分隔的完整来源白名单。通过反向代理公开时填写 `WORKBENCH_PUBLIC_URL=https://实际域名`，并相应调整 `WORKBENCH_ALLOWED_HOSTS`。默认的 `WORKBENCH_ALLOW_INSECURE_HTTP=true` 明确允许本机 HTTP 入口。
 
-夜盘覆盖需要单独的 OpenD 进程，不要打进 workbench 镜像。配套容器使用源码仓库的 [futu-opend](https://github.com/amaoworks/WorkBench/tree/main/futu-opend) 目录。Release 的部署包和二进制包均不包含该目录；使用部署包时，先从同版本标签的源码归档中复制完整的 `futu-opend/` 目录到 `compose.yaml` 同级，再执行以下命令。也可直接在同版本源码仓库根目录操作。
+切换 SQLite 只需设置 `WORKBENCH_DB_DRIVER=sqlite`；`WORKBENCH_DATA=/data/data.db` 已指向持久化卷。默认 Compose 仍会启动 PostgreSQL 服务。复用已经构建的 `workbench:local` 镜像时执行：
 
 ```bash
-# 当前目录须有 compose.yaml、同版本 futu-opend/ 和已配置的根目录 .env
+docker compose up -d --no-build
+```
+
+AI、Wallos、Schwab 和富途账号等业务配置在工作台设置页面保存；OpenD 连接地址和非本机许可由部署配置管理。
+
+夜盘覆盖使用独立的 OpenD 容器，构建文件位于源码仓库的 [futu-opend](https://github.com/amaoworks/WorkBench/tree/main/futu-opend) 目录。Release 的部署包和二进制包均不包含该目录；使用部署包时，从同版本标签的源码归档中复制完整的 `futu-opend/` 目录到部署包根目录。
+
+```bash
+# 当前目录须有源码仓库的 compose.yaml、futu-opend/ 和已配置的根目录 .env
 docker compose -f compose.yaml -f futu-opend/compose.workbench.yaml --env-file .env up -d --build
+# 发布镜像部署包使用 compose.image.yaml
+docker compose -f compose.image.yaml -f futu-opend/compose.workbench.yaml --env-file .env up -d --build
 ```
 
 在「设置 → 业务模块 → 投资设置」填写 Futu 账号和登录密码，保存并启用 Futu，然后单独启用夜盘。主机、端口和非本机许可已由配套 Compose 配置；独立部署使用 `WORKBENCH_FUTU_OPEND_ADDRESS`、`WORKBENCH_FUTU_ALLOW_NON_LOCAL`。需要使用支持共享登录配置的当前工作台镜像和配套 OpenD 镜像。首次登录若要求验证码，telnet `127.0.0.1:22222`。独立 OpenD 与账号保留规则见源码中的 `futu-opend/README.md`；在线说明见 [OpenD 部署说明](https://github.com/amaoworks/WorkBench/blob/main/futu-opend/README.md)。
 
-```bash
-docker compose config --quiet
-docker compose pull
-docker compose up -d --wait
-docker compose ps
-docker compose logs -f --tail 100 workbench
+配置宿主机反向代理后，通过 `.env` 中的 HTTPS 地址访问。Workbench 容器始终以 UID/GID `65532:65532` 运行，根文件系统只读，`/data` 可写，`/tmp` 为临时内存文件系统。日志输出到 stderr，并由 Compose 配置滚动保存。命名卷首次创建时继承镜像中 `/data` 的权限。
+
+日常使用 `docker compose stop` 或 `docker compose down` 停止服务并保留 `workbench_data` 与 `postgres_data`。`docker compose down --volumes` 会同时删除应用运行文件和内置 PostgreSQL 数据，不用于升级或常规停机。
+
+### 使用发布镜像
+
+从 Release 下载 `workbench_<版本>_deployment.tar.gz` 并解压，复制 `.env.example` 为 `.env`。部署包提供独立的 `compose.image.yaml`，无需源码或本地编译。编辑 `.env` 中的数据库密码与发布版本后启动：
+
+```dotenv
+WORKBENCH_IMAGE=ghcr.io/amaoworks/workbench
+WORKBENCH_VERSION=v0.1.1
 ```
 
-配置宿主机反向代理后，通过 `.env` 中的 HTTPS 地址访问。容器始终以 UID/GID `65532:65532` 运行，根文件系统只读，`/data` 可写，`/tmp` 为临时内存文件系统。日志输出到 stderr，并由 Compose 配置滚动保存。命名卷首次创建时继承镜像中 `/data` 的权限。
+```bash
+docker compose -f compose.image.yaml pull
+docker compose -f compose.image.yaml up -d
+docker compose -f compose.image.yaml logs workbench
+```
 
-已有凭据后，可以把 `.env` 中的 `WORKBENCH_PASSWORD` 清空，再执行 `docker compose up -d`；原密码继续生效。日常使用 `docker compose stop` 或 `docker compose down` 停止服务并保留数据卷。`docker compose down --volumes` 会删除数据，不用于升级或常规停机。
+`WORKBENCH_VERSION` 必须为已发布标签。导入 Actions 生成的 Docker 镜像包后，可把镜像名和版本改为导入时显示的本地值，再执行 `up -d --no-build`。
 
 GHCR 公共镜像允许匿名拉取；私有镜像需要先用有读取该包权限的凭据登录 `ghcr.io`。仓库公开并不自动使新建的 GHCR 包公开，首次发布后需核对 Package 的可见性和 Actions 访问权限。[GHCR 文档](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
 
@@ -112,14 +154,20 @@ GHCR 公共镜像允许匿名拉取；私有镜像需要先用有读取该包权
 仓库提供 `deploy/compose.proxy.yaml`，删除宿主机端口映射并加入已有网络。示例网络名为 `proxy`；可通过 `WORKBENCH_PROXY_NETWORK` 指定已有网络名：
 
 ```bash
-docker compose -f compose.yaml -f deploy/compose.proxy.yaml up -d --wait
+docker compose -f compose.yaml -f deploy/compose.proxy.yaml up -d --build
 ```
 
-先确认网络已存在且代理已加入。此后更新、停止和查看日志均使用相同的两个 `-f` 参数。网络应允许 Workbench 访问外部服务，仅连接受信任的容器。覆盖文件的 `!reset` 语法需要 Docker Compose 2.24.4 或更新版本。
+发布镜像部署改用：
+
+```bash
+docker compose -f deploy/compose.image.yaml -f deploy/compose.proxy.yaml up -d
+```
+
+先确认网络已存在且代理已加入。覆盖文件在保留默认网络的同时加入代理网络，因此 Workbench 仍可访问 `postgres`。此后更新、停止和查看日志均使用相同的两个 `-f` 参数。网络应允许 Workbench 访问外部服务，仅连接受信任的容器。覆盖文件的 `!reset` 语法需要 Docker Compose 2.24.4 或更新版本。
 
 ### 使用宿主机目录
 
-需要直接查看备份文件时，可将 `workbench_data:/data` 改成 `./data:/data`。启动前创建目录并设置权限：
+需要直接查看 SQLite 备份文件或 PostgreSQL 模式的本地运行文件时，可将 `workbench_data:/data` 改成 `./data:/data`。启动前创建目录并设置权限：
 
 ```bash
 mkdir -p data
@@ -127,7 +175,7 @@ sudo chown 65532:65532 data
 sudo chmod 700 data
 ```
 
-迁入已有工作空间时，先停止旧进程，复制完整目录，再让其中的数据库、运行文件和备份归属 UID/GID `65532:65532`。原生二进制和 Docker 使用同一数据库格式，但不可同时打开同一工作空间。Rootless Docker 或用户命名空间映射环境需使用实际映射到宿主机的 UID/GID。
+迁入已有 SQLite 工作空间时，先停止旧进程，复制完整目录，再让其中的数据库、运行文件和备份归属 UID/GID `65532:65532`。原生二进制和 Docker 使用同一 SQLite 格式，但不可同时打开同一工作空间。PostgreSQL 部署的数据库备份与搬迁由数据库服务管理，本地目录仍需单独搬运。Rootless Docker 或用户命名空间映射环境需使用实际映射到宿主机的 UID/GID。
 
 ## 反向代理
 
@@ -151,31 +199,35 @@ docker compose exec -T workbench /workbench -healthcheck
 docker compose exec -T workbench /workbench -version
 ```
 
+发布镜像部署在上述命令的 `compose` 后加 `-f deploy/compose.image.yaml`。
+
 二进制也支持 `-healthcheck`，需使用与服务一致的监听地址、外部 URL 或允许 Host。成功退出码为 0，失败为非 0。此探针验证应用及数据库；外部证书、DNS、代理可用性需从实际 HTTPS 入口检查。
 
 ## 升级、备份与恢复
 
-1. 在设置的「数据与运行」创建在线备份，并把备份保存到工作空间以外的位置。备份包含业务数据和凭据，应限制读取权限。
-2. 停止服务。二进制部署更换可执行文件；Compose 修改 `.env` 的版本后执行 `docker compose pull` 和 `docker compose up -d --wait`，保留原数据卷及项目名。
+1. SQLite 在设置的「数据与运行」创建在线备份，并把备份保存到工作空间以外的位置。PostgreSQL 使用数据库服务备份或 `pg_dump`，应用不内置该工具。备份包含业务数据和凭据，应限制读取权限。
+2. 停止服务。二进制部署更换可执行文件；源码 Compose 更新源码后执行 `docker compose up -d --build`；发布镜像 Compose 修改 `.env` 的版本后使用 `deploy/compose.image.yaml` 执行 `pull` 和 `up -d`。保留原数据卷及 Compose 项目名。
 3. 检查版本、健康状态和日志，登录确认数据。首次启动会执行所需数据库迁移。
 
-命名卷中的备份可复制到宿主机，例如将返回的文件名代入：
+SQLite 命名卷中的备份可复制到宿主机，例如将返回的文件名代入：
 
 ```bash
 docker compose cp workbench:/data/backups/备份文件名.db ./workbench-backup.db
 ```
 
-回退前先停止服务并保留当前完整工作空间。旧版本未必兼容升级后的数据库，必要时同时恢复升级前备份：将备份复制到新的数据目录，使用该目录和原版本启动。不要把旧 WAL 与恢复的数据库混用，也不要向运行中的数据库覆盖文件。详细恢复语义见[配置与运行](configuration.md#备份和恢复)。
+发布镜像部署同样在 `compose` 后加 `-f deploy/compose.image.yaml`。
+
+回退前先停止服务并保留当前完整工作空间。旧版本未必兼容升级后的数据库。SQLite 必要时将升级前备份复制到新的数据目录，使用该目录和原版本启动；不要把旧 WAL 与恢复的数据库混用，也不要向运行中的数据库覆盖文件。PostgreSQL 使用数据库服务的恢复流程。详细恢复语义见[配置与运行](configuration.md#备份和恢复)。
 
 ## 从源码构建
 
 ```bash
 ./scripts/build.sh
 ./workbench -version
-docker build -t workbench:local .
+docker compose up -d --build
 ```
 
-使用本地镜像运行 Compose 时，在 `.env` 中设置 `WORKBENCH_IMAGE=workbench`、`WORKBENCH_VERSION=local`，保留外部地址和密码配置，再执行 `docker compose up -d --wait`。
+根 Compose 固定使用本地镜像名 `workbench:local`，`up -d --build` 会从当前源码构建应用。镜像已存在时使用 `docker compose up -d --no-build`。
 
 `scripts/build.sh` 执行 `npm ci`、前端生产构建和 `scripts/compile.sh`。`compile.sh` 强制 `CGO_ENABLED=0`，支持 `GO_BIN`、`GOOS`、`GOARCH`、`OUTPUT`、`VERSION`、`COMMIT`、`BUILD_DATE`；直接调用前应构建最新前端。
 
@@ -187,7 +239,7 @@ Dockerfile 从源码多阶段构建，忽略本地 `internal/webui/dist` 并重�
 VERSION=v0.1.1 ./scripts/release.sh
 ```
 
-产物位于 `dist/release/v0.1.1/`，包括两个 Linux 压缩包、部署文件包和 `SHA256SUMS`。本地打包需要 Go、Node.js/npm、tar 及 sha256sum；Go、前端依赖和 sqlc 要求见[配置与运行](configuration.md)。
+产物位于 `dist/release/v0.1.1/`，包括两个 Linux 压缩包、发布镜像部署文件包和 `SHA256SUMS`。部署文件包使用 `deploy/compose.image.yaml`，不包含需要源码构建的根 `compose.yaml`。本地打包需要 Go、Node.js/npm、tar 及 sha256sum；Go、前端依赖和 sqlc 要求见[配置与运行](configuration.md)。
 
 ## GitHub Actions 编译与发布
 
@@ -197,7 +249,7 @@ VERSION=v0.1.1 ./scripts/release.sh
 
 主分支推送及手动分支构建还通过 `scripts/export-build.sh` 从已经验证的镜像中提取相同的静态二进制，导出 Docker 镜像和部署文件包，并验证导出的二进制。构建版本为 `v0.0.0-dev.<运行序号>-<短提交号>`，产物上传到该次运行的 **Artifacts**，按架构分为 `workbench-linux-amd64-<提交号>`、`workbench-linux-arm64-<提交号>`，保留 14 天。PR 执行检查和镜像验证，正式标签的产物由 Release 工作流发布。
 
-下载 artifact ZIP 并解压后，先运行 `sha256sum --check SHA256SUMS`。二进制包解压即可运行；`*_docker.tar.gz` 使用 `docker load --input 文件名` 导入，镜像名为 `workbench:sha-<完整提交号>`。Compose 设置 `WORKBENCH_IMAGE=workbench`、`WORKBENCH_VERSION=sha-<完整提交号>`，其余配置与正常部署一致。普通构建不推送 GHCR，也不创建正式 Release。
+下载 artifact ZIP 并解压后，先运行 `sha256sum --check SHA256SUMS`。二进制包解压即可运行；`*_docker.tar.gz` 使用 `docker load --input 文件名` 导入，镜像名为 `workbench:sha-<完整提交号>`。在 `.env` 设置 `WORKBENCH_IMAGE=workbench`、`WORKBENCH_VERSION=sha-<完整提交号>`，使用 `deploy/compose.image.yaml` 启动。普通构建不推送 GHCR，也不创建正式 Release。
 
 
 `.github/workflows/release.yml` 在推送 `v*` 标签时触发。接受 `vMAJOR.MINOR.PATCH` 及预发布后缀，例如 `v0.1.1-rc.1`，不使用带 `+` 的构建元数据。正式包只能从 `main` 产出：标签指向的提交必须已经包含在 `origin/main` 中。先推送 `main`，再在该提交上打标签。

@@ -14,7 +14,7 @@ import (
 	"workbench/internal/modules/todo/sqlc"
 )
 
-//go:embed migrations/*.sql
+//go:embed migrations/*.sql migrations-postgres/*.sql
 var migrations embed.FS
 
 type Module struct {
@@ -41,7 +41,7 @@ func (m *Module) Manifest() contracts.ModuleManifest {
 }
 
 func (m *Module) Migrations() contracts.MigrationSet {
-	return contracts.MigrationSet{FS: migrations, Dir: "migrations"}
+	return contracts.MigrationSet{FS: migrations, Dir: "migrations", PostgresDir: "migrations-postgres"}
 }
 
 func (m *Module) Register(r contracts.ModuleRegistrar) error {

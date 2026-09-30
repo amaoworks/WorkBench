@@ -38,9 +38,11 @@
     import { createSessionMenu } from "/investment/terminal/session-menu.js";
     import { bindTheme } from "/investment/terminal/theme.js";
     import { loadWatchlists, bindWatchlists } from "/investment/terminal/watchlists.js";
+    import { loadChartState, saveChartState, requiresMinuteResolution } from "/investment/terminal/chart-state.js";
 
     const params = new URLSearchParams(location.search);
     const theme = params.get("theme") === "dark" ? "dark" : "light";
+    const initialChartState = loadChartState();
     window.ws = new SchwabStream();
     window.futu = new FutuStream();
     const status = document.getElementById('stream-status');
@@ -49,8 +51,8 @@
       status.hidden = false;
       window.parent.postMessage({ type: 'workbench.schwab.status_changed' }, location.origin);
     });
-    let broker, widget, unbindTheme, watchlistSync, sessionMenu, intervalSubscription, symbolSubscription, nightResolutionTimer, sessionToastTimer, disposed = false;
-    let resolvedSession = 'regular', pendingSession = null, latestSessionResolution;
+    let broker, widget, unbindTheme, watchlistSync, sessionMenu, intervalSubscription, symbolSubscription, sessionResolutionTimer, sessionToastTimer, disposed = false, chartInitialized = false;
+    let resolvedSession = initialChartState.session, pendingSession = null, latestSessionResolution;
     const sessionToast = document.getElementById('session-toast');
     const showSessionToast = message => {
       clearTimeout(sessionToastTimer);
@@ -58,42 +60,52 @@
       sessionToast.hidden = false;
       sessionToastTimer = setTimeout(() => { sessionToast.hidden = true; }, 2600);
     };
-    const minuteRestrictedSession = session => session === 'night' || session === EQUITY_24H_SESSION;
+    const sessionLabel = session => session === EQUITY_24H_SESSION ? '全天' : session === 'extended' ? '扩展' : '夜盘';
     const intervalNotice = session => session === EQUITY_24H_SESSION
       ? '全天行情仅支持 1、5、15、30 分钟，已切换到 5 分钟'
-      : '夜盘仅支持 1、5、15、30 分钟，已切换到 5 分钟';
+      : session === 'extended' ? '扩展行情已切换到 5 分钟' : '夜盘仅支持 1、5、15、30 分钟，已切换到 5 分钟';
+    const persistChartState = () => {
+      if (!chartInitialized || disposed) return;
+      const chart = widget.activeChart();
+      saveChartState({ symbol: chart.symbol(), resolution: String(chart.resolution()), session: activeSession() });
+    };
     const ensureSessionResolution = session => {
-      if (!minuteRestrictedSession(session) || NIGHT_RESOLUTIONS.has(String(widget.activeChart().resolution()))) return;
+      if (!requiresMinuteResolution(session) || NIGHT_RESOLUTIONS.has(String(widget.activeChart().resolution()))) return;
       void widget.activeChart().setResolution('5').then(() => {
         if (disposed || activeSession() !== session) return;
         showSessionToast(widget.activeChart().resolution() === '5'
           ? intervalNotice(session)
-          : `无法自动切换${session === EQUITY_24H_SESSION ? '全天' : '夜盘'}周期，请选择 1、5、15、30 分钟`);
+          : `无法自动切换${sessionLabel(session)}周期，请选择 1、5、15、30 分钟`);
+        persistChartState();
       }).catch(error => {
-        if (!disposed && activeSession() === session) showSessionToast(`无法自动切换${session === EQUITY_24H_SESSION ? '全天' : '夜盘'}周期，请选择 1、5、15、30 分钟`);
+        if (!disposed && activeSession() === session) showSessionToast(`无法自动切换${sessionLabel(session)}周期，请选择 1、5、15、30 分钟`);
         console.error('切换行情周期失败', error);
       });
     };
     const activeSession = () => pendingSession || resolvedSession;
     const selectSession = session => {
       if (!widget || disposed) return;
+      if (session === activeSession() && (!requiresMinuteResolution(session) || NIGHT_RESOLUTIONS.has(String(widget.activeChart().resolution())))) return;
       pendingSession = session;
-      if (session !== 'night') clearTimeout(nightResolutionTimer);
+      clearTimeout(sessionResolutionTimer);
       widget.applyOverrides({ 'mainSeriesProperties.sessionId': session });
-      if (minuteRestrictedSession(session)) ensureSessionResolution(session);
+      ensureSessionResolution(session);
+      persistChartState();
     };
     const onSymbolChanged = symbolInfo => {
       if (disposed) return;
       const desiredSession = activeSession();
       const interval = String(widget.activeChart().resolution());
       // TV can resolve regular metadata while changing to a daily interval.
-      // Preserve the requested Night/24H session until its interval is corrected.
-      if (minuteRestrictedSession(desiredSession) && !NIGHT_RESOLUTIONS.has(interval) &&
+      // Preserve the requested intraday session until its interval is corrected.
+      if (requiresMinuteResolution(desiredSession) && !NIGHT_RESOLUTIONS.has(interval) &&
           symbolInfo.subsessions?.some(item => item.id === desiredSession)) {
         pendingSession = desiredSession;
         onIntervalChanged(interval);
         return;
       }
+      if (pendingSession && (symbolInfo.subsession_id || 'regular') !== pendingSession &&
+          symbolInfo.subsessions?.some(item => item.id === pendingSession)) return;
       // TradingView may reuse cached symbol metadata without calling the datafeed
       // again. Follow the chart event as well so RTH → Night → ETH → RTH stays in sync.
       resolvedSession = symbolInfo.subsession_id || 'regular';
@@ -103,7 +115,8 @@
         symbolInfo.subsessions?.some(item => item.id === 'night'),
         symbolInfo.subsessions?.some(item => item.id === EQUITY_24H_SESSION),
       );
-      if (resolvedSession !== 'night') clearTimeout(nightResolutionTimer);
+      clearTimeout(sessionResolutionTimer);
+      persistChartState();
     };
     const savedWatchlists = loadWatchlists().then(value => ({ value }), error => ({ error }));
     const datafeed = new Datafeed({ futuStream: window.futu, onSessionResolved: resolution => {
@@ -113,9 +126,9 @@
         const activeSymbol = widget?.activeChart().symbol();
         if (activeSymbol && symbolKey(activeSymbol) !== symbolKey(resolution.symbol)) return;
       } catch { /* TradingView may resolve the first symbol before activeChart is ready. */ }
-      // A slower resolveSymbol response from an older menu choice must not roll
-      // the control back after the user has already requested another session.
-      if (pendingSession && resolution.requestedSession !== pendingSession) return;
+      // Watchlists can resolve the chart's symbol in regular hours independently.
+      // Ignore those callbacks and old menu choices even after a switch completes.
+      if (resolution.requestedSession !== activeSession()) return;
       latestSessionResolution = resolution;
       resolvedSession = resolution.session;
       if (pendingSession === resolution.requestedSession) pendingSession = null;
@@ -128,6 +141,7 @@
         widget.applyOverrides({ 'mainSeriesProperties.sessionId': 'regular' });
         showSessionToast(`当前标的不支持${resolution.requestedSession === EQUITY_24H_SESSION ? '全天行情' : '夜盘'}，已切回常规时段`);
       }
+      persistChartState();
     }, resetCharts: () => {
       widget.chartReady().then(() => {
         if (disposed || !window.ws.ready) return;
@@ -136,8 +150,9 @@
       }).catch(() => { status.hidden = false; });
     } });
     window.addEventListener('pagehide', () => {
+      persistChartState();
       disposed = true;
-      clearTimeout(nightResolutionTimer);
+      clearTimeout(sessionResolutionTimer);
       clearTimeout(sessionToastTimer);
       intervalSubscription?.unsubscribe(null, onIntervalChanged);
       symbolSubscription?.unsubscribe(null, onSymbolChanged);
@@ -145,12 +160,15 @@
       unbindTheme?.(); watchlistSync?.dispose(); window.ws.close(); window.futu.close(); datafeed.destroy(); broker?.destroy();
     });
     const onIntervalChanged = interval => {
-      if (!minuteRestrictedSession(activeSession()) || NIGHT_RESOLUTIONS.has(String(interval))) return;
+      if (!requiresMinuteResolution(activeSession()) || NIGHT_RESOLUTIONS.has(String(interval))) {
+        persistChartState();
+        return;
+      }
       // Let TradingView finish the current interval change before correcting it.
-      clearTimeout(nightResolutionTimer);
-      nightResolutionTimer = setTimeout(() => {
+      clearTimeout(sessionResolutionTimer);
+      sessionResolutionTimer = setTimeout(() => {
         const session = activeSession();
-        if (disposed || !minuteRestrictedSession(session) || NIGHT_RESOLUTIONS.has(String(widget.activeChart().resolution()))) return;
+        if (disposed || !requiresMinuteResolution(session) || NIGHT_RESOLUTIONS.has(String(widget.activeChart().resolution()))) return;
         selectSession(session);
       }, 200);
     };
@@ -160,8 +178,9 @@
       container: "tv_chart_container",
       library_path: "/charting_library/quotes-v1/",
       custom_css_url: "/investment/terminal/custom.css",
-      symbol: params.get("symbol") || "AAPL",
-      interval: "1D",
+      symbol: params.get("symbol") || initialChartState.symbol,
+      interval: initialChartState.resolution,
+      overrides: { 'mainSeriesProperties.sessionId': initialChartState.session },
       theme,
       locale: "zh",
       custom_translate_function: (originalText) => {
@@ -213,6 +232,8 @@
       intervalSubscription.subscribe(null, onIntervalChanged);
       symbolSubscription = widget.activeChart().onSymbolChanged();
       symbolSubscription.subscribe(null, onSymbolChanged);
+      chartInitialized = true;
+      onSymbolChanged(widget.activeChart().symbolExt());
       // The chart can paint before watchlist restoration. Keeping the cover up
       // waits on another widget bundle and hides an already drawn chart.
       window.terminalLoad.ready();

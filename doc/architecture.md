@@ -1,6 +1,6 @@
 # 架构与目录
 
-Workbench 是本地优先、单用户的个人工作台。当前采用 Go 模块化单体、React 前端和共享 SQLite 工作空间；前端生产资源嵌入 Go 程序。运行时还会产生 SQLite WAL、锁文件和备份，详见[数据设计](data-model.md)。
+Workbench 是本地优先、单用户的个人工作台。当前采用 Go 模块化单体、React 前端和共享数据库工作空间；原生运行默认 SQLite，Docker Compose 默认 PostgreSQL。前端生产资源嵌入 Go 程序，数据库与本地运行目录见[数据设计](data-model.md)。
 
 ## 三层职责
 
@@ -21,7 +21,7 @@ internal/
   contracts/                   Module、外部协议类型、可选生命周期/路由、Event、Job、AI、Notification、Widget
   foundation/
     auth/                      凭据、Session、Host/Origin/CSRF
-    database/                  SQLite、迁移、备份及平台 SQL
+    database/                  SQLite/PostgreSQL、迁移、SQLite 备份及平台 SQL
     events/                    事务事件存储与投递
     modules/                   内置与外部目录、启停门控、外部控制客户端与同源代理
     httpapi/                   JSON 请求与响应
@@ -79,7 +79,7 @@ contracts → 标准库
 
 ## 装配与启停
 
-[App.New](../internal/app/app.go) 打开并锁定数据库、执行平台迁移，创建通用服务与业务模块。Registry 校验模块声明、执行模块迁移、收集注册资源、同步模块元数据并加载启停状态，对所有实现 `ModuleLifecycle` 的模块恢复持久化意图；随后装配通知 SSE、事件投递、调度、鉴权、AI、对话和 HTTP 路由，加载持久化设置。
+[App.New](../internal/app/app.go) 打开并锁定所选数据库、执行对应方言的平台迁移，创建通用服务与业务模块。SQLite 使用工作空间文件锁；PostgreSQL 使用独立连接持有同一数据库和 schema 范围的 advisory lock。Registry 校验模块声明、执行对应方言的模块迁移、收集注册资源、同步模块元数据并加载启停状态，对所有实现 `ModuleLifecycle` 的模块恢复持久化意图；随后装配通知 SSE、事件投递、调度、鉴权、AI、对话和 HTTP 路由，加载持久化设置。
 
 注册目录先在内存收集并校验，失败时不发布可用目录。模块迁移在注册目录构建前执行，不与全部注册操作组成一个可回滚事务。
 
@@ -91,7 +91,7 @@ contracts → 标准库
 
 ## 关键协作流程
 
-- 业务写入与领域事件使用同一数据库事务。Dispatcher 为消费者生成投递记录、领取租约并执行，失败按策略重试，超过次数记为 `dead`；业务消费者承担幂等处理。
+- 业务写入与领域事件使用同一 `*sql.Tx`。PostgreSQL 默认以 Serializable 开启显式事务，序列化冲突会回滚并返回错误。Dispatcher 为消费者生成投递记录、领取租约并执行，失败按策略重试，超过次数记为 `dead`；业务消费者承担幂等处理。
 - Job 的定义来自代码，数据库保存调度状态和运行记录。支持 cron、interval、once，运行前检查模块状态；恢复时依据 misfire 配置跳过或补跑一次。
 - 通知服务统一保存通知及变更事件。SSE 将变更告知浏览器，浏览器再查询通知数据；它不提供完整事件历史回放。
 - 对话使用 AI Gateway，可调用启用模块注册的 Tool；业务主动生成文本使用 `contracts.TextGenerator`，该接口不执行业务工具。两者共享设置中的 Provider，保存设置后新请求使用新配置。

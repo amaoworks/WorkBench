@@ -39,7 +39,7 @@ WHERE id = sqlc.arg(id);
 UPDATE scheduled_jobs SET last_run_at = ?, updated_at = ? WHERE id = ?;
 
 -- name: GetScheduledJobMaxAttempt :one
-SELECT CAST(COALESCE(MAX(attempt), 0) AS INTEGER) FROM scheduled_job_runs
+SELECT CAST(COALESCE(MAX(attempt), 0) AS BIGINT) FROM scheduled_job_runs
 WHERE job_id = ? AND scheduled_at = ?;
 
 -- name: ClearScheduledJobNextRun :exec

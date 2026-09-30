@@ -1,6 +1,6 @@
 # Workbench
 
-Workbench 是本地优先、单用户的个人工作台，采用 Go 模块化单体、React 前端和 SQLite 工作空间。前端资源嵌入可执行文件，平台统一提供鉴权、事件、调度、AI、通知、总览和设置。
+Workbench 是本地优先、单用户的个人工作台，采用 Go 模块化单体、React 前端和共享数据库工作空间。二进制默认使用 SQLite，Docker Compose 默认配套 PostgreSQL。前端资源嵌入可执行文件，平台统一提供鉴权、事件、调度、AI、通知、总览和设置。
 
 当前业务包括待办及 Wallos 订阅提醒、投资（Schwab 行情、账户和 TradingView 终端）。业务可在设置中启停，数据和总览布局偏好会保留。新增业务按模块扩展，前后端使用对应的模块目录。
 
@@ -11,49 +11,35 @@ Workbench 是本地优先、单用户的个人工作台，采用 Go 模块化单
 - **价格预警**：美股/ETF 分钟级价格监控，支持站内通知与 Telegram 自动推送。
 - **AI 助手**：内置对话面板，支持动态调用已启用的业务工具。
 - **总览看板**：可定制卡片显隐、排序、尺寸与布局偏好。
-- **独立可控**：单可执行文件内嵌前端，本地 SQLite 持久化，支持零外部依赖单机运行或容器部署。
+- **独立可控**：单可执行文件内嵌前端，可使用本地 SQLite 或 PostgreSQL，支持单机运行或容器部署。
 
 ## Docker Compose 部署
 
-从 [GitHub Releases](https://github.com/amaoworks/WorkBench/releases) 下载 `workbench_<版本>_deployment.tar.gz` 并解压，或在本仓库根目录操作。程序镜像为 `ghcr.io/amaoworks/workbench`，支持 Linux amd64/arm64。
+仓库根目录的 Compose 从当前源码构建 Workbench，并启动 PostgreSQL 17 Alpine。复制环境示例后直接启动：
 
 ```bash
 cp .env.example .env
 chmod 600 .env
 ```
 
-编辑 `.env`，填写已发布版本、反向代理的外部地址和首次登录密码：
-
-```dotenv
-WORKBENCH_IMAGE=ghcr.io/amaoworks/workbench
-WORKBENCH_VERSION=v0.1.1
-WORKBENCH_PORT=8080
-WORKBENCH_PUBLIC_URL=https://workbench.example.com
-WORKBENCH_PASSWORD='替换为自己的强密码'
+```bash
+docker compose up -d --build
+docker compose logs workbench
 ```
 
-`v0.1.1` 是示例，请使用实际已发布的版本。首次密码至少 8 个字符，包含大写、小写、数字、特殊符号四类中的至少三类。配置后启动：
+应用只提供 HTTP，Compose 默认将端口发布到宿主机 `127.0.0.1:8080`。首次启动自动生成初始密码并写入 `workbench` 容器日志；用该密码登录后必须立即设置新密码。`.env.example` 默认使用内置 PostgreSQL，开发环境应先替换其中的数据库密码。切换 SQLite 只需把 `WORKBENCH_DB_DRIVER` 改为 `sqlite`，PostgreSQL 容器仍会启动。
+
+PostgreSQL 数据保存在 `postgres_data` 卷。应用的 `/data` 卷仍保存图表缓存和 OpenD 运行内容；SQLite 模式也把数据库及备份保存在该卷。`docker compose down` 保留两个数据卷，`docker compose down --volumes` 会删除它们。
+
+由 Nginx/Caddy 提供 HTTPS 时设置 `WORKBENCH_PUBLIC_URL`，代理需要保留原始 Host、支持 WebSocket 和 SSE；模板见 [Nginx](deploy/nginx.conf.example)、[Caddy](deploy/Caddyfile.example)。已有反代也运行在容器内时，使用[容器网络覆盖配置](deploy/compose.proxy.yaml)，同一网络的上游地址为 `http://workbench:8080`。
+
+复用已经构建的本地镜像时跳过构建：
 
 ```bash
-docker compose pull
-docker compose up -d --wait
-docker compose ps
-docker compose logs -f --tail 100 workbench
+docker compose up -d --no-build
 ```
 
-应用只提供 HTTP，Compose 默认将端口发布到宿主机 `127.0.0.1:8080`，由 Nginx/Caddy 反代并提供 HTTPS。代理需要保留原始 Host、支持 WebSocket 和 SSE；模板见 [Nginx](deploy/nginx.conf.example)、[Caddy](deploy/Caddyfile.example)。通过 `.env` 中配置的 HTTPS 地址访问和登录。
-
-数据保存在挂载到 `/data` 的持久化卷，包含数据库和备份。升级时先在设置中备份，再修改 `.env` 的版本，执行 `docker compose pull && docker compose up -d --wait`。`docker compose down` 保留数据，`docker compose down --volumes` 会删除数据卷。
-
-已有反代也运行在容器内时，使用[容器网络覆盖配置](deploy/compose.proxy.yaml)，同一网络的上游地址为 `http://workbench:8080`。完整部署、权限及恢复步骤见[部署与发布](doc/deployment.md)。
-
-尚未发布版本时，也可在仓库根目录先构建本地镜像：
-
-```bash
-docker build -t workbench:local .
-# 在 .env 中设置 WORKBENCH_IMAGE=workbench、WORKBENCH_VERSION=local
-docker compose up -d --wait
-```
+Release 部署包使用独立的 `compose.image.yaml` 拉取 GHCR 镜像。完整的源码部署、发布镜像、外部 PostgreSQL、权限及恢复步骤见[部署与发布](doc/deployment.md)。
 
 ## 二进制部署
 
@@ -67,7 +53,7 @@ cd workbench_v0.1.1_linux_amd64
 ./workbench
 ```
 
-默认访问 `http://127.0.0.1:8080`，数据保存在 `~/.workbench/data.db`。前端、迁移和时区数据已嵌入，无需安装 Go、Node.js 或数据库服务。服务器反代部署使用 `-auth password -public-url https://实际域名`，首次启动通过 `WORKBENCH_PASSWORD` 设置密码；长期运行可使用 [systemd 示例](deploy/workbench.service)。
+默认访问 `http://127.0.0.1:8080`，SQLite 数据保存在 `~/.workbench/data.db`。前端、迁移和时区数据已嵌入；默认部署无需安装 Go、Node.js 或数据库服务。服务器反代部署使用 `-auth password -public-url https://实际域名`，首次启动生成的初始密码会写入日志；长期运行可使用 [systemd 示例](deploy/workbench.service)。PostgreSQL 新部署的准备和启动命令见[部署与发布](doc/deployment.md#postgresql-新部署)。
 
 ## 日志与排障
 
@@ -145,9 +131,9 @@ npm ci --prefix web
 ./workbench
 ```
 
-默认访问 `http://127.0.0.1:8080`，数据库保存在 `~/.workbench/data.db`。可通过 `-listen` 和 `-data` 修改地址和工作空间。
+默认访问 `http://127.0.0.1:8080`，SQLite 数据库保存在 `~/.workbench/data.db`。可通过 `-listen` 和 `-data` 修改地址和工作空间；PostgreSQL 通过 `WORKBENCH_DB_DRIVER` 和 `WORKBENCH_DATABASE_URL` 选择。
 
-默认 local 模式仅允许本机监听。反向代理部署使用 `-auth password -public-url https://实际域名`，首次启动须设置 `WORKBENCH_PASSWORD`；应用自动允许外部地址的 Host，并为浏览器启用 Secure Cookie。监听、数据路径、认证与外部地址均支持环境变量。详细参数和前端开发方式见[配置与运行](doc/configuration.md)。
+默认 local 模式仅允许本机监听。反向代理部署使用 `-auth password -public-url https://实际域名`；密码模式首次启动会在日志中生成初始密码，首次登录后必须修改。应用自动允许外部地址的 Host，并为浏览器启用 Secure Cookie。监听、数据路径、认证与外部地址均支持环境变量。详细参数和前端开发方式见[配置与运行](doc/configuration.md)。
 
 ## 日常使用
 
@@ -157,7 +143,7 @@ npm ci --prefix web
 - 投资价格监控每分钟检查美股/ETF 常规时段涨跌阈值，保存站内提醒，可通过 Telegram 推送；关闭网页仍由服务器执行。
 - AI 面板提供对话和已注册的业务工具；未启用 AI 不影响普通业务操作。
 - 设置提供业务模块、AI 配置、通知推送、账户安全、外观、数据与运行六个标签；TG 配置见 [Telegram 通知](doc/notifications.md)。
-- 数据备份保存到工作空间的 `backups/` 目录，包含业务内容与保存的凭据。
+- SQLite 数据备份保存到工作空间的 `backups/` 目录；PostgreSQL 备份由数据库服务管理。备份包含业务内容与保存的凭据。
 
 ## 验证
 

@@ -1,12 +1,14 @@
 # Optional override when the reverse proxy is another container.
-# docker compose -f compose.yaml -f deploy/compose.proxy.yaml up -d
+# docker compose -f compose.yaml -f deploy/compose.proxy.yaml up -d --build
 services:
   workbench:
     ports: !reset []
     networks:
+      - default
       - proxy
 
 networks:
+  default:
   proxy:
     external: true
     name: ${WORKBENCH_PROXY_NETWORK:-proxy}

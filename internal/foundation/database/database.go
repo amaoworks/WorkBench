@@ -22,29 +22,63 @@ import (
 
 const defaultBusyTimeout = 5 * time.Second
 
+const (
+	SQLite   = "sqlite"
+	Postgres = "postgres"
+)
+
+var ErrBackupUnsupported = errors.New("PostgreSQL backups are managed by the database service")
+
 var migrationNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 
 type Config struct {
+	Driver         string
+	DSN            string
 	Path           string
 	BusyTimeout    time.Duration
 	MaxConnections int
 }
 
 type Database struct {
-	db   *sql.DB
-	lock *flock.Flock
-	path string
+	db       *sql.DB
+	lock     *flock.Flock
+	path     string
+	driver   string
+	lockDB   *sql.DB
+	lockConn *sql.Conn
+}
+
+func (c Config) Validate() error {
+	switch c.Driver {
+	case "", SQLite:
+		if c.Path == "" {
+			return errors.New("database path is required")
+		}
+		if c.DSN != "" {
+			return errors.New("database URL requires the postgres database driver")
+		}
+	case Postgres:
+		if c.DSN == "" {
+			return errors.New("PostgreSQL database URL is required")
+		}
+	default:
+		return errors.New("database driver must be sqlite or postgres")
+	}
+	return nil
 }
 
 func Open(ctx context.Context, cfg Config) (*Database, error) {
-	if cfg.Path == "" {
-		return nil, errors.New("database path is required")
+	if err := cfg.Validate(); err != nil {
+		return nil, err
 	}
 	if cfg.BusyTimeout <= 0 {
 		cfg.BusyTimeout = defaultBusyTimeout
 	}
 	if cfg.MaxConnections <= 0 {
 		cfg.MaxConnections = 4
+	}
+	if cfg.Driver == Postgres {
+		return openPostgres(ctx, cfg)
 	}
 
 	absPath, err := filepath.Abs(cfg.Path)
@@ -84,7 +118,7 @@ func Open(ctx context.Context, cfg Config) (*Database, error) {
 		return nil, fmt.Errorf("secure database permissions: %w", err)
 	}
 
-	return &Database{db: db, lock: fileLock, path: absPath}, nil
+	return &Database{db: db, lock: fileLock, path: absPath, driver: SQLite}, nil
 }
 
 func dataSourceName(path string, busyTimeout time.Duration) string {
@@ -97,8 +131,10 @@ func dataSourceName(path string, busyTimeout time.Duration) string {
 	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(path), RawQuery: values.Encode()}).String()
 }
 
-func (d *Database) SQL() *sql.DB { return d.db }
-func (d *Database) Path() string { return d.path }
+func (d *Database) SQL() *sql.DB          { return d.db }
+func (d *Database) Path() string          { return d.path }
+func (d *Database) Driver() string        { return d.driver }
+func (d *Database) BackupSupported() bool { return d.driver == SQLite }
 
 func (d *Database) Close() error {
 	var errs []error
@@ -108,10 +144,21 @@ func (d *Database) Close() error {
 	if d.lock != nil {
 		errs = append(errs, d.lock.Unlock())
 	}
+	if d.lockConn != nil {
+		if err := d.lockConn.Close(); err != nil && !errors.Is(err, sql.ErrConnDone) {
+			errs = append(errs, err)
+		}
+	}
+	if d.lockDB != nil {
+		errs = append(errs, d.lockDB.Close())
+	}
 	return errors.Join(errs...)
 }
 
 func (d *Database) MigrateCore(ctx context.Context) error {
+	if d.driver == Postgres {
+		return migrateDialect(ctx, d.db, coreMigrations, "migrations-postgres", "goose_core_version", goose.DialectPostgres)
+	}
 	return migrate(ctx, d.db, coreMigrations, "migrations", "goose_core_version")
 }
 
@@ -124,6 +171,12 @@ func (d *Database) MigrateModule(ctx context.Context, id contracts.ModuleID, set
 		return nil
 	}
 	dir := set.Dir
+	if d.driver == Postgres {
+		if set.PostgresDir == "" {
+			return fmt.Errorf("module %q has no PostgreSQL migrations", id)
+		}
+		return migrateDialect(ctx, d.db, set.FS, set.PostgresDir, "goose_module_"+name+"_version", goose.DialectPostgres)
+	}
 	if dir == "" {
 		dir = "."
 	}
@@ -131,11 +184,15 @@ func (d *Database) MigrateModule(ctx context.Context, id contracts.ModuleID, set
 }
 
 func migrate(ctx context.Context, db *sql.DB, source fs.FS, dir, table string) error {
+	return migrateDialect(ctx, db, source, dir, table, goose.DialectSQLite3)
+}
+
+func migrateDialect(ctx context.Context, db *sql.DB, source fs.FS, dir, table string, dialect goose.Dialect) error {
 	sub, err := fs.Sub(source, dir)
 	if err != nil {
 		return fmt.Errorf("open migration directory %q: %w", dir, err)
 	}
-	provider, err := goose.NewProvider(goose.DialectSQLite3, db, sub, goose.WithTableName(table))
+	provider, err := goose.NewProvider(dialect, db, sub, goose.WithTableName(table))
 	if err != nil {
 		return fmt.Errorf("create migration provider: %w", err)
 	}
@@ -146,6 +203,9 @@ func migrate(ctx context.Context, db *sql.DB, source fs.FS, dir, table string) e
 }
 
 func (d *Database) Backup(ctx context.Context, destination string) error {
+	if !d.BackupSupported() {
+		return ErrBackupUnsupported
+	}
 	absDestination, err := filepath.Abs(destination)
 	if err != nil {
 		return fmt.Errorf("resolve backup path: %w", err)

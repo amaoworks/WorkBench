@@ -63,6 +63,25 @@ test('history started before a reconnect cannot refill the new connection cache'
     assert.equal(feed.latestBars.size, 0);
 });
 
+test('history failures supply the string expected by TradingView', async t => {
+    const { feed } = setup(t, async () => { throw new Error('行情请求失败'); });
+    let failure;
+    await feed.getBars(symbol, '1', period, () => assert.fail('failed history cannot return bars'), error => { failure = error; });
+    assert.equal(failure, '行情请求失败');
+});
+
+test('leaving the terminal suppresses late history callbacks after disposal', async t => {
+    let release;
+    const { feed } = setup(t, () => new Promise(resolve => { release = () => resolve(json([candle])); }));
+    const callbacks = [];
+    const pending = feed.getBars(symbol, '1', period, () => callbacks.push('bars'), () => callbacks.push('error'));
+    feed.destroy();
+    release();
+    await pending;
+    assert.deepEqual(callbacks, []);
+    assert.equal(feed.latestBars.size, 0);
+});
+
 test('the first stream-ready event does not interrupt pending history or reset charts', async t => {
     let release, resets = 0;
     const events = new EventTarget();

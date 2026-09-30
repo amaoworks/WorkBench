@@ -56,8 +56,22 @@ func parseOptions(args []string, getenv func(string) string, output io.Writer) (
 	flags := flag.NewFlagSet("workbench", flag.ContinueOnError)
 	flags.SetOutput(output)
 	var mode string
-	flags.StringVar(&opt.config.ListenAddress, "listen", envDefault("WORKBENCH_LISTEN", config.ListenAddress), "HTTP listen address")
+	listenAddress := envDefault("WORKBENCH_LISTEN", config.ListenAddress)
+	if port := getenv("WORKBENCH_HTTP_PORT"); port != "" {
+		number, err := strconv.Atoi(port)
+		if err != nil || number < 1 || number > 65535 {
+			return options{}, errors.New("WORKBENCH_HTTP_PORT must be between 1 and 65535")
+		}
+		host, _, err := net.SplitHostPort(listenAddress)
+		if err != nil {
+			return options{}, fmt.Errorf("listen address must include host and port: %w", err)
+		}
+		listenAddress = net.JoinHostPort(host, strconv.Itoa(number))
+	}
+	flags.StringVar(&opt.config.ListenAddress, "listen", listenAddress, "HTTP listen address")
 	flags.StringVar(&opt.config.DataPath, "data", envDefault("WORKBENCH_DATA", config.DataPath), "SQLite database path")
+	flags.StringVar(&opt.config.DBDriver, "db-driver", envDefault("WORKBENCH_DB_DRIVER", config.DBDriver), "database driver: sqlite or postgres")
+	opt.config.DatabaseURL = getenv("WORKBENCH_DATABASE_URL")
 	flags.StringVar(&opt.config.FutuConfigDir, "futu-config-dir", getenv("WORKBENCH_FUTU_CONFIG_DIR"), "shared directory for managed Futu OpenD login configuration")
 	flags.StringVar(&opt.config.FutuRuntimeDir, "futu-runtime-dir", getenv("WORKBENCH_FUTU_RUNTIME_DIR"), "private OpenD runtime directory (defaults beside the database)")
 	flags.StringVar(&opt.config.FutuOpenDBinary, "futu-opend-binary", getenv("WORKBENCH_FUTU_OPEND_BINARY"), "installed OpenD executable (otherwise downloaded on first enable)")
@@ -69,6 +83,11 @@ func parseOptions(args []string, getenv func(string) string, output io.Writer) (
 	flags.BoolVar(&opt.config.FutuAllowNonLocal, "futu-allow-non-local", allowFutuNonLocal, "allow a non-loopback Futu OpenD host")
 	flags.StringVar(&mode, "auth", envDefault("WORKBENCH_AUTH", string(config.AuthMode)), "authentication mode: local or password")
 	flags.StringVar(&opt.config.PublicURL, "public-url", getenv("WORKBENCH_PUBLIC_URL"), "browser-facing HTTPS origin served by a reverse proxy")
+	allowInsecureHTTP, err := strconv.ParseBool(envDefault("WORKBENCH_ALLOW_INSECURE_HTTP", "false"))
+	if err != nil {
+		return options{}, errors.New("WORKBENCH_ALLOW_INSECURE_HTTP must be true or false")
+	}
+	flags.BoolVar(&opt.config.AllowInsecureHTTP, "allow-insecure-http", allowInsecureHTTP, "allow password authentication over HTTP on a private container network")
 	flags.StringVar(&opt.config.LogLevel, "log-level", envDefault("WORKBENCH_LOG_LEVEL", config.LogLevel), "initial log level: debug, info, warn or error (saved settings take precedence)")
 	flags.BoolVar(&opt.version, "version", false, "print version and exit")
 	flags.BoolVar(&opt.healthcheck, "healthcheck", false, "check the running HTTP service and exit")
@@ -91,6 +110,11 @@ func parseOptions(args []string, getenv func(string) string, output io.Writer) (
 	opt.config.OpenAIAPIKey = getenv("OPENAI_API_KEY")
 	opt.config.OpenAIBaseURL = getenv("OPENAI_BASE_URL")
 	opt.config.OpenAIModel = envDefault("OPENAI_MODEL", config.OpenAIModel)
+	for _, origin := range strings.Split(getenv("WORKBENCH_CORS_ALLOW_ORIGIN"), ",") {
+		if origin = strings.TrimSpace(origin); origin != "" {
+			opt.config.CORSAllowOrigins = append(opt.config.CORSAllowOrigins, origin)
+		}
+	}
 	if len(opt.config.AllowedHosts) == 0 {
 		for _, host := range strings.Split(getenv("WORKBENCH_ALLOWED_HOSTS"), ",") {
 			if host = strings.TrimSpace(host); host != "" {

@@ -27,22 +27,26 @@ const (
 )
 
 type Config struct {
-	Mode            Mode
-	ListenAddress   string
-	PublicHTTPS     bool
-	InitialPassword string
-	AllowedHosts    []string
-	Logger          *slog.Logger
+	Mode              Mode
+	ListenAddress     string
+	PublicHTTPS       bool
+	AllowInsecureHTTP bool
+	InitialPassword   string
+	AllowedHosts      []string
+	CORSAllowOrigins  []string
+	Logger            *slog.Logger
 }
 
 type Service struct {
-	db           *sql.DB
-	queries      *dbsqlc.Queries
-	mode         Mode
-	sessions     *scs.SessionManager
-	sessionStore *SessionStore
-	allowedHosts map[string]struct{}
-	publicHTTPS  bool
+	db             *sql.DB
+	queries        *dbsqlc.Queries
+	mode           Mode
+	sessions       *scs.SessionManager
+	sessionStore   *SessionStore
+	allowedHosts   map[string]struct{}
+	publicHTTPS    bool
+	allowedOrigins map[string]struct{}
+	cookieSameSite http.SameSite
 }
 
 func New(ctx context.Context, db *sql.DB, cfg Config) (*Service, error) {
@@ -63,13 +67,17 @@ func New(ctx context.Context, db *sql.DB, cfg Config) (*Service, error) {
 			return nil, errors.New("local mode requires a loopback listen address")
 		}
 	case ModePassword:
-		if !loopback && !cfg.PublicHTTPS {
+		if !loopback && !cfg.PublicHTTPS && !cfg.AllowInsecureHTTP {
 			return nil, errors.New("password mode on a non-loopback address requires an HTTPS public URL behind a reverse proxy")
 		}
 	default:
 		return nil, fmt.Errorf("unsupported auth mode %q", cfg.Mode)
 	}
 
+	origins, err := parseAllowedOrigins(cfg.CORSAllowOrigins, cfg.PublicHTTPS)
+	if err != nil {
+		return nil, err
+	}
 	store := NewSessionStore(db)
 	sessions := scs.New()
 	sessions.Store = store
@@ -79,11 +87,14 @@ func New(ctx context.Context, db *sql.DB, cfg Config) (*Service, error) {
 	sessions.Cookie.Name = "workbench_session"
 	sessions.Cookie.HttpOnly = true
 	sessions.Cookie.SameSite = http.SameSiteStrictMode
+	if cfg.PublicHTTPS && len(origins) > 0 {
+		sessions.Cookie.SameSite = http.SameSiteNoneMode
+	}
 	sessions.Cookie.Secure = cfg.PublicHTTPS
 	sessions.Cookie.Persist = true
 	logger := cfg.Logger
 	if logger == nil {
-		logger = slog.Default()
+		logger = slog.Default().With("component", "auth")
 	}
 	sessions.ErrorFunc = func(w http.ResponseWriter, _ *http.Request, _ error) {
 		logger.Error("session persistence failed")
@@ -94,13 +105,14 @@ func New(ctx context.Context, db *sql.DB, cfg Config) (*Service, error) {
 		db:      db,
 		queries: dbsqlc.New(db), mode: cfg.Mode, sessions: sessions, sessionStore: store,
 		allowedHosts: make(map[string]struct{}), publicHTTPS: cfg.PublicHTTPS,
+		allowedOrigins: origins, cookieSameSite: sessions.Cookie.SameSite,
 	}
 	for _, allowed := range cfg.AllowedHosts {
 		service.allowedHosts[strings.ToLower(allowed)] = struct{}{}
 	}
 	if len(service.allowedHosts) == 0 {
 		service.allowedHosts[strings.ToLower(cfg.ListenAddress)] = struct{}{}
-		if loopback {
+		if loopback || cfg.AllowInsecureHTTP {
 			_, port, _ := net.SplitHostPort(cfg.ListenAddress)
 			service.allowedHosts[net.JoinHostPort("localhost", port)] = struct{}{}
 			service.allowedHosts[net.JoinHostPort("127.0.0.1", port)] = struct{}{}
@@ -109,14 +121,14 @@ func New(ctx context.Context, db *sql.DB, cfg Config) (*Service, error) {
 	}
 
 	if cfg.Mode == ModePassword {
-		if err := service.ensureCredential(ctx, cfg.InitialPassword); err != nil {
+		if err := service.ensureCredential(ctx, cfg.InitialPassword, logger); err != nil {
 			return nil, err
 		}
 	}
 	return service, nil
 }
 
-func (s *Service) ensureCredential(ctx context.Context, initialPassword string) error {
+func (s *Service) ensureCredential(ctx context.Context, initialPassword string, logger *slog.Logger) error {
 	count, err := s.queries.CountAuthCredentials(ctx)
 	if err != nil {
 		return fmt.Errorf("inspect auth credentials: %w", err)
@@ -124,8 +136,12 @@ func (s *Service) ensureCredential(ctx context.Context, initialPassword string) 
 	if count > 0 {
 		return nil
 	}
-	if initialPassword == "" {
-		return errors.New("password mode requires WORKBENCH_PASSWORD on first start")
+	generated := initialPassword == ""
+	if generated {
+		initialPassword, err = generateInitialPassword()
+		if err != nil {
+			return err
+		}
 	}
 	hash, err := hashPassword(initialPassword)
 	if err != nil {
@@ -136,6 +152,12 @@ func (s *Service) ensureCredential(ctx context.Context, initialPassword string) 
 	})
 	if err != nil {
 		return fmt.Errorf("store initial password: %w", err)
+	}
+	if generated {
+		// Bootstrap credentials remain visible even with an error-only threshold.
+		record := slog.NewRecord(time.Now(), slog.LevelWarn, "initial login password generated; change it after signing in", 0)
+		record.Add("initialPassword", initialPassword)
+		_ = logger.Handler().Handle(ctx, record)
 	}
 	return nil
 }
@@ -179,14 +201,17 @@ func (s *Service) Require(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var version int64
-		err := s.db.QueryRowContext(r.Context(), "SELECT updated_at FROM auth_credentials WHERE id = 1").Scan(&version)
+		credential, err := s.queries.GetAuthCredential(r.Context())
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"code": "authentication_failed", "message": "authentication failed"})
 			return
 		}
-		if !s.sessions.GetBool(r.Context(), "authenticated") || s.sessions.GetInt64(r.Context(), "credentialVersion") != version {
+		if !s.sessions.GetBool(r.Context(), "authenticated") || s.sessions.GetInt64(r.Context(), "credentialVersion") != credential.UpdatedAt {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"code": "authentication_required", "message": "login required"})
+			return
+		}
+		if credential.MustChangePassword != 0 && !(r.Method == http.MethodPut && r.URL.Path == "/api/settings/password") {
+			writeJSON(w, http.StatusForbidden, map[string]string{"code": "password_change_required", "message": "首次登录请修改密码"})
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -195,7 +220,7 @@ func (s *Service) Require(next http.Handler) http.Handler {
 
 func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	if s.mode == ModeLocal {
-		writeJSON(w, http.StatusOK, map[string]bool{"authenticated": true})
+		writeJSON(w, http.StatusOK, map[string]bool{"authenticated": true, "mustChangePassword": false})
 		return
 	}
 	var request struct {
@@ -209,14 +234,12 @@ func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	// Read the hash and version together so a concurrent password change cannot
 	// turn a login with the old password into a session for the new credential.
-	var hash string
-	var version int64
-	err := s.db.QueryRowContext(r.Context(), "SELECT password_hash, updated_at FROM auth_credentials WHERE id = 1").Scan(&hash, &version)
+	credential, err := s.queries.GetAuthCredential(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"code": "authentication_failed", "message": "authentication failed"})
 		return
 	}
-	ok, err := verifyPassword(request.Password, hash)
+	ok, err := verifyPassword(request.Password, credential.PasswordHash)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"code": "authentication_failed", "message": "authentication failed"})
 		return
@@ -230,8 +253,8 @@ func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.sessions.Put(r.Context(), "authenticated", true)
-	s.sessions.Put(r.Context(), "credentialVersion", version)
-	writeJSON(w, http.StatusOK, map[string]bool{"authenticated": true})
+	s.sessions.Put(r.Context(), "credentialVersion", credential.UpdatedAt)
+	writeJSON(w, http.StatusOK, map[string]bool{"authenticated": true, "mustChangePassword": credential.MustChangePassword != 0})
 }
 
 func (s *Service) LogoutHandler(w http.ResponseWriter, r *http.Request) {
@@ -239,17 +262,18 @@ func (s *Service) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"code": "session_failed", "message": "could not destroy session"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"authenticated": s.mode == ModeLocal})
+	writeJSON(w, http.StatusOK, map[string]bool{"authenticated": s.mode == ModeLocal, "mustChangePassword": false})
 }
 
 func (s *Service) StatusHandler(w http.ResponseWriter, r *http.Request) {
 	authenticated := s.mode == ModeLocal || s.sessions.GetBool(r.Context(), "authenticated")
+	mustChangePassword := false
 	if s.mode == ModePassword && authenticated {
-		var version int64
-		err := s.db.QueryRowContext(r.Context(), "SELECT updated_at FROM auth_credentials WHERE id = 1").Scan(&version)
-		authenticated = err == nil && s.sessions.GetInt64(r.Context(), "credentialVersion") == version
+		credential, err := s.queries.GetAuthCredential(r.Context())
+		authenticated = err == nil && s.sessions.GetInt64(r.Context(), "credentialVersion") == credential.UpdatedAt
+		mustChangePassword = authenticated && credential.MustChangePassword != 0
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"authenticated": authenticated, "mode": s.mode})
+	writeJSON(w, http.StatusOK, map[string]any{"authenticated": authenticated, "mode": s.mode, "mustChangePassword": mustChangePassword})
 }
 
 func (s *Service) CSRFTokenHandler(w http.ResponseWriter, r *http.Request) {
@@ -261,14 +285,18 @@ func (s *Service) Security(next http.Handler) http.Handler {
 	// HTTPS terminates at the reverse proxy. Use the configured public origin,
 	// never client-controlled Forwarded/X-Forwarded-* headers or the backend TLS state.
 	csrf.SetIsTLSFunc(func(_ *http.Request) bool { return s.publicHTTPS })
+	csrf.SetIsAllowedOriginFunc(func(origin *url.URL) bool {
+		_, allowed := s.allowedOrigins[strings.ToLower(origin.Scheme+"://"+origin.Host)]
+		return allowed
+	})
 	csrf.SetBaseCookie(http.Cookie{
 		Name: "workbench_csrf", Path: "/", HttpOnly: true,
-		SameSite: http.SameSiteStrictMode, Secure: s.publicHTTPS,
+		SameSite: s.cookieSameSite, Secure: s.publicHTTPS,
 	})
 	csrf.SetFailureHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"code": "csrf_failed", "message": "CSRF validation failed"})
 	}))
-	return s.hostCheck(s.originCheck(csrf))
+	return s.hostCheck(s.cors(s.originCheck(csrf)))
 }
 
 func (s *Service) hostCheck(next http.Handler) http.Handler {
@@ -289,13 +317,8 @@ func (s *Service) originCheck(next http.Handler) http.Handler {
 		}
 		origin := r.Header.Get("Origin")
 		if origin != "" {
-			u, err := url.Parse(origin)
-			if err != nil || !strings.EqualFold(u.Host, r.Host) {
+			if !s.originAllowed(origin, r.Host) {
 				writeJSON(w, http.StatusForbidden, map[string]string{"code": "invalid_origin", "message": "origin is not allowed"})
-				return
-			}
-			if s.publicHTTPS && u.Scheme != "https" {
-				writeJSON(w, http.StatusForbidden, map[string]string{"code": "invalid_origin", "message": "secure origin required"})
 				return
 			}
 		}

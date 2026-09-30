@@ -335,7 +335,7 @@ export default class Datafeed {
             this.seedLatest(name, session, resolution, bars);
             onResult(bars, { noData: bars.length === 0 });
         } catch (err) {
-            if (typeof onError === "function") onError(err);
+            if (!this.destroyed && typeof onError === "function") onError(String(err?.message || err));
         }
     }
 

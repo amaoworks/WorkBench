@@ -38,7 +38,7 @@ tar -czf "$output/$name.tar.gz" -C "$staging" "$name"
 # successful compressor in POSIX sh.
 docker save --output "$staging/image.tar" "$IMAGE"
 gzip -c "$staging/image.tar" > "$output/${name}_docker.tar.gz"
-tar -czf "$output/workbench_${VERSION}_deployment.tar.gz" compose.yaml .env.example deploy doc README.md
+tar -czf "$output/workbench_${VERSION}_deployment.tar.gz" compose.image.yaml .env.example deploy doc README.md
 cd "$output"
 sha256sum "$name.tar.gz" "${name}_docker.tar.gz" "workbench_${VERSION}_deployment.tar.gz" > SHA256SUMS
 printf 'Build artifacts: %s\nDocker image: %s\n' "$output" "$IMAGE"

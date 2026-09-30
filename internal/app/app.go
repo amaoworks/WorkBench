@@ -83,7 +83,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 		return nil, err
 	}
 	logger = logger.With("service", "workbench")
-	database, err := workbenchdb.Open(ctx, workbenchdb.Config{Path: cfg.DataPath, MaxConnections: 4})
+	database, err := workbenchdb.Open(ctx, workbenchdb.Config{Driver: cfg.DBDriver, DSN: cfg.DatabaseURL, Path: cfg.DataPath, MaxConnections: 4})
 	if err != nil {
 		return nil, err
 	}
@@ -145,6 +145,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	authService, err := auth.New(ctx, database.SQL(), auth.Config{
 		Mode: cfg.AuthMode, ListenAddress: cfg.ListenAddress, PublicHTTPS: cfg.PublicHTTPS(),
 		InitialPassword: cfg.Password, AllowedHosts: cfg.AllowedHosts,
+		AllowInsecureHTTP: cfg.AllowInsecureHTTP, CORSAllowOrigins: cfg.CORSAllowOrigins,
 		Logger: logger.With("component", "auth"),
 	})
 	if err != nil {
@@ -469,6 +470,10 @@ func maintenanceJob(db *sql.DB) contracts.JobDefinition {
 }
 
 func (a *App) backup(w http.ResponseWriter, r *http.Request) {
+	if !a.database.BackupSupported() {
+		httpapi.Error(w, http.StatusNotImplemented, "backup_unsupported", "PostgreSQL backups are managed by the database service")
+		return
+	}
 	backupDir := filepath.Join(filepath.Dir(a.config.DataPath), "backups")
 	name := "workbench-" + time.Now().UTC().Format("20060102T150405.000Z") + ".db"
 	destination := filepath.Join(backupDir, name)

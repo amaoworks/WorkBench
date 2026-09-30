@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"workbench/internal/foundation/database/sqlc"
 	"workbench/internal/foundation/httpapi"
 )
 
@@ -20,14 +21,19 @@ func (s *Service) ChangePasswordHandler(w http.ResponseWriter, r *http.Request) 
 		httpapi.Error(w, http.StatusBadRequest, "invalid_request", "密码请求格式不正确")
 		return
 	}
-	previous, err := s.queries.GetPasswordHash(r.Context())
+	credential, err := s.queries.GetAuthCredential(r.Context())
 	if err != nil {
 		httpapi.Error(w, 500, "password_failed", "无法读取密码")
 		return
 	}
+	previous := credential.PasswordHash
 	valid, err := verifyPassword(input.CurrentPassword, previous)
 	if err != nil || !valid {
 		httpapi.Error(w, http.StatusForbidden, "invalid_password", "当前密码不正确")
+		return
+	}
+	if credential.MustChangePassword != 0 && input.NewPassword == input.CurrentPassword {
+		httpapi.Error(w, http.StatusBadRequest, "password_unchanged", "新密码不能与初始密码相同")
 		return
 	}
 	hash, err := hashPassword(input.NewPassword)
@@ -41,17 +47,17 @@ func (s *Service) ChangePasswordHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(r.Context(), "UPDATE auth_credentials SET password_hash = ?, updated_at = MAX(updated_at + 1, ?) WHERE id = 1 AND password_hash = ?", hash, time.Now().UTC().UnixMilli(), previous)
+	queries := s.queries.WithTx(tx)
+	count, err := queries.UpdatePasswordHashIfCurrent(r.Context(), dbsqlc.UpdatePasswordHashIfCurrentParams{PasswordHash: hash, UpdatedAt: time.Now().UTC().UnixMilli(), PreviousHash: previous})
 	if err != nil {
 		httpapi.Error(w, 500, "password_failed", "无法更新密码")
 		return
 	}
-	count, err := result.RowsAffected()
 	if err != nil || count != 1 {
 		httpapi.Error(w, 409, "password_changed", "密码已被修改，请重新登录")
 		return
 	}
-	if _, err := tx.ExecContext(r.Context(), "DELETE FROM sessions"); err != nil {
+	if err := queries.DeleteAllSessions(r.Context()); err != nil {
 		httpapi.Error(w, 500, "password_failed", "无法注销登录")
 		return
 	}

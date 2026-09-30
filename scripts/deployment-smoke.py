@@ -18,7 +18,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--binary", type=Path)
-    source.add_argument("--image", help="local Docker image:tag to test through compose.yaml")
+    source.add_argument("--image", help="local Docker image:tag to test through compose.image.yaml")
     args = parser.parse_args()
     repo = Path(__file__).resolve().parent.parent
     with socket.socket() as sock:
@@ -28,7 +28,7 @@ def main():
     origin = "https://deployment.workbench.invalid"
     env = {k: v for k, v in os.environ.items() if not k.startswith(("WORKBENCH_", "OPENAI_"))}
     env.update(WORKBENCH_LISTEN=f"127.0.0.1:{port}", WORKBENCH_AUTH="password",
-               WORKBENCH_PUBLIC_URL=origin, WORKBENCH_PASSWORD=password)
+               WORKBENCH_PUBLIC_URL=origin, WORKBENCH_PASSWORD=password, WORKBENCH_DB_DRIVER="sqlite")
     cookies = {}
     token = ""
     process = None
@@ -36,10 +36,19 @@ def main():
         work = Path(temp)
         env["WORKBENCH_DATA"] = str(work / "data.db")
         compose = ["docker", "compose", "--project-name", work.name,
-                   "--file", str(repo / "compose.yaml")]
+                   "--file", str(repo / "compose.image.yaml")]
         if args.image:
             image, tag = args.image.rsplit(":", 1)
-            env.update(WORKBENCH_IMAGE=image, WORKBENCH_VERSION=tag, WORKBENCH_PORT=str(port))
+            env.update(WORKBENCH_IMAGE=image, WORKBENCH_VERSION=tag, WORKBENCH_PORT=str(port), WORKBENCH_HTTP_PORT="8080")
+            # Keep the existing SQLite backup checks isolated from the default PG stack.
+            runtime = work / "compose.runtime.yaml"
+            runtime.write_text("services:\n  workbench:\n    env_file: !reset []\n    depends_on: !reset {}\n    environment: " + json.dumps({
+                "WORKBENCH_LISTEN": "0.0.0.0:8080", "WORKBENCH_HTTP_PORT": "8080",
+                "WORKBENCH_DATA": "/data/data.db", "WORKBENCH_DB_DRIVER": "sqlite",
+                "WORKBENCH_AUTH": "password", "WORKBENCH_PUBLIC_URL": origin,
+                "WORKBENCH_PASSWORD": "${WORKBENCH_PASSWORD:-}", "WORKBENCH_LOG_LEVEL": "${WORKBENCH_LOG_LEVEL:-info}"
+            }) + "\n")
+            compose.extend(["--file", str(runtime)])
         log = (work / "server.log").open("w+")
 
         def command(argv, **kwargs):
@@ -69,7 +78,7 @@ def main():
         def start():
             nonlocal process
             if args.image:
-                command(compose + ["up", "-d", "--force-recreate", "--wait", "--wait-timeout", "90"])
+                command(compose + ["up", "-d", "--pull", "never", "--force-recreate", "--wait", "--wait-timeout", "90", "workbench"])
             else:
                 process = subprocess.Popen([str(args.binary.resolve())], env=env, stdout=log, stderr=log)
             deadline = time.monotonic() + 30
@@ -96,10 +105,19 @@ def main():
                 process = None
 
         def login():
-            nonlocal token
+            nonlocal token, password
             cookies.clear()
             token = request("GET", "/api/auth/csrf")["token"]
-            request("POST", "/api/auth/login", {"password": password})
+            status = request("POST", "/api/auth/login", {"password": password})
+            if status["mustChangePassword"]:
+                request("GET", "/api/modules/todo/tasks", expected=403)
+                new_password = password + "-Changed"
+                request("PUT", "/api/settings/password", {"currentPassword": password, "newPassword": new_password})
+                password = new_password
+                cookies.clear()
+                token = request("GET", "/api/auth/csrf")["token"]
+                status = request("POST", "/api/auth/login", {"password": password})
+            assert not status["mustChangePassword"], "password change remained required"
 
         try:
             start()

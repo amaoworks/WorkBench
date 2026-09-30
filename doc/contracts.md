@@ -12,7 +12,7 @@ Migrations() MigrationSet
 Register(ModuleRegistrar) error
 ```
 
-Manifest 声明 ID、显示名称、业务版本、契约版本、图标和导航。当前契约版本为 1。`Migrations` 提供本模块的 `fs.FS` 和目录；`Register` 调用 `Handle`、`Consume`、`Job`、`Tool`、`Widget` 声明资源。
+Manifest 声明 ID、显示名称、业务版本、契约版本、图标和导航。当前契约版本为 1。`Migrations` 提供本模块的 `fs.FS`、SQLite `Dir` 和 PostgreSQL `PostgresDir`，数据库层按当前驱动选择目录；`Register` 调用 `Handle`、`Consume`、`Job`、`Tool`、`Widget` 声明资源。
 
 资源声明含模块归属，名称以模块 ID 为前缀，注册时检查有效性和重复项。App 负责构造模块与所需服务。内置注册表在构建程序时确定；已保存的外部模块记录在运行时恢复，并通过 HTTP 协议管理。当前不开放通过网址新增外部模块。
 
@@ -91,8 +91,10 @@ JSON 错误使用 `code`、`message`，并可含 `details`、`requestId`，定�
 | GET / PUT | `/api/settings/telegram` | 读取脱敏配置和状态 / 保存 Telegram 配置 |
 | POST | `/api/settings/telegram/test` | 发送一条测试消息，不保存候选配置 |
 | PUT | `/api/settings/password` | 验证当前密码并修改 |
-| POST | `/api/system/backup` | 创建服务端备份，返回文件名 |
+| POST | `/api/system/backup` | SQLite 创建服务端备份并返回文件名；PostgreSQL 返回 HTTP 501，由数据库服务执行备份 |
 
 除健康检查和鉴权入口外，上述平台 API 经过登录校验；local 模式免登录。Host、Origin 和 CSRF 保护由外层中间件处理，local 模式也保留请求保护。业务 API 另外经过模块启停门控，停用时返回 HTTP 503 和 `module_disabled`。外部业务代理还要求当前连接的当前代数已确认启用，且健康不是 `offline` 或 `incompatible`。
+
+登录与状态响应包含 `mustChangePassword`。新建密码凭据首次登录时该字段为 `true`，除 `PUT /api/settings/password` 外的受保护接口返回 `403 password_change_required`。改密提交 `{ currentPassword, newPassword }`，首次新密码必须与当前密码不同；成功返回 `{ reauthenticate: true }`，用户重新登录后进入业务页面。
 
 业务 HTTP、资源标识和字段说明见 [Todo](modules/todo.md)、[Wallos](modules/todo-wallos.md) 和 [Investment](modules/investment.md)。

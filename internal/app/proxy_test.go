@@ -89,6 +89,11 @@ func TestHTTPSProxyToHTTPApplication(t *testing.T) {
 	if !secureSession {
 		t.Fatal("login did not issue a session")
 	}
+	call("POST", "/api/modules/todo/tasks", `{"title":"Blocked before password change"}`, token.Token, publicURL, 403).Body.Close()
+	change := call("PUT", "/api/settings/password", `{"currentPassword":"Proxy-Test-123","newPassword":"Proxy-Changed-456"}`, token.Token, publicURL, 200)
+	change.Body.Close()
+	login = call("POST", "/api/auth/login", `{"password":"Proxy-Changed-456"}`, token.Token, publicURL, 200)
+	login.Body.Close()
 	call("POST", "/api/modules/todo/tasks", `{"title":"Proxy task"}`, token.Token, publicURL, 201).Body.Close()
 	call("POST", "/api/modules/todo/tasks", `{"title":"CSRF bypass"}`, "", publicURL, 400).Body.Close()
 	call("POST", "/api/modules/todo/tasks", `{"title":"Origin bypass"}`, token.Token, "https://attacker.invalid", 403).Body.Close()

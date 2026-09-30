@@ -8,16 +8,21 @@ import (
 	"time"
 
 	"workbench/internal/foundation/auth"
+	workbenchdb "workbench/internal/foundation/database"
 	"workbench/internal/foundation/logging"
 )
 
 type Config struct {
 	ListenAddress     string
 	DataPath          string
+	DBDriver          string
+	DatabaseURL       string
 	AuthMode          auth.Mode
 	Password          string
 	PublicURL         string
 	AllowedHosts      []string
+	AllowInsecureHTTP bool
+	CORSAllowOrigins  []string
 	OpenAIAPIKey      string
 	OpenAIBaseURL     string
 	OpenAIModel       string
@@ -38,6 +43,7 @@ func DefaultConfig() (Config, error) {
 	return Config{
 		ListenAddress: "127.0.0.1:8080",
 		DataPath:      filepath.Join(home, ".workbench", "data.db"),
+		DBDriver:      workbenchdb.SQLite,
 		AuthMode:      auth.ModeLocal,
 		OpenAIModel:   "gpt-5.2",
 		ShutdownGrace: 10 * time.Second,
@@ -59,6 +65,9 @@ func (c Config) Validate() error {
 	if c.ListenAddress == "" || c.DataPath == "" {
 		return errors.New("listen address and data path are required")
 	}
+	if err := (workbenchdb.Config{Driver: c.DBDriver, DSN: c.DatabaseURL, Path: c.DataPath}).Validate(); err != nil {
+		return err
+	}
 	if c.PublicURL != "" {
 		u, err := url.Parse(c.PublicURL)
 		if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil ||
@@ -71,6 +80,9 @@ func (c Config) Validate() error {
 	}
 	if c.ShutdownGrace <= 0 {
 		return errors.New("shutdown grace period must be positive")
+	}
+	if err := auth.ValidateCORSOrigins(c.CORSAllowOrigins, c.PublicHTTPS()); err != nil {
+		return err
 	}
 	return nil
 }

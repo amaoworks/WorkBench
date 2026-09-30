@@ -113,12 +113,13 @@ func (d *Dispatcher) materializeDeliveries(ctx context.Context) error {
 	for _, consumer := range d.consumers {
 		placeholders := strings.TrimRight(strings.Repeat("?,", len(consumer.Topics)), ",")
 		query := `
-			INSERT OR IGNORE INTO event_deliveries(
+			INSERT INTO event_deliveries(
 				event_id, consumer_id, status, attempts, next_attempt_at, updated_at
 			)
 			SELECT id, ?, 'pending', 0, available_at, ?
 			FROM events_log
-			WHERE topic IN (` + placeholders + `)`
+			WHERE topic IN (` + placeholders + `)
+			ON CONFLICT(event_id, consumer_id) DO NOTHING`
 		args := make([]any, 0, 2+len(consumer.Topics))
 		args = append(args, consumer.ID, now)
 		for _, topic := range consumer.Topics {

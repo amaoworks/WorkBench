@@ -106,9 +106,9 @@ func (q *Queries) ListDueTasks(ctx context.Context, dueAt sql.NullInt64) ([]List
 const listTasksPage = `-- name: ListTasksPage :many
 SELECT id, title, description, due_at, completed_at, created_at, updated_at
 FROM todo_tasks
-WHERE CAST(?1 AS INTEGER) = 0 OR
-  (completed_at IS NOT NULL, COALESCE(due_at, 9223372036854775807), -created_at, id) >
-  (CAST(?2 AS INTEGER), CAST(?3 AS INTEGER), -CAST(?4 AS INTEGER), CAST(?5 AS TEXT))
+WHERE CAST(?1 AS BIGINT) = 0 OR
+  (CASE WHEN completed_at IS NOT NULL THEN 1 ELSE 0 END, COALESCE(due_at, 9223372036854775807), -created_at, id) >
+  (CAST(?2 AS BIGINT), CAST(?3 AS BIGINT), -CAST(?4 AS BIGINT), CAST(?5 AS TEXT))
 ORDER BY completed_at IS NOT NULL, COALESCE(due_at, 9223372036854775807), created_at DESC, id
 LIMIT ?6
 `
@@ -162,9 +162,9 @@ func (q *Queries) ListTasksPage(ctx context.Context, arg ListTasksPageParams) ([
 
 const todoSummary = `-- name: TodoSummary :one
 SELECT
-    CAST(COALESCE(SUM(CASE WHEN completed_at IS NULL THEN 1 ELSE 0 END), 0) AS INTEGER) AS open,
-    CAST(COALESCE(SUM(CASE WHEN completed_at IS NULL AND due_at < ? THEN 1 ELSE 0 END), 0) AS INTEGER) AS overdue,
-    CAST(COALESCE(SUM(CASE WHEN completed_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS INTEGER) AS completed
+    CAST(COALESCE(SUM(CASE WHEN completed_at IS NULL THEN 1 ELSE 0 END), 0) AS BIGINT) AS open,
+    CAST(COALESCE(SUM(CASE WHEN completed_at IS NULL AND due_at < ? THEN 1 ELSE 0 END), 0) AS BIGINT) AS overdue,
+    CAST(COALESCE(SUM(CASE WHEN completed_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS BIGINT) AS completed
 FROM todo_tasks
 `
 

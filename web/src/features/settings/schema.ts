@@ -5,7 +5,7 @@ export const aiSettingsSchema = z.object({ enabled: z.boolean(), model: z.string
 export const loggingSettingsSchema = z.object({ level: z.enum(["debug", "info", "warn", "error"]) });
 export const settingsSchema = z.object({
   ai: aiSettingsSchema, appearance: appearanceSchema, logging: loggingSettingsSchema,
-  deployment: z.object({ listenAddress: z.string(), dataPath: z.string(), authMode: z.enum(["local", "password"]), publicUrl: z.string(), allowedHosts: z.array(z.string()).nullable() })
+  deployment: z.object({ listenAddress: z.string(), dataPath: z.string(), databaseDriver: z.enum(["sqlite", "postgres"]), backupSupported: z.boolean(), authMode: z.enum(["local", "password"]), publicUrl: z.string(), allowedHosts: z.array(z.string()).nullable() })
 });
 export const aiTestSchema = z.object({ latencyMs: z.number() });
 export const telegramSettingsSchema = z.object({

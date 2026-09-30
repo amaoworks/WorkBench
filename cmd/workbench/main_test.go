@@ -92,3 +92,19 @@ func TestFutuDeploymentConfiguration(t *testing.T) {
 		t.Fatal("invalid deployment boolean accepted")
 	}
 }
+
+func TestPostgresDeploymentConfiguration(t *testing.T) {
+	env := map[string]string{"WORKBENCH_DB_DRIVER": "postgres", "WORKBENCH_DATABASE_URL": "postgres://workbench:secret@localhost/workbench"}
+	getenv := func(key string) string { return env[key] }
+	opt, err := parseOptions(nil, getenv, io.Discard)
+	if err != nil || opt.config.DBDriver != "postgres" || opt.config.DatabaseURL != env["WORKBENCH_DATABASE_URL"] {
+		t.Fatal("PostgreSQL deployment environment was not applied", err)
+	}
+	opt, err = parseOptions([]string{"-db-driver", "sqlite"}, getenv, io.Discard)
+	if err != nil || opt.config.DBDriver != "sqlite" {
+		t.Fatal("database driver flag did not override environment", err)
+	}
+	if opt.config.Validate() == nil {
+		t.Fatal("SQLite silently accepted a PostgreSQL URL")
+	}
+}

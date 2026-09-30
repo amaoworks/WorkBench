@@ -27,7 +27,10 @@ const { chromium, webkit, devices } = require(process.env.PLAYWRIGHT_MODULE || "
           export class widget {
             constructor() { ${mode === "exception" ? "throw new Error('fixture initialization failed');" : ""} }
             chartReady() { return ready; }
-            activeChart() { return Object.fromEntries(['onIntervalChanged', 'onSymbolChanged'].map(name => [name, () => ({ subscribe() {}, unsubscribe() {} })])); }
+            activeChart() { return {
+              symbol: () => 'AAPL', resolution: () => '1D', symbolExt: () => ({ subsession_id: 'regular' }),
+              ...Object.fromEntries(['onIntervalChanged', 'onSymbolChanged'].map(name => [name, () => ({ subscribe() {}, unsubscribe() {} })])),
+            }; }
             headerReady() { return ready; }
             createDropdown() { return Promise.resolve({ applyOptions() {}, remove() {} }); }
             showNoticeDialog() { return Promise.resolve(); }

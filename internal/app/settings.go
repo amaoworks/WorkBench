@@ -84,7 +84,7 @@ func (a *App) getSettings(w http.ResponseWriter, r *http.Request) {
 		"ai":         map[string]any{"enabled": a.aiSettings.Enabled, "baseUrl": a.aiSettings.BaseURL, "model": a.aiSettings.Model, "hasApiKey": a.aiSettings.APIKey != ""},
 		"appearance": a.appearance,
 		"logging":    a.logging,
-		"deployment": map[string]any{"listenAddress": a.config.ListenAddress, "dataPath": a.config.DataPath, "authMode": a.config.AuthMode, "publicUrl": a.config.PublicURL, "allowedHosts": a.config.AllowedHosts},
+		"deployment": map[string]any{"listenAddress": a.config.ListenAddress, "dataPath": a.config.DataPath, "databaseDriver": a.database.Driver(), "backupSupported": a.database.BackupSupported(), "authMode": a.config.AuthMode, "publicUrl": a.config.PublicURL, "allowedHosts": a.config.AllowedHosts},
 	})
 }
 
