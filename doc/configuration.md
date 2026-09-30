@@ -55,11 +55,9 @@ WORKBENCH_PASSWORD='替换为独立的强密码' ./workbench \
   -public-url https://workbench.example.com
 ```
 
-外部地址的 Host 自动加入允许列表，显式配置的 `allowed-host` 可添加其他 Host。未配置外部地址及列表时，默认允许监听地址；loopback 监听还允许同端口的 localhost、127.0.0.1 和 ::1。Host 校验使用请求实际发送的 `host[:port]`，因此代理必须保留原始 Host。
+外部地址的 Host 自动加入允许列表，显式配置的 `allowed-host` 可添加其他 Host。未配置外部地址及允许列表时，默认允许监听地址；loopback 监听还允许同端口的 `localhost`、`127.0.0.1` 和 `[::1]`。Host 校验使用请求实际发送的 `host[:port]`，反代必须保留原始 Host。Session/CSRF 安全属性依据 `public-url` 计算，应用不信任动态 `X-Forwarded-*` 请求头。反代 Nginx/Caddy 配置、WebSocket 与 SSE 缓冲要求详见[部署与发布 - 反向代理](deployment.md#反向代理)，请求保护边界见[安全边界](security.md)。
 
-Session 和 CSRF Cookie 的 Secure 属性、CSRF 的 HTTPS 来源判断均依据固定外部地址。应用不信任 `Forwarded`、`X-Forwarded-Proto` 或 `X-Forwarded-Host`，不根据请求头改变认证和来源配置。代理需支持 WebSocket，并关闭流式聊天和通知 SSE 的响应缓冲；完整配置见[部署与发布](deployment.md#反向代理)。
-
-旧的 `-tls-cert` 和 `-tls-key` 参数已移除；已有部署应把证书配置迁移至反向代理，并改用 `-public-url`。在设置的「数据与运行」查看监听地址、数据库路径、认证模式、外部访问地址和允许访问的 Host。
+旧的 `-tls-cert` 和 `-tls-key` 参数已移除，TLS 统一由反向代理终止。可在设置的「数据与运行」查看当前生效的监听地址、数据库路径、认证模式与外部 Host。
 
 ## 设置页面
 

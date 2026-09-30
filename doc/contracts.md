@@ -14,7 +14,7 @@ Register(ModuleRegistrar) error
 
 Manifest 声明 ID、显示名称、业务版本、契约版本、图标和导航。当前契约版本为 1。`Migrations` 提供本模块的 `fs.FS` 和目录；`Register` 调用 `Handle`、`Consume`、`Job`、`Tool`、`Widget` 声明资源。
 
-资源声明含模块归属，名称以模块 ID 为前缀，注册时检查有效性和重复项。App 负责构造模块与所需服务。内置注册表在构建程序时确定；外部模块通过 HTTP 协议在运行时接入，见下文。
+资源声明含模块归属，名称以模块 ID 为前缀，注册时检查有效性和重复项。App 负责构造模块与所需服务。内置注册表在构建程序时确定；已保存的外部模块记录在运行时恢复，并通过 HTTP 协议管理。当前不开放通过网址新增外部模块。
 
 可选契约：
 
@@ -59,13 +59,14 @@ Dashboard 保存完整的 Widget 配置集合，包含 ID、visible、size、ord
 
 JSON 错误使用 `code`、`message`，并可含 `details`、`requestId`，定义见 [APIError](../internal/contracts/http.go)。共享 [httpapi](../internal/foundation/httpapi/json.go) 校验 JSON、限制请求体并拒绝未知字段。前端 [api](../web/src/shared/api.ts) 负责凭据、CSRF 和错误映射，未校验的 JSON 返回 `unknown`。消费响应字段时使用 `apiValidated(path, schema, init)` 或显式 `schema.parse`，响应类型由 Zod 推导。关键 HTTP 契约通过真实后端响应与生产前端 schema 的跨端测试验证，见 [web/tests/contracts.test.mjs](../web/tests/contracts.test.mjs)。
 
+`POST /api/modules/external` 已移除，当前返回 404。下表中的外部管理、页面和代理入口仅用于已保存的外部模块记录。
+
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | GET | `/health/live`、`/health/ready` | 存活、数据库就绪 |
 | GET | `/api/auth/status`、`/api/auth/csrf` | 登录状态、CSRF token |
 | POST | `/api/auth/login`、`/api/auth/logout` | 登录、退出 |
 | GET | `/api/modules` | 合并内置与外部目录（含 `kind`），只返回缓存状态 |
-| POST | `/api/modules/external` | 校验连接并接入外部模块，成功 201 |
 | PUT | `/api/modules/{id}/enabled` | 保存 `{ enabled }`；内置回调确认后 200，失败 503 并保留意图；外部确认后 200，等待确认时 202 |
 | PUT | `/api/modules/{id}/connection` | 更新外部连接；要求已停用，更换 origin 须重新提供凭据 |
 | POST | `/api/modules/{id}/refresh` | 有界刷新外部 manifest/状态 |

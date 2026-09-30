@@ -39,7 +39,7 @@
 | Todo / Wallos | `todo_wallos_settings` | 联动配置、密钥、最近成功同步和错误 |
 | Todo / Wallos | `todo_wallos_occurrences` | 外部来源、订阅 ID、付款日期与待办映射 |
 | Investment | `investment_schwab` | App Key/Secret、回调、访问/刷新令牌、streamer 缓存和 OAuth state |
-| Investment | `investment_futu` | OpenD 主机/端口、夜盘覆盖开关、非本机许可和最近错误 |
+| Investment | `investment_futu` | 富途账号、登录密码 MD5 摘要、富途与夜盘开关和最近错误；历史地址及许可字段不再控制连接，连接由部署配置管理 |
 | Investment | `investment_futu_bars` | 夜盘 K 线本地缓存（避免重复消耗富途历史额度） |
 | Investment | `investment_price_rules` | 标的、阈值、启停、规则版本及最近有效报价/错误 |
 | Investment | `investment_price_triggers` | `(rule_id, trading_date)` 唯一的触发快照、站内通知 ID；删除规则后保留 |

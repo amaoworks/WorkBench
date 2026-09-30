@@ -4,6 +4,15 @@ Workbench 是本地优先、单用户的个人工作台，采用 Go 模块化单
 
 当前业务包括待办及 Wallos 订阅提醒、投资（Schwab 行情、账户和 TradingView 终端）。业务可在设置中启停，数据和总览布局偏好会保留。新增业务按模块扩展，前后端使用对应的模块目录。
 
+## 核心特性
+
+- **个人待办**：支持待办管理、到期提醒，以及与 Wallos 订阅账期的自动联动。
+- **投资终端**：对接 Charles Schwab API，集成 TradingView 图表，支持实时行情、持仓与订单管理。
+- **价格预警**：美股/ETF 分钟级价格监控，支持站内通知与 Telegram 自动推送。
+- **AI 助手**：内置对话面板，支持动态调用已启用的业务工具。
+- **总览看板**：可定制卡片显隐、排序、尺寸与布局偏好。
+- **独立可控**：单可执行文件内嵌前端，本地 SQLite 持久化，支持零外部依赖单机运行或容器部署。
+
 ## Docker Compose 部署
 
 从 [GitHub Releases](https://github.com/amaoworks/WorkBench/releases) 下载 `workbench_<版本>_deployment.tar.gz` 并解压，或在本仓库根目录操作。程序镜像为 `ghcr.io/amaoworks/workbench`，支持 Linux amd64/arm64。
@@ -68,25 +77,11 @@ cd workbench_v0.1.1_linux_amd64
 
 ## GitHub Actions 编译与发布
 
-推送版本标签后，只有 **Release 工作流全部成功** 才会创建 Releases 条目并附上二进制与部署包；Git 标签本身不等于 GitHub Release。
+项目通过 GitHub Actions 自动化构建多架构（Linux amd64/arm64）二进制与 Docker 镜像：
 
-| 触发方式 | 工作流 | 产物位置 |
-|---|---|---|
-| 推送 `main` | **CI and Build** | 验证通过后，在该次运行的 **Artifacts** 下载 Linux amd64/arm64 二进制包、Docker 镜像文件和部署文件 |
-| Actions → **CI and Build** → **Run workflow**，选择分支 | **CI and Build** | 与主分支构建相同，可手动打包，无需先创建版本标签 |
-| 提交 PR | **CI and Build** | 运行检查、双架构镜像构建及部署验证 |
-| 推送指向 `main` 提交的 `v0.1.1` 等版本标签 | **Release** | 先确认该提交已在 `main` 上，再把二进制包与校验文件发布至 **Releases**，多架构镜像推送至 **GHCR** |
-
-普通分支构建的 Artifacts 保留 14 天，名称为 `workbench-linux-<架构>-<提交号>`。下载并解开 GitHub 的 artifact ZIP 后，其中包含可直接解压的二进制 `.tar.gz`、可用 `docker load` 导入的 `*_docker.tar.gz`、部署文件包和 `SHA256SUMS`。
-
-```bash
-sha256sum --check SHA256SUMS
-docker load --input workbench_<构建版本>_linux_amd64_docker.tar.gz
-```
-
-导入后的镜像名为 `workbench:sha-<完整提交号>`，可在 `.env` 中设置 `WORKBENCH_IMAGE=workbench`、`WORKBENCH_VERSION=sha-<完整提交号>` 后使用 Compose。二进制包解压后运行其中的 `workbench`。普通构建不会创建正式 Release 或推送 GHCR。
-
-正式发布只接受已经在 `main` 上的提交。先把要发布的提交合并进 `main` 并推送，再在该提交上创建并推送版本标签：
+- **开发构建**：推送 `main` 或在 [CI and Build](.github/workflows/ci.yml) 手动触发分支构建，通过验证后可在运行结果的 **Artifacts** 中下载 14 天有效的预构建二进制与 Docker 镜像包。
+- **PR 验证**：提交 PR 时运行检查、双架构镜像构建与部署验证，不上传可下载的构建包。
+- **正式版本发布**：推送 `v*` 版本标签触发 [Release](.github/workflows/release.yml) 工作流，通过多架构交叉编译与运行验证后，自动发布 GitHub Release 并推送 GHCR 镜像。发布标签必须基于 `main` 分支提交：
 
 ```bash
 git checkout main
@@ -95,7 +90,7 @@ git tag v0.1.1
 git push origin v0.1.1
 ```
 
-**Release** 由 `v*` 标签触发。工作流先确认被标记的提交是 `origin/main` 的祖先（包含 `main` 顶端）；`dev` 或其他分支上尚未进入 `main` 的提交会在 **Require commit on main** 失败，不打包、不推送 GHCR、不创建 GitHub Release。通过后复用检查、编译并验证两种架构的二进制、构建和推送 Docker 镜像，最后创建 GitHub Release。Release 说明会写明 `Released from: main`。稳定版本更新镜像 `latest`；`v0.1.1-rc.1` 等预发布版本独立标记。失败的检查会阻止后续构建或发布，可在 Actions 查看对应步骤日志。工作流入口：[CI and Build](.github/workflows/ci.yml)、[Release](.github/workflows/release.yml)。
+流水线矩阵、镜像导入验证及分支约束细节见[部署与发布 - GitHub Actions](doc/deployment.md#github-actions-编译与发布)。
 
 ## 文档
 
@@ -110,6 +105,7 @@ git push origin v0.1.1
 - [安全边界](doc/security.md)
 - [文案与文档规范](doc/copywriting-guidelines.md)
 - [Todo](doc/modules/todo.md)、[Wallos 联动](doc/modules/todo-wallos.md)、[Investment](doc/modules/investment.md)
+- [AI 协作指南](AGENTS.md)：面向 AI 编程助手的架构红线与开发工作流
 
 
 ## 目录

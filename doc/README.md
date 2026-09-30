@@ -16,8 +16,8 @@ Workbench 技术文档索引：
 | [Wallos 联动](modules/todo-wallos.md) | Todo 内的订阅同步与账期管理 |
 | [Investment](modules/investment.md) | Schwab 行情、持仓、订单、TradingView 终端与价格预警 |
 | [Telegram 通知](notifications.md) | 价格预警推送配置、测试与重试策略 |
+| [AI 协作指南](../AGENTS.md) | 面向 AI 助手的架构红线、命令速查与开发工作流 |
 
-## 外部模块
+## 历史归档
 
-- [外部业务模块协议](external-modules-phase-1.md)：外部模块接入契约与规范。
-
+- [外部业务模块第一阶段历史记录](archive/external-modules-phase-1.md)：当时的设计、执行与验收记录，以及当前兼容范围。新网址接入已取消，已有记录的管理接口见[接口与契约](contracts.md)。
