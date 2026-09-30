@@ -30,6 +30,8 @@ type fakeOpenD struct {
 	unsubStarted   chan struct{}
 	releaseUnsub   chan struct{}
 	subActions     []bool
+	basicQotList   []map[string]any
+	quoteN         int
 }
 
 func startFakeOpenD(t *testing.T) *fakeOpenD {
@@ -121,6 +123,11 @@ func (f *fakeOpenD) serve(conn net.Conn) {
 			}
 		case protoQotGetKL:
 			s2c = map[string]any{"klList": f.klList, "security": map[string]any{"market": marketUS, "code": "AAPL"}}
+		case protoQotGetBasicQot:
+			f.mu.Lock()
+			f.quoteN++
+			s2c = map[string]any{"basicQotList": f.basicQotList}
+			f.mu.Unlock()
 		case protoQotRequestHistoryKLQuota:
 			details := []any{}
 			for _, code := range f.usedCodes {

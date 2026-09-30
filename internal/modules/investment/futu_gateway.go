@@ -230,7 +230,11 @@ func (g *futuGateway) broadcastKL(symbol, resolution string, bar futuBar) {
 }
 
 func (g *futuGateway) broadcastQuote(q futuOvernightQuote) {
-	payload, _ := json.Marshal(map[string]any{"data": []any{map[string]any{"service": "FUTU_QUOTE", "symbol": q.Symbol, "quote": q}}})
+	g.broadcastQuoteUpdate(q, false)
+}
+
+func (g *futuGateway) broadcastQuoteUpdate(q futuOvernightQuote, snapshot bool) {
+	payload, _ := json.Marshal(map[string]any{"data": []any{map[string]any{"service": "FUTU_QUOTE", "symbol": q.Symbol, "quote": q, "snapshot": snapshot}}})
 	g.broadcast(payload)
 }
 

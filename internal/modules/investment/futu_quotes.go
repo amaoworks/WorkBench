@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"strconv"
 	"time"
 	_ "time/tzdata"
@@ -65,13 +66,13 @@ type futuBar struct {
 }
 
 type futuOvernightQuote struct {
-	Symbol string  `json:"symbol"`
-	Price  float64 `json:"lp"`
-	High   float64 `json:"high,omitempty"`
-	Low    float64 `json:"low,omitempty"`
-	Volume float64 `json:"volume,omitempty"`
-	Ch     float64 `json:"ch,omitempty"`
-	Chp    float64 `json:"chp,omitempty"`
+	Symbol string   `json:"symbol"`
+	Price  float64  `json:"lp"`
+	High   *float64 `json:"high,omitempty"`
+	Low    *float64 `json:"low,omitempty"`
+	Volume *float64 `json:"volume,omitempty"`
+	Ch     *float64 `json:"ch,omitempty"`
+	Chp    *float64 `json:"chp,omitempty"`
 }
 
 func (c *opendClient) dispatchKL(body []byte) {
@@ -116,16 +117,24 @@ func parseOvernightQuote(row map[string]any) (futuOvernightQuote, bool) {
 	}
 	overnight, _ := row["overnight"].(map[string]any)
 	price, ok := asFloat(overnight["price"])
-	if !ok {
+	if !ok || price <= 0 || math.IsNaN(price) || math.IsInf(price, 0) {
 		return futuOvernightQuote{}, false
 	}
 	q := futuOvernightQuote{Symbol: code, Price: price}
-	q.High, _ = asFloat(overnight["highPrice"])
-	q.Low, _ = asFloat(overnight["lowPrice"])
-	q.Volume, _ = asFloat(overnight["volume"])
-	q.Ch, _ = asFloat(overnight["changeVal"])
-	q.Chp, _ = asFloat(overnight["changeRate"])
+	q.High = optionalFutuNumber(overnight["highPrice"])
+	q.Low = optionalFutuNumber(overnight["lowPrice"])
+	q.Volume = optionalFutuNumber(overnight["volume"])
+	q.Ch = optionalFutuNumber(overnight["changeVal"])
+	q.Chp = optionalFutuNumber(overnight["changeRate"])
 	return q, true
+}
+
+func optionalFutuNumber(value any) *float64 {
+	number, ok := asFloat(value)
+	if !ok || math.IsNaN(number) || math.IsInf(number, 0) {
+		return nil
+	}
+	return &number
 }
 
 func parseKLList(raw any) []futuBar {
@@ -216,6 +225,23 @@ func (c *opendClient) getKL(ctx context.Context, code string, klType, reqNum int
 		return nil, err
 	}
 	return parseKLList(s2c["klList"]), nil
+}
+
+func (c *opendClient) getOvernightQuote(ctx context.Context, code string) (futuOvernightQuote, bool, error) {
+	s2c, err := c.call(ctx, protoQotGetBasicQot, map[string]any{"c2s": map[string]any{
+		"securityList": []any{map[string]any{"market": marketUS, "code": code}},
+	}})
+	if err != nil {
+		return futuOvernightQuote{}, false, err
+	}
+	list, _ := s2c["basicQotList"].([]any)
+	for _, item := range list {
+		row, _ := item.(map[string]any)
+		if quote, ok := parseOvernightQuote(row); ok && quote.Symbol == code {
+			return quote, true, nil
+		}
+	}
+	return futuOvernightQuote{}, false, nil
 }
 
 func (c *opendClient) historyQuota(ctx context.Context) (remain int, usedCodes map[string]struct{}, err error) {

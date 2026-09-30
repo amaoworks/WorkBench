@@ -60,7 +60,7 @@ test('night and regular live bars do not clobber each other', async (t) => {
     assert.equal(feed.latestBars.get(seriesKey('AAPL', 'night')).get('1').close, 201);
 });
 
-test('night 10-minute history is noData and does not call kline', async (t) => {
+test('removed 10-minute history is noData without reading settings or kline', async (t) => {
     const futuCalls = [];
     const overnightCalls = [];
     const feed = new Datafeed({
@@ -72,7 +72,7 @@ test('night 10-minute history is noData and does not call kline', async (t) => {
     t.after(() => feed.destroy());
     const { metadata } = await history(feed, { name: 'AAPL', subsession_id: 'night' }, '10');
     assert.equal(metadata.noData, true);
-    assert.deepEqual(overnightCalls, [true]);
+    assert.deepEqual(overnightCalls, []);
     assert.deepEqual(futuCalls, []);
 });
 

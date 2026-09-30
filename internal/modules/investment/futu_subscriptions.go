@@ -105,7 +105,7 @@ func (g *futuGateway) commandGenerationAfter(client *opendClient) (string, bool)
 
 func (g *futuGateway) addSub(ctx context.Context, symbol, resolution, requestGeneration string) (string, bool, error) {
 	_, subType, ok := futuKLTypes(resolution)
-	if !ok {
+	if !ok && resolution != "" {
 		return g.currentGeneration(), true, nil
 	}
 	client, current, applied, err := g.commandClient(ctx, requestGeneration, true)
@@ -117,6 +117,23 @@ func (g *futuGateway) addSub(ctx context.Context, symbol, resolution, requestGen
 			return generation, false, nil
 		}
 		return "", false, err
+	}
+	if resolution == "" {
+		// A quote listener needs BASIC only, without consuming a K-line lease.
+		// Read the initial snapshot even if another tab already holds BASIC.
+		quote, available, err := client.getOvernightQuote(ctx, symbol)
+		if err != nil {
+			_ = g.release(ctx, client, symbol, subTypeBasic)
+			if generation, stillCurrent := g.commandGenerationAfter(client); !stillCurrent {
+				return generation, false, nil
+			}
+			return "", false, err
+		}
+		generation, stillCurrent := g.commandGenerationAfter(client)
+		if stillCurrent && available {
+			g.broadcastQuoteUpdate(quote, true)
+		}
+		return generation, stillCurrent, nil
 	}
 	if err := g.hold(ctx, client, symbol, subType, true); err != nil {
 		_ = g.release(ctx, client, symbol, subTypeBasic)
@@ -131,18 +148,20 @@ func (g *futuGateway) addSub(ctx context.Context, symbol, resolution, requestGen
 
 func (g *futuGateway) releaseSub(ctx context.Context, symbol, resolution, requestGeneration string) (string, bool, error) {
 	_, subType, ok := futuKLTypes(resolution)
-	if !ok {
+	if !ok && resolution != "" {
 		return g.currentGeneration(), true, nil
 	}
 	client, current, applied, err := g.commandClient(ctx, requestGeneration, false)
 	if err != nil || !applied {
 		return current, applied, err
 	}
-	if err := g.release(ctx, client, symbol, subType); err != nil {
-		if generation, stillCurrent := g.commandGenerationAfter(client); !stillCurrent {
-			return generation, false, nil
+	if resolution != "" {
+		if err := g.release(ctx, client, symbol, subType); err != nil {
+			if generation, stillCurrent := g.commandGenerationAfter(client); !stillCurrent {
+				return generation, false, nil
+			}
+			return "", false, err
 		}
-		return "", false, err
 	}
 	if err := g.release(ctx, client, symbol, subTypeBasic); err != nil {
 		if generation, stillCurrent := g.commandGenerationAfter(client); !stillCurrent {

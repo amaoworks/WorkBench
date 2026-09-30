@@ -98,7 +98,7 @@ test('Schwab minute requests use supported frequencies and bound large chart vie
     const urls = [];
     const { feed } = setup(t, async path => { urls.push(new URL(path, 'https://example.test')); return json([]); });
     const months = { from: timestamp / 1000 - 360 * 86400, to: timestamp / 1000 };
-    for (const resolution of ['1', '5', '10', '15', '30']) {
+    for (const resolution of ['1', '5', '15', '30']) {
         await history(feed, { name: 'AAPL', subsession_id: 'extended' }, resolution, months);
         const url = urls.at(-1).searchParams;
         assert.equal(url.get('frequencyType'), 'minute');
@@ -108,6 +108,21 @@ test('Schwab minute requests use supported frequencies and bound large chart vie
         const range = (Number(url.get('endDate')) - Number(url.get('startDate'))) / 1000;
         assert(range <= (resolution === '1' ? 46 : 240) * 86400);
     }
+});
+
+test('10-minute bars are not advertised or requested in any session', async t => {
+    const calls = [];
+    const { feed } = setup(t, async path => { calls.push(path); return json([]); });
+    const configuration = await new Promise(resolve => feed.onReady(resolve));
+    assert.deepEqual(configuration.supported_resolutions, ['1', '5', '15', '30', '1D', '1W', '1M']);
+    const info = await new Promise((resolve, reject) => feed.resolveSymbol('AAPL', resolve, reject));
+    assert.equal(info.supported_resolutions.includes('10'), false);
+    for (const subsession_id of ['regular', 'extended', 'night', EQUITY_24H_SESSION]) {
+        const { bars, metadata } = await history(feed, { name: 'AAPL', subsession_id }, '10');
+        assert.deepEqual(bars, []);
+        assert.equal(metadata.noData, true);
+    }
+    assert.deepEqual(calls, []);
 });
 
 test('daily history is sorted, deduplicated and excludes the upper boundary', async t => {

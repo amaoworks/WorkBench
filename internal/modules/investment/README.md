@@ -14,6 +14,7 @@
 | OpenD 传输协议、行情请求与解码 | `futu_opend.go`、`futu_quotes.go` |
 | OpenD 安装、进程与登录配置 | `futu_install.go`、`futu_service.go`、`futu_process_*.go`、`futu_login.go` |
 | 夜盘开关、终端资源与图表库代理 | `overnight.go`、`chart.go`、`chart_cache.go`、`chart_warm.go` |
+| 当前 TV 详情面板夜盘字段兼容修复 | `chart_compat.go`、`chart/tv-quotes-compat.json` |
 | 工作台自选表持久化、编辑版本检查 | `watchlists.go` |
 | 模块内共享的路径、时间及随机值辅助函数 | `helpers.go` |
 
@@ -29,6 +30,7 @@
 | `datafeed-symbols.js` | 标的类型识别和交易时段定义 |
 | `datafeed-bars.js` | 历史请求、K 线规范化、时段合并和周期时间对齐 |
 | `datafeed-realtime.js` | Schwab 字段转换与实时 K 线聚合 |
+| `datafeed-quotes.js` | TV 报价字段规范化、Schwab 优先与富途夜盘补充、时段报价口径 |
 | `broker.js`、`broker-models.js` | 账户和交易适配、订单与持仓模型 |
 | `schwab.js`、`stream.js`、`futu.js`、`websocket.js` | 请求客户端与行情连接 |
 | `index.html`、`loading.js`、`theme.js` | 终端装配、加载反馈与主题 |

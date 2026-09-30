@@ -189,7 +189,7 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 
 ### 投资账户管理器
 
-`investment-terminal.e2e.cjs` 在 Chromium 中加载仓库内的终端代码和实际 TradingView 库，验证主题、账户和下单面板，以及完整图表实例保留。增加 `--night` 会运行 Night 与 24H 时段回归；`--24h` 可单独运行全天行情回归。时段回归检查图表顶栏恰有常规、扩展、夜盘、全天四个选项且无说明项；Night 只用非空 Futu K 线，24H 使用非空虚构 Schwab/Futu K 线并检查 04:00/20:00 ET 边界过滤、跨午夜合并、真实可见图表数据、缓存会话切回、1/5/15/30 分钟及不支持周期回退、夜盘关闭和非正股门控、主题及图表高度。`--night --mobile`、`--night --webkit` 另外覆盖 320/390/844px 窄屏、横屏和菜单可达性。券商与 Futu API 均由脚本拦截为虚构响应；不读取凭据、不连接真实账户、不提交交易。
+`investment-terminal.e2e.cjs` 在 Chromium 中加载仓库内的终端代码和实际 TradingView 库，验证主题、账户和下单面板，以及完整图表实例保留。增加 `--night` 会运行 Night 与 24H 时段回归；`--24h` 可单独运行全天行情回归。时段回归检查图表顶栏恰有常规、扩展、夜盘、全天四个选项且无说明项；Night 只用非空 Futu K 线，24H 使用非空虚构 Schwab/Futu K 线并检查 04:00/20:00 ET 边界过滤、跨午夜合并、真实可见图表数据、缓存会话切回、1/5/15/30 分钟及不支持周期回退、夜盘关闭和非正股门控、主题及图表高度。另检查 10 分钟周期已移除；桌面详情面板验证盘前/盘后相对常规收盘的涨跌、夜盘零涨跌、缺失成交时间和日统计不被夜盘替换。库分包补丁与生产代理读取同一兼容规则，Go 测试另覆盖压缩、磁盘资源和 ETag。`--night --mobile`、`--night --webkit` 另外覆盖 320/390/844px 窄屏、横屏和菜单可达性。券商与 Futu API 均由脚本拦截为虚构响应；不读取凭据、不连接真实账户、不提交交易。
 
 ```bash
 PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \

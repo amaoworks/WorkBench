@@ -73,6 +73,7 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
 
 (async () => {
   await mkdir(cache, { recursive: true });
+  const quoteCompat = JSON.parse(await readFile(join(assets, 'tv-quotes-compat.json'), 'utf8'));
   let browser, app, directory;
   try {
     if (useApp) {
@@ -122,19 +123,26 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
             <body style="margin:0"><iframe name="investment-terminal" title="投资终端" src="/investment/terminal" style="position:fixed;inset:0;width:100%;height:100%;border:0"></iframe></body></html>` });
         }
         if (path.startsWith("/charting_library/")) {
-          const file = join(cache, createHash("sha256").update(path).digest("hex") + ".json");
+          const libraryPath = path.replace('/charting_library/quotes-v1/', '/charting_library/');
+          const file = join(cache, createHash("sha256").update(libraryPath).digest("hex") + ".json");
           let asset;
           // Always refresh the entry point. Its hashed bundles can be reused.
           if (/\.[a-f0-9]{12,}\./.test(path)) {
             try { asset = JSON.parse(await readFile(file, "utf8")); } catch { /* first visit */ }
           }
           if (!asset) {
-            const response = await context.request.get(libraryOrigin + path);
+            const response = await context.request.get(libraryOrigin + libraryPath);
             assert(response.ok(), `TradingView asset HTTP ${response.status()}: ${path}`);
             asset = { type: response.headers()["content-type"], body: (await response.body()).toString("base64") };
             await writeFile(file, JSON.stringify(asset));
           }
-          return await route.fulfill({ contentType: asset.type, body: Buffer.from(asset.body, "base64") });
+          let body = Buffer.from(asset.body, "base64");
+          if (libraryPath.endsWith('/' + quoteCompat.bundle)) {
+            const source = body.toString('utf8');
+            assert.equal(source.split(quoteCompat.from).length, 2, 'known TV Details quote-copy patch must match once');
+            body = Buffer.from(source.replace(quoteCompat.from, quoteCompat.to));
+          }
+          return await route.fulfill({ contentType: asset.type, body });
         }
         if (path === "/investment/terminal" || path.startsWith("/investment/terminal/")) {
           const file = path.slice("/investment/terminal/".length) || "index.html";
@@ -227,7 +235,7 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
           }
           calls.push({ path, method: route.request().method(), search: url.search, source: 'futu' });
           const command = route.request().postDataJSON();
-          assert.equal(command.generation, 'fixture-futu-1', 'Futu commands must be bound to the READY generation');
+          assert(command.generation === 'fixture-futu-1' || (command.command === 'ADD' && command.generation === undefined), 'only a bootstrap ADD may omit the Futu generation');
           return await route.fulfill({ json: { success: true, applied: true, generation: 'fixture-futu-1' } });
         }
         if (path === "/api/modules/investment/futu") {
@@ -240,7 +248,7 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
         if (path.endsWith("/ws/command")) {
           const subscription = route.request().postDataJSON();
           sockets.at(-1)?.send(JSON.stringify({ data: [{ service: subscription.service, timestamp: Date.now(), content: subscription.keys.split(",").map(key => ({
-            key, "1": 101, "2": 103, "3": 102, "8": 10000, "10": 105, "11": 98, "12": 100, "17": 100, "29": 102, "31": 2, "43": 2
+            key, "1": 101, "2": 103, "3": 102, "8": 10000, "10": 105, "11": 98, "12": 100, "17": 100, "29": 102, "31": 2, "35": Date.now(), "36": Date.now(), "43": 2
           })) }] }));
           return await route.fulfill({ json: { success: true } });
         }
@@ -253,6 +261,11 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
         if (path.endsWith("/orders")) return await route.fulfill({ json: path.includes("/A/") ? [liveOrder, ...history] : [] });
         if (path.endsWith("/transactions")) return await route.fulfill({ json: [] });
         if (path.endsWith("/instruments")) return await route.fulfill({ json: { instruments: [{ symbol: "AAPL", description: "Apple", assetType: "EQUITY", exchange: "NASDAQ" }] } });
+        if (path.endsWith("/quotes")) return await route.fulfill({ json: Object.fromEntries((url.searchParams.get('symbols') || '').split(',').map(symbol => [symbol, {
+          symbol, assetMainType: 'EQUITY',
+          quote: { lastPrice: 102, closePrice: 100, bidPrice: 101, askPrice: 103, openPrice: 100, highPrice: 105, lowPrice: 98, totalVolume: 10000, tradeTime: Date.now() },
+          regular: { regularMarketLastPrice: 102, regularMarketNetChange: 2, regularMarketPercentChange: 2 },
+        }])) });
         if (path.endsWith("/pricehistory")) {
           const start = Number(url.searchParams.get("startDate")), end = Number(url.searchParams.get("endDate"));
           if (testSessions && url.searchParams.get('frequencyType') === 'minute') {
@@ -287,8 +300,52 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
     await terminal.locator("#terminal-loading").waitFor({ state: "hidden" });
     const chart = terminal.childFrames()[0];
     assert(chart, "TradingView chart iframe missing");
-    assert.equal(new URL(chart.url()).pathname, "/charting_library/sameorigin.html", "chart must use a real same-origin document");
+    assert.equal(new URL(chart.url()).pathname, "/charting_library/quotes-v1/sameorigin.html", "chart must use a real same-origin document");
+    const resolutions = await terminal.evaluate(() => new Promise(resolve => window.__datafeed.onReady(config => resolve(config.supported_resolutions))));
+    assert.deepEqual(resolutions, ['1', '5', '15', '30', '1D', '1W', '1M'], '10-minute bars must be absent from the TV datafeed');
     if (testSessions) {
+      if (!mobile) {
+        const details = chart.locator('[data-test-id-widget-type="detail"] .widgetbar-widgetbody');
+        const sessionStats = details.locator('[data-qa-id="details-element status"]');
+        await terminal.waitForFunction(() => window.__datafeed.quotesListeners.size > 0);
+        const emitQuote = async (time, price) => terminal.evaluate(({ time, price }) => {
+          window.__datafeed.now = () => Date.parse(time);
+          window.dispatchEvent(new CustomEvent('LEVELONE_ANY', { detail: {
+            service: 'LEVELONE_EQUITIES', timestamp: Date.now(), content: [{
+              key: 'AAPL', '3': price, '29': 102, '31': 2, '43': 2, '12': 100,
+              '17': 100, '10': 105, '11': 98, '8': 10000, '35': Date.parse(time),
+            }],
+          } }));
+        }, { time, price });
+        await emitQuote('2026-09-09T12:00:00Z', 104); // 08:00 ET
+        await sessionStats.getByText('盘前', { exact: true }).waitFor();
+        await sessionStats.getByText(/104\.00/).waitFor();
+        assert.match(await sessionStats.innerText(), /1\.96%/, 'pre-market change is relative to 102 regular close, not 100 previous close');
+        await emitQuote('2026-09-09T15:00:00Z', 102); // 11:00 ET
+        await sessionStats.getByText('盘中', { exact: true }).waitFor();
+        await emitQuote('2026-09-09T20:05:00Z', 105); // 16:05 ET
+        await sessionStats.getByText('盘后', { exact: true }).waitFor();
+        await sessionStats.getByText(/105\.00/).waitFor();
+        assert.match(await sessionStats.innerText(), /2\.94%/, 'post-market fields must update the actual details panel');
+        await terminal.evaluate(() => {
+          window.__datafeed.now = () => Date.parse('2026-09-10T01:00:00Z'); // 21:00 ET
+          window.dispatchEvent(new CustomEvent('FUTU_QUOTE', { detail: {
+            symbol: 'AAPL', quote: { lp: 102, ch: 0, chp: 0, high: 999, low: 1, volume: 5 },
+          } }));
+        });
+        await sessionStats.getByText('夜盘', { exact: true }).waitFor();
+        assert.doesNotMatch(await sessionStats.innerText(), /BOATS/i, 'night session label must not imply a specific upstream source');
+        await sessionStats.getByText(/102\.00/).waitFor().catch(async error => {
+          console.error({ quote: await terminal.evaluate(() => window.__datafeed.quote_cache.get('AAPL')), stats: await sessionStats.innerText(), errors });
+          throw error;
+        });
+        assert.match(await sessionStats.innerText(), /0\.00%/, 'zero overnight change must render, rather than disappear');
+        const quote = await terminal.evaluate(() => window.__datafeed.quote_cache.get('AAPL'));
+        assert.equal(quote.cs, 'night');
+        assert.equal(quote.ntc_time, null, 'missing overnight trade time must stay missing');
+        assert.deepEqual([quote.lp, quote.high_price, quote.low_price, quote.volume], [102, 105, 98, 10000], 'night statistics must not replace the main daily values');
+        await terminal.evaluate(() => { window.__datafeed.now = Date.now; window.__datafeed.publishQuote('AAPL'); });
+      }
       const sessionButton = label => chart.getByRole('button', { name: new RegExp(`^行情时段：${label}。`) });
       const chooseSession = async (currentLabel, itemTitle, nextLabel) => {
         await sessionButton(currentLabel).click();
@@ -327,7 +384,7 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
         const schwabBeforeNight = calls.filter(call => call.path.endsWith('/pricehistory')).length;
         await page.waitForTimeout(500);
         assert.equal(calls.filter(call => call.path.endsWith('/pricehistory')).length, schwabBeforeNight, 'Night must not request Schwab K lines');
-        await terminal.evaluate(() => { void window.__widget.activeChart().setResolution('10'); });
+        await terminal.evaluate(() => { void window.__widget.activeChart().setResolution('1D'); });
         await terminal.locator('#session-toast').filter({ hasText: '已切换到 5 分钟' }).waitFor({ state: 'visible' });
         await terminal.waitForFunction(() => window.__widget.activeChart().resolution() === '5');
         await chooseSession('夜盘', '扩展 (ETH)', '扩展');
@@ -373,7 +430,7 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
           await terminal.waitForFunction(value => window.__widget.activeChart().resolution() === value, resolution);
           await waitForSessionBars('equity24h', resolution);
         }
-        await terminal.evaluate(() => window.__widget.activeChart().setResolution('10'));
+        await terminal.evaluate(() => window.__widget.activeChart().setResolution('1D'));
         await terminal.locator('#session-toast').filter({ hasText: '全天行情仅支持 1、5、15、30 分钟，已切换到 5 分钟' }).waitFor({ state: 'visible' });
         await terminal.waitForFunction(() => window.__widget.activeChart().resolution() === '5');
 

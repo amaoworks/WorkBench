@@ -73,9 +73,13 @@ OpenD 容器封装在仓库根目录 [futu-opend](../../futu-opend/)，可整夹
 
 每次启动、切换账户或重连后的第一份订单数据仅建立快照，通过 `orders()` / `ordersHistory()` 提供给 TradingView，不逐条触发 `orderUpdate`。后续刷新只推送新增或内容变化的订单，避免左下角重复弹出历史成交、撤单通知；新订单、成交及撤单仍正常更新。下单/改单/撤单后的 REST 回读同步更新比较基准，下一次轮询不会重复推送同一结果。
 
-历史 K 线按时间排序、去重并排除查询结束边界；日、周、月线时间与 UTC 周期起点对齐。Schwab 分钟线支持 `1/5/10/15/30` 分钟；从日线切换至分钟线时限制单次回补区间（1 分钟最多 46 天，其余分钟线最多 240 天），避免把过宽的日线视窗一次性请求给短周期接口。历史回补不会覆盖更新的实时 K 线，同一品种周期的多个订阅者只计算一次成交量增量，交给图表的数据使用副本，避免图表修改内部缓存。
+历史 K 线按时间排序、去重并排除查询结束边界；日、周、月线时间与 UTC 周期起点对齐。终端分钟线统一支持 `1/5/15/30` 分钟，不提供或请求 10 分钟线；Schwab 仍提供日、周、月线，Night/24H 仍只支持上述分钟周期。从日线切换至分钟线时限制单次回补区间（1 分钟最多 46 天，其余分钟线最多 240 天），避免把过宽的日线视窗一次性请求给短周期接口。历史回补不会覆盖更新的实时 K 线，同一品种周期的多个订阅者只计算一次成交量增量，交给图表的数据使用副本，避免图表修改内部缓存。
 
 Night 视图只读取 Futu 的历史数据；24H 历史并发读取 Schwab 与 Futu，任一请求失败都会报错；读取期间任一行情连接变更都会丢弃旧结果。24H 实时更新按 ET 时段分源，并以独立会话缓存，避免 Night、24H 和普通时段互相污染。
+
+图表、自选表和详情使用同一 Datafeed 提供行情。主报价、当日开高低及成交量优先使用 Schwab；冷启动缺少报价时批量读取 Schwab REST，随后接收 Streamer 更新，迟到的 REST 不覆盖新报价。盘前/盘后报价映射为 TV 的 `rtc/rch/rchp/rtc_time`，涨跌以最近常规时段价格为基准，时间使用源端成交时间。富途夜盘映射为当前库使用的 `ntc/nch/nchp`，不把夜盘高低价或成交量替换为当日统计；夜盘没有可确认的成交时间，因此不填 `ntc_time`。字段缺失保持缺失，零涨跌保留，无任何有效报价时返回暂无行情数据。自选表和详情单独订阅富途 BASIC 报价，无需依赖夜盘 K 线订阅；取消一个报价监听不会释放仍有用户的 K 线租约。时段状态沿用终端声明的美东时间表，夜盘状态随夜盘开关和工作日边界变化。
+
+当前 TV 的 `symbol-details.c9b8b9183b542f763ac4.js` 在详情状态中遗漏四个夜盘报价字段。库代理按 `chart/tv-quotes-compat.json` 对这一已确认分包补齐字段，未知分包保持原样；不改面板布局。终端采用 `quotes-v1/` 库路径刷新浏览器已有分包，服务端仍复用原始上游资源缓存。库升级时用真实 TV 回归确认该兼容修复是否仍有必要。
 
 自选表自动保存到工作台数据库。新增、删除、重命名、标的顺序、分组和当前选中的列表，在刷新、重启工作台或另一台设备打开时恢复。第一次使用时会导入当前浏览器已有的自选表；之后以工作台保存的内容为准，空列表也会保留。接入使用 [TradingView Watchlist API](https://www.tradingview.com/charting-library-docs/latest/trading_terminal/Watch-List/)。
 
@@ -121,7 +125,7 @@ Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后
 | GET/PUT | `/api/modules/investment/overnight` | 独立夜盘开关，启用前校验 Futu 依赖 |
 | GET | `/api/modules/investment/futu/kline` | 夜盘当前窗口及额度兜底历史；24H 可用 `requireHistory=true` 要求历史回补失败时明确报错 |
 | GET | `/api/modules/investment/futu/quote/ws` | 夜盘推送（覆盖关闭时 409，不升级） |
-| POST | `/api/modules/investment/futu/quote/ws/command` | 夜盘 ADD/UNSUB；携带连接代次，只有首次 ADD 可省略；过期命令返回 `applied:false` 和当前代次 |
+| POST | `/api/modules/investment/futu/quote/ws/command` | 夜盘 ADD/UNSUB；`resolution` 为空时只订阅 BASIC 报价，否则订阅指定 K 线及 BASIC；携带连接代次，只有首次 ADD 可省略；过期命令返回 `applied:false` 和当前代次 |
 | GET | `/investment/terminal`、`/investment/terminal/*` | 终端 HTML 与适配器 |
 | GET/HEAD | `/charting_library/*` | 图表库静态文件代理 |
 

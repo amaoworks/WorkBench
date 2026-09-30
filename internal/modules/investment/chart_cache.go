@@ -67,7 +67,7 @@ func (t *chartLibraryTransport) RoundTrip(req *http.Request) (*http.Response, er
 	t.mu.Lock()
 	if entry := t.cache[req.URL.Path][encoding]; entry != nil && (entry.expires.IsZero() || time.Now().Before(entry.expires)) {
 		t.mu.Unlock()
-		return entry.response(req, http.StatusOK), nil
+		return entry.response(req, http.StatusOK)
 	}
 	flight := t.flights[key]
 	if flight == nil {
@@ -100,7 +100,7 @@ func (t *chartLibraryTransport) RoundTrip(req *http.Request) (*http.Response, er
 		if flight.err != nil {
 			return nil, flight.err
 		}
-		return flight.entry.response(req, flight.status), nil
+		return flight.entry.response(req, flight.status)
 	}
 }
 
@@ -187,9 +187,16 @@ func chartEntryFreshness(header http.Header) time.Duration {
 	return ttl
 }
 
-func (e *chartCacheEntry) response(req *http.Request, status int) *http.Response {
+func (e *chartCacheEntry) response(req *http.Request, status int) (*http.Response, error) {
 	header := e.header.Clone()
 	body := e.body
+	if status == http.StatusOK {
+		var err error
+		body, err = patchTVDetailsQuotes(req.URL.Path, header, body)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if status == http.StatusOK && chartEntryPoint(req.URL.Path) && !strings.Contains(header.Get("Cache-Control"), "no-store") {
 		// Stable filenames must also revalidate in the browser; an upstream
 		// one-hour max-age would otherwise outlive our bounded server cache.
@@ -208,7 +215,7 @@ func (e *chartCacheEntry) response(req *http.Request, status int) *http.Response
 		Status: fmt.Sprintf("%d %s", status, http.StatusText(status)), StatusCode: status,
 		Header: header, Body: io.NopCloser(bytes.NewReader(body)), ContentLength: int64(len(body)),
 		Request: req, Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1,
-	}
+	}, nil
 }
 
 func ifNoneMatch(header, etag string) bool {

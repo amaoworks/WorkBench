@@ -84,6 +84,16 @@
     };
     const onSymbolChanged = symbolInfo => {
       if (disposed) return;
+      const desiredSession = activeSession();
+      const interval = String(widget.activeChart().resolution());
+      // TV can resolve regular metadata while changing to a daily interval.
+      // Preserve the requested Night/24H session until its interval is corrected.
+      if (minuteRestrictedSession(desiredSession) && !NIGHT_RESOLUTIONS.has(interval) &&
+          symbolInfo.subsessions?.some(item => item.id === desiredSession)) {
+        pendingSession = desiredSession;
+        onIntervalChanged(interval);
+        return;
+      }
       // TradingView may reuse cached symbol metadata without calling the datafeed
       // again. Follow the chart event as well so RTH → Night → ETH → RTH stays in sync.
       resolvedSession = symbolInfo.subsession_id || 'regular';
@@ -141,20 +151,27 @@
       nightResolutionTimer = setTimeout(() => {
         const session = activeSession();
         if (disposed || !minuteRestrictedSession(session) || NIGHT_RESOLUTIONS.has(String(widget.activeChart().resolution()))) return;
-        ensureSessionResolution(session);
+        selectSession(session);
       }, 200);
     };
 
     widget = new tvWidget({
       datafeed,
       container: "tv_chart_container",
-      library_path: "/charting_library/",
+      library_path: "/charting_library/quotes-v1/",
       custom_css_url: "/investment/terminal/custom.css",
       symbol: params.get("symbol") || "AAPL",
       interval: "1D",
       theme,
       locale: "zh",
-      custom_translate_function: (originalText) => originalText === "Time in force" ? "有效期" : null,
+      custom_translate_function: (originalText) => {
+        switch (originalText) {
+          case "Time in force": return "有效期";
+          case "Overnight via BOATS": return "夜盘";
+          case "Market open": return "盘中";
+          default: return null;
+        }
+      },
       timezone: "Asia/Shanghai",
       symbol_search_request_delay: 1000,
       fullscreen: false,
