@@ -91,7 +91,7 @@ IMAGE=workbench:local VERSION=v0.0.0-dev.1 ARCH=amd64 ./scripts/export-build.sh
 
 `ARCH` 必须与镜像架构一致。镜像文件可用 `docker load --input` 导入；导出的二进制与镜像内程序相同。正式标签发布仍使用 `release.sh` 和 Release 工作流。
 
-`deployment-smoke.py` 仅依赖 Python 3 标准库，使用随机端口、临时密码和独立工作空间，验证首次初始化、登录、健康探针、在线备份、退出，以及重建后的数据和凭据保留。容器模式还检查非 root 用户和只读根文件系统；测试结束清理自己的 Compose 项目和临时卷。
+`deployment-smoke.py` 仅依赖 Python 3 标准库，使用随机端口、临时密码和独立工作空间，验证首次初始化、登录、健康探针、在线备份、退出，以及重建后的数据和凭据保留。容器模式还检查非 root 用户；测试结束清理自己的 Compose 项目和临时卷。
 
 ```bash
 ./scripts/build.sh

@@ -124,7 +124,7 @@ docker compose -f compose.image.yaml -f futu-opend/compose.workbench.yaml --env-
 
 在「设置 → 业务模块 → 投资设置」填写 Futu 账号和登录密码，保存并启用 Futu，然后单独启用夜盘。主机、端口和非本机许可已由配套 Compose 配置；独立部署使用 `WORKBENCH_FUTU_OPEND_ADDRESS`、`WORKBENCH_FUTU_ALLOW_NON_LOCAL`。需要使用支持共享登录配置的当前工作台镜像和配套 OpenD 镜像。首次登录若要求验证码，telnet `127.0.0.1:22222`。独立 OpenD 与账号保留规则见源码中的 `futu-opend/README.md`；在线说明见 [OpenD 部署说明](https://github.com/amaoworks/WorkBench/blob/main/futu-opend/README.md)。
 
-配置宿主机反向代理后，通过 `.env` 中的 HTTPS 地址访问。Workbench 容器始终以 UID/GID `65532:65532` 运行，根文件系统只读，`/data` 可写，`/tmp` 为临时内存文件系统。日志输出到 stderr，并由 Compose 配置滚动保存。命名卷首次创建时继承镜像中 `/data` 的权限。
+配置宿主机反向代理后，通过 `.env` 中的 HTTPS 地址访问。Workbench 容器以 UID/GID `65532:65532` 运行，`/data` 挂载持久化卷，`/tmp` 使用容器文件系统。日志输出到 stderr，并由 Compose 配置滚动保存。命名卷首次创建时继承镜像中 `/data` 的权限。
 
 日常使用 `docker compose stop` 或 `docker compose down` 停止服务并保留 `workbench_data` 与 `postgres_data`。`docker compose down --volumes` 会同时删除应用运行文件和内置 PostgreSQL 数据，不用于升级或常规停机。
 

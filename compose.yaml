@@ -15,13 +15,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    read_only: true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,size=64m,mode=1777
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
     stop_grace_period: 20s
     healthcheck:
       test: ["CMD", "/workbench", "-healthcheck"]

@@ -135,7 +135,6 @@ def main():
                 container = command(compose + ["ps", "-q", "workbench"], capture_output=True).stdout.strip()
                 info = json.loads(command(["docker", "inspect", container], capture_output=True).stdout)[0]
                 assert info["Config"]["User"] == "65532:65532", "container must run as non-root"
-                assert info["HostConfig"]["ReadonlyRootfs"], "root filesystem must be read-only"
                 command(["docker", "cp", f"{container}:/data/backups/{backup}", str(work / "backup.db")])
                 backup_path = work / "backup.db"
             else:
