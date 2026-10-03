@@ -119,6 +119,13 @@ func TestMigrateCoreUpgradesVersionOneDatabaseWithoutDataLoss(t *testing.T) {
 		VALUES ('conversation-one', 'preserve me', 1, 1)`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := database.SQL().Exec(`
+		INSERT INTO notifications(id, source_module, severity, title, content, idempotency_key, created_at)
+		VALUES
+			('investment-notice', 'investment', 'warning', 'price', '', 'investment:monitor:rule:day', 1),
+			('todo-notice', 'todo', 'info', 'task', '', 'todo:due:task', 1)`); err != nil {
+		t.Fatal(err)
+	}
 	if err := database.MigrateCore(ctx); err != nil {
 		t.Fatalf("upgrade core database: %v", err)
 	}
@@ -128,6 +135,16 @@ func TestMigrateCoreUpgradesVersionOneDatabaseWithoutDataLoss(t *testing.T) {
 	}
 	if title != "preserve me" {
 		t.Fatalf("conversation title after upgrade = %q", title)
+	}
+	var investmentExternal, todoExternal int
+	if err := database.SQL().QueryRow("SELECT external FROM notifications WHERE id = 'investment-notice'").Scan(&investmentExternal); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.SQL().QueryRow("SELECT external FROM notifications WHERE id = 'todo-notice'").Scan(&todoExternal); err != nil {
+		t.Fatal(err)
+	}
+	if investmentExternal != 1 || todoExternal != 0 {
+		t.Fatalf("backfilled external values = investment %d, todo %d", investmentExternal, todoExternal)
 	}
 	for _, index := range []string{"idx_ai_conversations_updated", "idx_ai_tool_calls_status"} {
 		var count int

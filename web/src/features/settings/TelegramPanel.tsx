@@ -37,7 +37,7 @@ function TelegramForm({ value }: { value: TelegramSettings }) {
     onSuccess: () => setTestResult("测试消息已发送"), onError: (error) => setTestResult(error.message), onSettled: refresh });
   const busy = save.isPending || test.isPending;
   return <form className="studio-form" onSubmit={(event) => { event.preventDefault(); save.mutate(); }}>
-    <div className="control-heading"><div><h3>Telegram 推送</h3></div></div>
+    <div className="control-heading"><div><h3>Telegram 推送</h3><p>接收价格预警、资讯简报等外发通知。</p></div></div>
     <fieldset className="form-fields" disabled={busy} onChange={() => setTestResult("")}>
       <label className="check-option"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />启用推送</label>
       <label className="studio-field"><span>Bot Token <span className="field-meta">{value.hasBotToken && !clearBotToken ? "已保存" : "未设置"}</span></span>

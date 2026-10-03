@@ -368,7 +368,7 @@ func TestPostgresWorkspaceLockLossBlocksExistingConnections(t *testing.T) {
 func assertPostgresQueriesPrepare(t *testing.T, ctx context.Context, db *sql.DB) {
 	t.Helper()
 	count := 0
-	for _, dir := range []string{"../foundation/database/sqlc", "../modules/todo/sqlc", "../modules/investment/sqlc"} {
+	for _, dir := range []string{"../foundation/database/sqlc", "../modules/todo/sqlc", "../modules/investment/sqlc", "../modules/news/sqlc"} {
 		files, err := filepath.Glob(filepath.Join(dir, "*.sql.go"))
 		if err != nil {
 			t.Fatal(err)

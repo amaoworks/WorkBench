@@ -15,7 +15,8 @@ Workbench 技术文档索引：
 | [Todo](modules/todo.md) | 待办、分页、提醒、AI Tool 和代码入口 |
 | [Wallos 联动](modules/todo-wallos.md) | Todo 内的订阅同步与账期管理 |
 | [Investment](modules/investment.md) | Schwab 行情、持仓、订单、TradingView 终端与价格预警 |
-| [Telegram 通知](notifications.md) | 价格预警推送配置、测试与重试策略 |
+| [资讯](modules/news.md) | RSS/Atom、关注规则、翻译摘要、定时简报和推送 |
+| [Telegram 通知](notifications.md) | 价格预警及资讯简报的推送配置、测试与重试策略 |
 | [AI 协作指南](../AGENTS.md) | 面向 AI 助手的架构红线、命令速查与开发工作流 |
 
 ## 历史归档

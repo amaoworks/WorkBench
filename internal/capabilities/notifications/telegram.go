@@ -101,9 +101,7 @@ func (t *Telegram) save(ctx context.Context, section string, value any) error {
 }
 
 func (t *Telegram) Deliver(ctx context.Context, note contracts.Notification) error {
-	// Only explicitly selected investment price alerts are forwarded. Enabling
-	// Telegram does not export Todo messages or replay an old notification inbox.
-	if note.SourceModule != "investment" || !strings.HasPrefix(note.IdempotencyKey, "investment:monitor:") {
+	if !note.External {
 		return nil
 	}
 	t.mu.Lock()
@@ -116,14 +114,10 @@ func (t *Telegram) Deliver(ctx context.Context, note contracts.Notification) err
 	if !config.Enabled || note.CreatedAt.UnixMilli() < config.ActivatedAt || (t.allowed != nil && !t.allowed(note.SourceModule)) {
 		return nil
 	}
-	if now.Sub(note.CreatedAt) > 15*time.Minute || (note.ExpiresAt != nil && !now.Before(*note.ExpiresAt)) {
-		return &telegramError{message: "预警已超过投递有效期，停止补发，请查看站内记录", permanent: true}
+	if (note.ExpiresAt == nil && now.Sub(note.CreatedAt) > 15*time.Minute) || (note.ExpiresAt != nil && !now.Before(*note.ExpiresAt)) {
+		return &telegramError{message: "通知已超过投递有效期，停止补发，请查看站内记录", permanent: true}
 	}
-	content := note.Title + "\n\n" + note.Content
-	if t.publicURL != "" && note.ActionRoute != "" {
-		content += "\n\n" + t.publicURL + note.ActionRoute
-	}
-	return t.sendTracked(ctx, config, content)
+	return t.sendTracked(ctx, config, telegramContent(note, t.publicURL))
 }
 
 func (t *Telegram) sendTracked(ctx context.Context, config telegramConfig, content string) error {
@@ -189,18 +183,41 @@ func (e *telegramError) RetryAfter() time.Duration { return e.retryAfter }
 func (e *telegramError) Permanent() bool           { return e.permanent }
 
 func telegramText(value string) string {
-	// Telegram counts UTF-16 units for text limits. Leave room for an ellipsis.
-	units := 0
-	for i, char := range value {
-		units++
-		if char > 0xffff {
-			units++
-		}
-		if units > 4000 {
-			return value[:i] + "…"
+	const limit = 4096
+	characters := []rune(value)
+	if len(characters) <= limit {
+		return value
+	}
+	return string(characters[:limit-1]) + "…"
+}
+
+func telegramContent(note contracts.Notification, publicURL string) string {
+	const limit = 4096
+	body := note.Title + "\n\n" + note.Content
+	link := ""
+	if publicURL != "" && note.ActionRoute != "" {
+		link = strings.TrimRight(publicURL, "/") + note.ActionRoute
+	}
+	if link == "" {
+		return telegramText(body)
+	}
+	suffix := "\n\n" + link
+	if len([]rune(body+suffix)) <= limit {
+		return body + suffix
+	}
+	available := limit - len([]rune(suffix))
+	if available <= 0 {
+		return telegramText(link)
+	}
+	bodyRunes := []rune(body)
+	if len(bodyRunes) > available {
+		if available == 1 {
+			body = "…"
+		} else {
+			body = string(bodyRunes[:available-1]) + "…"
 		}
 	}
-	return value
+	return body + suffix
 }
 
 func (t *Telegram) send(ctx context.Context, config telegramConfig, content string) error {

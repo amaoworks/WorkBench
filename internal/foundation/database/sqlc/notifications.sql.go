@@ -43,7 +43,7 @@ func (q *Queries) DeleteOldHandledNotifications(ctx context.Context, createdAt i
 }
 
 const getNotificationByIdempotencyKey = `-- name: GetNotificationByIdempotencyKey :one
-SELECT id, source_module, severity, title, content,
+SELECT id, source_module, external, severity, title, content,
        COALESCE(action_label, '') AS action_label,
        COALESCE(action_route, '') AS action_route,
        idempotency_key, COALESCE(source_event_id, '') AS source_event_id,
@@ -54,6 +54,7 @@ FROM notifications WHERE idempotency_key = ?
 type GetNotificationByIdempotencyKeyRow struct {
 	ID             string        `json:"id"`
 	SourceModule   string        `json:"source_module"`
+	External       int64         `json:"external"`
 	Severity       string        `json:"severity"`
 	Title          string        `json:"title"`
 	Content        string        `json:"content"`
@@ -73,6 +74,7 @@ func (q *Queries) GetNotificationByIdempotencyKey(ctx context.Context, idempoten
 	err := row.Scan(
 		&i.ID,
 		&i.SourceModule,
+		&i.External,
 		&i.Severity,
 		&i.Title,
 		&i.Content,
@@ -90,13 +92,13 @@ func (q *Queries) GetNotificationByIdempotencyKey(ctx context.Context, idempoten
 
 const insertNotification = `-- name: InsertNotification :execrows
 INSERT INTO notifications(
-    id, source_module, severity, title, content, action_label,
+    id, source_module, external, severity, title, content, action_label,
     action_route, idempotency_key, source_event_id, created_at, expires_at
 ) VALUES (
-    ?1, ?2, ?3, ?4, ?5,
-    NULLIF(?6, ''), NULLIF(?7, ''),
-    ?8, NULLIF(?9, ''),
-    ?10, ?11
+    ?1, ?2, ?3, ?4,
+    ?5, ?6, NULLIF(?7, ''), NULLIF(?8, ''),
+    ?9, NULLIF(?10, ''),
+    ?11, ?12
 )
 ON CONFLICT(idempotency_key) DO NOTHING
 `
@@ -104,6 +106,7 @@ ON CONFLICT(idempotency_key) DO NOTHING
 type InsertNotificationParams struct {
 	ID             string        `json:"id"`
 	SourceModule   string        `json:"source_module"`
+	External       int64         `json:"external"`
 	Severity       string        `json:"severity"`
 	Title          string        `json:"title"`
 	Content        string        `json:"content"`
@@ -119,6 +122,7 @@ func (q *Queries) InsertNotification(ctx context.Context, arg InsertNotification
 	result, err := q.db.ExecContext(ctx, insertNotification,
 		arg.ID,
 		arg.SourceModule,
+		arg.External,
 		arg.Severity,
 		arg.Title,
 		arg.Content,

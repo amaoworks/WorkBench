@@ -578,6 +578,9 @@ async function main(argv = process.argv.slice(2), env = process.env) {
       for (const host of plan.externalHosts) {
         console.log(`[dev] Reverse proxy for ${host} should target ${plan.webUrl} and forward WebSocket traffic.`);
       }
+      if (plan.auth === "password" && !plan.publicUrl && plan.externalHosts.length > 0) {
+        console.log(`[dev] For HTTPS access, add -public-url https://${plan.externalHosts[0]}; -allowed-host alone does not configure the browser origin.`);
+      }
       console.log("[dev] Press Ctrl+C to stop both services and their child processes.");
       console.log("[dev] Go source files are not watched; rerun this script after Go changes.");
     }

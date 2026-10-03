@@ -37,7 +37,7 @@ func setupTelegram(t *testing.T) (*Telegram, *Service, *time.Time) {
 }
 
 func telegramNotice(now time.Time) contracts.Notification {
-	return contracts.Notification{SourceModule: "investment", Title: "AAPL 上涨达到 3%", Content: "最新价：103 USD", CreatedAt: now,
+	return contracts.Notification{SourceModule: "investment", External: true, Title: "AAPL 上涨达到 3%", Content: "最新价：103 USD", CreatedAt: now,
 		ActionRoute: "/investment?tab=monitor", IdempotencyKey: "investment:monitor:rule:2026-09-22"}
 }
 
@@ -59,14 +59,14 @@ func TestTelegramPlaintextRoutingAndNoSecretExposure(t *testing.T) {
 	if err := channel.Deliver(context.Background(), note); err != nil {
 		t.Fatal(err)
 	}
-	for _, kind := range []string{"todo", "old", "disabled-module", "disabled-channel"} {
+	for _, kind := range []string{"internal", "disabled-module", "disabled-channel"} {
 		other := note
 		switch kind {
-		case "todo":
+		case "internal":
 			other.SourceModule = "todo"
-		case "old":
-			other.CreatedAt = now.Add(-time.Hour)
+			other.External = false
 		case "disabled-module":
+			other.SourceModule = "news"
 			channel.allowed = func(contracts.ModuleID) bool { return false }
 		case "disabled-channel":
 			channel.allowed = nil
@@ -88,7 +88,7 @@ func TestTelegramPlaintextRoutingAndNoSecretExposure(t *testing.T) {
 
 func TestTelegramDurableRetryAcrossChannelRestart(t *testing.T) {
 	channel, service, now := setupTelegram(t)
-	_, err := service.Create(context.Background(), contracts.NewNotification{SourceModule: "investment", Severity: contracts.NotificationWarning, Title: "Price alert", Content: "AAPL", IdempotencyKey: "investment:monitor:rule:day"})
+	_, err := service.Create(context.Background(), contracts.NewNotification{SourceModule: "investment", External: true, Severity: contracts.NotificationWarning, Title: "Price alert", Content: "AAPL", IdempotencyKey: "investment:monitor:rule:day"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestTelegramRateLimitIsolatedBetweenBotsAndTestDoesNotSave(t *testing.T) {
 
 func TestTelegramExpiredRetryStopsAsFailure(t *testing.T) {
 	channel, service, now := setupTelegram(t)
-	_, err := service.Create(context.Background(), contracts.NewNotification{SourceModule: "investment", Severity: contracts.NotificationWarning, Title: "Price alert", Content: "AAPL", IdempotencyKey: "investment:monitor:rule:day"})
+	_, err := service.Create(context.Background(), contracts.NewNotification{SourceModule: "investment", External: true, Severity: contracts.NotificationWarning, Title: "Price alert", Content: "AAPL", IdempotencyKey: "investment:monitor:rule:day"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +251,53 @@ func TestTelegramTransportAndPermanentErrorsAreSanitized(t *testing.T) {
 			}
 		}
 	}
-	if got := telegramText(strings.Repeat("😀", 2100)); len([]rune(got)) != 2001 {
-		t.Fatal("UTF-16 text limit not respected")
+	if got := telegramText(strings.Repeat("😀", 4200)); len([]rune(got)) != 4096 {
+		t.Fatal("Telegram text limit not respected")
+	}
+}
+
+func TestTelegramExternalNotificationUsesExplicitExpiry(t *testing.T) {
+	channel, _, now := setupTelegram(t)
+	if err := channel.save(context.Background(), "telegram", telegramConfig{Enabled: true, BotToken: "123:private-token", ChatID: "-100123", ActivatedAt: now.Add(-24 * time.Hour).UnixMilli()}); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	channel.client.Transport = telegramTransport(func(r *http.Request) (*http.Response, error) {
+		calls++
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if text, _ := payload["text"].(string); !strings.Contains(text, "今日资讯") {
+			t.Fatalf("news content missing: %q", text)
+		}
+		return telegramResponse(200, `{"ok":true}`), nil
+	})
+	expiresAt := now.Add(time.Hour)
+	note := contracts.Notification{SourceModule: "news", External: true, Title: "今日资讯", Content: "摘要", CreatedAt: now.Add(-23 * time.Hour), ExpiresAt: &expiresAt}
+	if err := channel.Deliver(context.Background(), note); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("explicitly valid notification sends = %d, want 1", calls)
+	}
+	*now = now.Add(2 * time.Hour)
+	var permanent contracts.PermanentDeliveryError
+	if err := channel.Deliver(context.Background(), note); !errors.As(err, &permanent) || !permanent.Permanent() {
+		t.Fatalf("expired notification error = %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("expired notification sends = %d, want 1", calls)
+	}
+}
+
+func TestTelegramLongContentPreservesLink(t *testing.T) {
+	note := contracts.Notification{Title: "中文简报", Content: strings.Repeat("资", 5000), ActionRoute: "/news/digests/today"}
+	content := telegramContent(note, "https://workbench.example/")
+	if got := len([]rune(content)); got != 4096 {
+		t.Fatalf("message length = %d, want 4096", got)
+	}
+	if !strings.HasSuffix(content, "\n\nhttps://workbench.example/news/digests/today") {
+		t.Fatalf("message link was not preserved: %q", content[len(content)-80:])
 	}
 }

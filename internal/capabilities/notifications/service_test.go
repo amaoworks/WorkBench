@@ -32,7 +32,7 @@ func openService(t *testing.T) (*Service, *workbenchdb.Database) {
 func TestCreateIsIdempotentAndPublishesOnce(t *testing.T) {
 	service, database := openService(t)
 	input := contracts.NewNotification{
-		SourceModule: "todo", Severity: contracts.NotificationInfo,
+		SourceModule: "todo", External: true, Severity: contracts.NotificationInfo,
 		Title: "Task due", Content: "A task is due", ActionRoute: "/todo",
 		IdempotencyKey: "todo:due:one",
 	}
@@ -46,6 +46,9 @@ func TestCreateIsIdempotentAndPublishesOnce(t *testing.T) {
 	}
 	if first.ID != second.ID {
 		t.Fatalf("idempotent create returned %q and %q", first.ID, second.ID)
+	}
+	if !first.External || !second.External {
+		t.Fatal("external delivery intent was not persisted")
 	}
 	var notifications, eventCount int
 	if err := database.SQL().QueryRow("SELECT COUNT(*) FROM notifications").Scan(&notifications); err != nil {

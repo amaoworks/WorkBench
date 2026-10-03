@@ -66,7 +66,7 @@ func (s *Service) CreateTx(ctx context.Context, tx *sql.Tx, input contracts.NewN
 	}
 	queries := dbsqlc.New(tx)
 	rows, err := queries.InsertNotification(ctx, dbsqlc.InsertNotificationParams{
-		ID: id, SourceModule: string(input.SourceModule), Severity: string(input.Severity),
+		ID: id, SourceModule: string(input.SourceModule), External: boolInt64(input.External), Severity: string(input.Severity),
 		Title: input.Title, Content: input.Content, ActionLabel: input.ActionLabel,
 		ActionRoute: input.ActionRoute, IdempotencyKey: input.IdempotencyKey,
 		SourceEventID: string(input.SourceEventID), CreatedAt: now.UnixMilli(), ExpiresAt: expiresAt,
@@ -85,7 +85,7 @@ func (s *Service) CreateTx(ctx context.Context, tx *sql.Tx, input contracts.NewN
 		return contracts.Notification{}, fmt.Errorf("publish notification event: %w", err)
 	}
 	return contracts.Notification{
-		ID: id, SourceModule: input.SourceModule, Severity: input.Severity,
+		ID: id, SourceModule: input.SourceModule, External: input.External, Severity: input.Severity,
 		Title: input.Title, Content: input.Content, ActionLabel: input.ActionLabel,
 		ActionRoute: input.ActionRoute, IdempotencyKey: input.IdempotencyKey,
 		SourceEventID: input.SourceEventID, CreatedAt: now, ExpiresAt: input.ExpiresAt,
@@ -122,7 +122,7 @@ func getByIdempotencyKey(ctx context.Context, queries *dbsqlc.Queries, key strin
 		return contracts.Notification{}, err
 	}
 	return contracts.Notification{
-		ID: row.ID, SourceModule: contracts.ModuleID(row.SourceModule), Severity: contracts.NotificationSeverity(row.Severity),
+		ID: row.ID, SourceModule: contracts.ModuleID(row.SourceModule), External: row.External != 0, Severity: contracts.NotificationSeverity(row.Severity),
 		Title: row.Title, Content: row.Content, ActionLabel: row.ActionLabel, ActionRoute: row.ActionRoute,
 		IdempotencyKey: row.IdempotencyKey, SourceEventID: contracts.EventID(row.SourceEventID),
 		CreatedAt: time.UnixMilli(row.CreatedAt).UTC(), ReadAt: nullableTime(row.ReadAt),
@@ -131,7 +131,7 @@ func getByIdempotencyKey(ctx context.Context, queries *dbsqlc.Queries, key strin
 }
 
 const notificationSelect = `
-	SELECT id, source_module, severity, title, content,
+	SELECT id, source_module, external, severity, title, content,
 	       COALESCE(action_label, ''), COALESCE(action_route, ''), idempotency_key,
 	       COALESCE(source_event_id, ''), created_at, read_at, archived_at, expires_at
 	FROM notifications`
@@ -143,7 +143,7 @@ func scanNotification(row scanner) (contracts.Notification, error) {
 	var createdAt int64
 	var readAt, archivedAt, expiresAt sql.NullInt64
 	err := row.Scan(
-		&notification.ID, &notification.SourceModule, &notification.Severity,
+		&notification.ID, &notification.SourceModule, &notification.External, &notification.Severity,
 		&notification.Title, &notification.Content, &notification.ActionLabel,
 		&notification.ActionRoute, &notification.IdempotencyKey, &notification.SourceEventID,
 		&createdAt, &readAt, &archivedAt, &expiresAt,
@@ -156,6 +156,13 @@ func scanNotification(row scanner) (contracts.Notification, error) {
 	notification.ArchivedAt = nullableTime(archivedAt)
 	notification.ExpiresAt = nullableTime(expiresAt)
 	return notification, nil
+}
+
+func boolInt64(value bool) int64 {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func nullableTime(value sql.NullInt64) *time.Time {

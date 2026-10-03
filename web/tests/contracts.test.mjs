@@ -9,6 +9,7 @@ import * as shared from "../src/shared/schema.ts";
 import * as settings from "../src/features/settings/schema.ts";
 import * as todo from "../src/modules/todo/schema.ts";
 import * as investment from "../src/modules/investment/schema.ts";
+import * as news from "../src/modules/news/schema.ts";
 
 const schemas = {
   authStatus: shared.authStatusSchema, modules: shared.modulesResponseSchema,
@@ -19,7 +20,13 @@ const schemas = {
   backup: settings.backupSchema, task: todo.taskSchema, tasks: todo.tasksResponseSchema,
   summary: todo.summarySchema, wallos: todo.wallosSettingsSchema, wallosSync: todo.wallosSyncSchema,
   schwab: investment.schwabSettingsSchema, futu: investment.futuSettingsSchema, overnight: investment.overnightSettingsSchema,
-  telegram: settings.telegramSettingsSchema, priceMonitor: investment.priceMonitorSchema, priceRule: investment.priceRuleSchema, priceHistory: investment.priceHistorySchema
+  telegram: settings.telegramSettingsSchema, priceMonitor: investment.priceMonitorSchema, priceRule: investment.priceRuleSchema, priceHistory: investment.priceHistorySchema,
+  newsSources: news.sourcesResponseSchema, newsSource: news.sourceSchema,
+  newsRefreshSource: news.refreshSourceSchema, newsRefreshAll: news.refreshAllSchema,
+  newsRules: news.rulesResponseSchema, newsRule: news.ruleSchema,
+  newsArticles: news.articlesResponseSchema, newsArticle: news.articleSchema,
+  newsSettings: news.settingsSchema, newsStats: news.statsSchema,
+  newsDigests: news.digestsResponseSchema, newsDigest: news.digestSchema
 };
 
 const temporary = mkdtempSync(join(tmpdir(), "workbench-contracts-"));

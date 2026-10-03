@@ -96,6 +96,10 @@ func countTriggers(t *testing.T, m *Module, expected int) {
 			t.Fatalf("%s count=%d want=%d error=%v", table, count, expected, err)
 		}
 	}
+	var external int
+	if err := m.deps.DB.QueryRow("SELECT COUNT(*) FROM notifications WHERE external = 1").Scan(&external); err != nil || external != expected {
+		t.Fatalf("external notification count=%d want=%d error=%v", external, expected, err)
+	}
 }
 
 func TestPriceMonitorBackgroundBatchDailyDedupAndRestart(t *testing.T) {

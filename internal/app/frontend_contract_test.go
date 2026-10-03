@@ -114,6 +114,7 @@ func TestFrontendContracts(t *testing.T) {
 	}
 	capture("notifications.read", "notifications", "GET", "/api/notifications", "", 200)
 	capture("notifications.count", "unreadCount", "GET", "/api/notifications/unread-count", "", 200)
+	captureNewsContracts(t, a, capture)
 	capture("module.disabled", "module", "PUT", "/api/modules/todo/enabled", `{"enabled":false}`, 200)
 	capture("module.status", "module", "GET", "/api/modules/todo/status", "", 200)
 	capture("module.gated", "error", "GET", "/api/modules/todo/tasks", "", 503)

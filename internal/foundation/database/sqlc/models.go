@@ -122,6 +122,7 @@ type Notification struct {
 	ReadAt         sql.NullInt64  `json:"read_at"`
 	ArchivedAt     sql.NullInt64  `json:"archived_at"`
 	ExpiresAt      sql.NullInt64  `json:"expires_at"`
+	External       int64          `json:"external"`
 }
 
 type ScheduledJob struct {

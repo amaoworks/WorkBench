@@ -31,6 +31,7 @@ import (
 	"workbench/internal/foundation/logging"
 	"workbench/internal/foundation/modules"
 	"workbench/internal/modules/investment"
+	"workbench/internal/modules/news"
 	"workbench/internal/modules/todo"
 	"workbench/internal/webui"
 )
@@ -116,7 +117,11 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	definitions := []contracts.Module{todoModule, investmentModule}
+	newsModule, err := news.New(news.Dependencies{DB: database.SQL(), Events: eventStore, Notifications: notificationService, AI: textAI})
+	if err != nil {
+		return nil, err
+	}
+	definitions := []contracts.Module{todoModule, investmentModule, newsModule}
 	registry, err = modules.InitializeWith(ctx, database, definitions, modules.Options{
 		Logger: logger.With("component", "modules"),
 	})

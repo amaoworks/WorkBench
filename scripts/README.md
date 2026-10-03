@@ -6,13 +6,15 @@
 
 ```bash
 ./scripts/dev.sh -auth password \
-  -listen 127.0.0.1:9090 \
-  -allowed-host w.vm2.de5.net
+  -listen 127.0.0.1:9091 \
+  -allowed-host w.vm2.de5.net \
+  -public-url https://w.vm2.de5.net \
+  --web-port 9090
 ```
 
 首次使用密码模式时，沿用 `WORKBENCH_PASSWORD` 设置初始密码。`-data`、`-public-url`、`-log-level`、重复的 `-allowed-host` 等后端参数原样支持，对应环境变量也继续生效；命令行优先于环境变量。未传 `-data` 时仍使用 `~/.workbench/data.db`，如需独立开发数据，可指定 `-data .workbench/dev/data.db`。
 
-脚本每次启动编译一次 Go，然后运行后端和 Vite。访问启动摘要中的前端地址；默认是 `http://127.0.0.1:5173`。访问后端端口仍会得到内嵌的生产页面。开发代理要求 `-listen` 使用 1–65535 的固定数字端口，不支持随机端口 `:0`。
+脚本每次启动编译一次 Go，然后运行后端和 Vite。上例反代目标为 `http://127.0.0.1:9090`，浏览器访问 `https://w.vm2.de5.net`。直接本机调试时可使用 `./scripts/dev.sh -auth password`，前端默认地址为 `http://127.0.0.1:5173`。访问后端端口仍会得到内嵌的生产页面。开发代理要求 `-listen` 使用 1–65535 的固定数字端口，不支持随机端口 `:0`。
 
 | 开发参数 | 用途 |
 |---|---|
@@ -36,6 +38,8 @@ React 和 CSS 使用 Vite 热更新。投资终端 HTML/JS 通过开发构建从
 ```
 
 反向代理应把这个域名转发到 `http://127.0.0.1:5173`。可参考 [Nginx 模板](../deploy/nginx.conf.example)，将 `proxy_pass` 的端口改为前端端口；保留原始 Host、WebSocket Upgrade 和关闭响应缓冲的设置。Vite 再把 API、投资终端、OAuth 回调等请求转发至 `127.0.0.1:9090`。脚本不会修改服务器上的反代配置。`--dev-url` 只配置开发服务器；HTTPS 的后端 Cookie 和来源检查仍由 `-public-url` 决定。
+
+通过 HTTPS 登录时，如果 `/api/auth/status` 和 `/api/auth/csrf` 成功、登录返回 `403 invalid_origin`，检查启动日志中的 `publicURL`。该值为空时，补充 `-public-url https://你的域名` 后重启开发脚本；`-allowed-host` 只配置 Host 白名单。后端按 HTTP 校验来源时会拒绝 HTTPS 登录请求。
 
 Ctrl+C、SIGTERM、关闭终端产生的 SIGHUP、启动失败或任一服务退出都会触发清理：先通知本次启动的进程组退出，超时再强制终止，最后清理临时编译产物。脚本不按进程名或端口杀进程，不会终止已在运行的其他服务。生产打包继续使用 `build.sh`，终端资源仍嵌入二进制。
 
@@ -118,6 +122,28 @@ npm install --prefix /tmp/workbench-e2e playwright
 npm --prefix web run build
 go build -o /tmp/workbench-e2e-bin ./cmd/workbench
 ```
+
+### 开发登录
+
+`dev-auth.e2e.cjs` 使用临时数据库、密码和自签证书，启动真实开发脚本并通过 HTTPS → Vite → Go 链路验证登录。覆盖缺少 `-public-url` 时的 `403 invalid_origin`、配置后的登录、Secure Cookie、首次改密、资讯导航和刷新后的会话保留，需要本机 OpenSSL。
+
+```bash
+PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
+  CHROMIUM_PATH=/usr/bin/chromium node scripts/dev-auth.e2e.cjs
+```
+
+### 资讯
+
+`news.e2e.cjs` 自行启动一次性工作空间、本地 RSS/Atom 和 Responses API 替身，覆盖来源与刷新去重、跨页阅读、规则筛选、已读收藏、翻译摘要缓存、简报与幂等推送提交、设置持久化、模块门控及桌面/移动布局。Telegram 保持关闭，实际外发由 Go 的传输替身测试覆盖。
+
+```bash
+npm --prefix web run build
+go build -o /tmp/workbench-news-e2e-bin ./cmd/workbench
+PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
+  CHROMIUM_PATH=/usr/bin/chromium node scripts/news.e2e.cjs
+```
+
+`WORKBENCH_BIN` 可指定测试二进制；截图写入 `/tmp/workbench-news-{1440,390}.png`。
 
 ### 模块、总览和分页
 

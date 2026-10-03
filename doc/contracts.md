@@ -31,9 +31,9 @@ Manifest 声明 ID、显示名称、业务版本、契约版本、图标和导�
 | `EventConsumer` | ID、模块、主题集合、超时、最大尝试次数、Handler；消费者按至少一次交付设计 |
 | [JobDefinition](../internal/contracts/job.go) | cron/interval/once、明确时区、超时、重试；OverlapPolicy 当前支持 skip，MisfirePolicy 支持 skip/run_once |
 | [NotificationService](../internal/contracts/notification.go) | 创建、事务内创建、分页、标已读、全部已读、归档、未读数 |
-| `NotificationChannel` | 外部投递接口，已装配 Telegram；首版转发投资价格预警 |
+| `NotificationChannel` | 外部投递接口，已装配 Telegram；投递业务显式选择外发的通知 |
 
-通知内容为纯文本，`actionRoute` 为站内路径，`actionLabel` 为跳转文案，幂等键由业务提供。SSE 发布 `core.notification.created`、`core.notification.updated` 和 `core.notification.archived`，浏览器收到后刷新查询。连接有心跳，不实现基于 Last-Event-ID 的历史补发。
+通知内容为纯文本，`actionRoute` 为站内路径，`actionLabel` 为跳转文案，幂等键由业务提供。`External` 默认关闭，业务显式设置后进入外部投递；该标志持久化且不在用户通知 API 中暴露。`ExpiresAt` 控制投递截止期，未指定时 Telegram 使用 15 分钟。SSE 发布 `core.notification.created`、`core.notification.updated` 和 `core.notification.archived`，浏览器收到后刷新查询。连接有心跳，不实现基于 Last-Event-ID 的历史补发。
 
 Telegram 使用独立 dispatcher 和已有 `event_deliveries` 持久化投递。消费者可通过 `RetryAfterError` 请求更晚的重试时间，通过 `PermanentDeliveryError` 直接终止为 `dead`；详情及设置接口见 [Telegram 通知](notifications.md)。
 
@@ -97,4 +97,4 @@ JSON 错误使用 `code`、`message`，并可含 `details`、`requestId`，定�
 
 登录与状态响应包含 `mustChangePassword`。新建密码凭据首次登录时该字段为 `true`，除 `PUT /api/settings/password` 外的受保护接口返回 `403 password_change_required`。改密提交 `{ currentPassword, newPassword }`，首次新密码必须与当前密码不同；成功返回 `{ reauthenticate: true }`，用户重新登录后进入业务页面。
 
-业务 HTTP、资源标识和字段说明见 [Todo](modules/todo.md)、[Wallos](modules/todo-wallos.md) 和 [Investment](modules/investment.md)。
+业务 HTTP、资源标识和字段说明见 [Todo](modules/todo.md)、[Wallos](modules/todo-wallos.md)、[Investment](modules/investment.md) 和 [资讯](modules/news.md)。

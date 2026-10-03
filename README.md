@@ -2,13 +2,14 @@
 
 Workbench 是本地优先、单用户的个人工作台，采用 Go 模块化单体、React 前端和共享数据库工作空间。二进制默认使用 SQLite，Docker Compose 默认配套 PostgreSQL。前端资源嵌入可执行文件，平台统一提供鉴权、事件、调度、AI、通知、总览和设置。
 
-当前业务包括待办及 Wallos 订阅提醒、投资（Schwab 行情、账户和 TradingView 终端）。业务可在设置中启停，数据和总览布局偏好会保留。新增业务按模块扩展，前后端使用对应的模块目录。
+当前业务包括待办及 Wallos 订阅提醒、投资（Schwab 行情、账户和 TradingView 终端）、资讯（RSS、翻译摘要和简报推送）。业务可在设置中启停，数据和总览布局偏好会保留。新增业务按模块扩展，前后端使用对应的模块目录。
 
 ## 核心特性
 
 - **个人待办**：支持待办管理、到期提醒，以及与 Wallos 订阅账期的自动联动。
 - **投资终端**：对接 Charles Schwab API，集成 TradingView 图表，支持实时行情、持仓与订单管理。
 - **价格预警**：美股/ETF 分钟级价格监控，支持站内通知与 Telegram 自动推送。
+- **资讯**：RSS/Atom、Google News 和 Yahoo Finance 来源模板、关注规则、AI 翻译摘要、定时简报及 Telegram 推送。
 - **AI 助手**：内置对话面板，支持动态调用已启用的业务工具。
 - **总览看板**：可定制卡片显隐、排序、尺寸与布局偏好。
 - **独立可控**：单可执行文件内嵌前端，可使用本地 SQLite 或 PostgreSQL，支持单机运行或容器部署。
@@ -90,7 +91,7 @@ git push origin v0.1.1
 - [配置与运行](doc/configuration.md)
 - [安全边界](doc/security.md)
 - [文案与文档规范](doc/copywriting-guidelines.md)
-- [Todo](doc/modules/todo.md)、[Wallos 联动](doc/modules/todo-wallos.md)、[Investment](doc/modules/investment.md)
+- [Todo](doc/modules/todo.md)、[Wallos 联动](doc/modules/todo-wallos.md)、[Investment](doc/modules/investment.md)、[资讯](doc/modules/news.md)
 - [AI 协作指南](AGENTS.md)：面向 AI 编程助手的架构红线与开发工作流
 
 
@@ -102,7 +103,7 @@ internal/app/           平台装配、设置、启动与退出
 internal/contracts/     跨层接口和描述类型
 internal/foundation/    基础设施层
 internal/capabilities/  通用能力层
-internal/modules/       业务应用层：todo、investment
+internal/modules/       业务应用层：todo、investment、news
 internal/webui/         内嵌前端资源和 HTTP Handler
 web/src/modules/        对应业务的页面、Widget、设置、查询和类型
 web/src/                应用外壳、平台功能、共享组件和工具

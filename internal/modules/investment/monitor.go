@@ -161,7 +161,7 @@ func (m *Module) evaluatePrice(ctx context.Context, rule investmentsqlc.Investme
 	if rule.Direction == "down" {
 		direction = "下跌"
 	}
-	notice, err := m.deps.Notifications.CreateTx(ctx, tx, contracts.NewNotification{SourceModule: "investment", Severity: contracts.NotificationWarning,
+	notice, err := m.deps.Notifications.CreateTx(ctx, tx, contracts.NewNotification{SourceModule: "investment", External: true, Severity: contracts.NotificationWarning,
 		Title:       fmt.Sprintf("%s %s达到 %.2f%%", rule.Symbol, direction, threshold),
 		Content:     fmt.Sprintf("最新价：%.4f USD\n前一交易日收盘价：%.4f USD\n涨跌幅：%+.2f%%\n行情时间：%s\n常规交易时段 · 每条规则每交易日提醒一次", quote.Regular.Price, quote.Quote.ClosePrice, change, time.UnixMilli(quote.Regular.Time).In(m.marketLocation).Format("2006-01-02 15:04:05 MST")),
 		ActionLabel: "查看价格监控", ActionRoute: "/investment?tab=monitor", IdempotencyKey: "investment:monitor:" + rule.ID + ":" + date})

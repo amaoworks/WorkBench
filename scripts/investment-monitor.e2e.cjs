@@ -35,7 +35,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     await page.goto(`${baseURL}/settings?tab=notifications`);
     await page.getByLabel(/^Bot Token/).fill("123:browser-fixture-token");
     await page.getByLabel("Chat ID", { exact: true }).fill("12345");
-    await page.getByLabel("启用 Telegram 投资预警", { exact: true }).check();
+    await page.getByLabel("启用推送", { exact: true }).check();
     const saved = page.waitForResponse(r => r.url().endsWith("/api/settings/telegram") && r.request().method() === "PUT");
     await page.getByRole("button", { name: "保存配置", exact: true }).click();
     assert.equal((await saved).status(), 200);
@@ -54,7 +54,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     let tests = 0;
     await page.route("**/api/settings/telegram/test", route => { tests++; return route.fulfill({ status: 200, contentType: "application/json", body: '{"ok":true}' }); });
     await page.getByRole("button", { name: "发送测试消息", exact: true }).click();
-    await page.getByText("测试消息已发送，请在 Telegram 中查看。", { exact: true }).waitFor();
+    await page.getByText("测试消息已发送", { exact: true }).waitFor();
     assert.equal(tests, 1);
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 1000 });

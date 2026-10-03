@@ -17,6 +17,7 @@ const (
 
 type NewNotification struct {
 	SourceModule   ModuleID
+	External       bool
 	Severity       NotificationSeverity
 	Title          string
 	Content        string
@@ -30,6 +31,7 @@ type NewNotification struct {
 type Notification struct {
 	ID             string               `json:"id"`
 	SourceModule   ModuleID             `json:"sourceModule"`
+	External       bool                 `json:"-"`
 	Severity       NotificationSeverity `json:"severity"`
 	Title          string               `json:"title"`
 	Content        string               `json:"content"`

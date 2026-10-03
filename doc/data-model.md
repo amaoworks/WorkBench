@@ -33,7 +33,7 @@ PostgreSQL 另外保留一个连接会话，以 advisory lock 限制同一数据
 | 可靠事件 | `event_deliveries` | 事件/消费者唯一记录、租约、尝试次数和结果 |
 | 鉴权 | `auth_credentials`、`sessions` | 单用户密码哈希、凭据版本、首次改密状态、会话数据与到期时间 |
 | 调度 | `scheduled_jobs`、`scheduled_job_runs` | 代码定义的持久化状态、执行次数、结果和错误 |
-| 通知 | `notifications` | 提醒内容、幂等键、读取/归档/过期状态和来源 |
+| 通知 | `notifications` | 提醒内容、幂等键、读取/归档/过期状态、来源和显式外发标志 |
 | 对话 | `ai_conversations`、`ai_messages` | 对话元数据和消息 |
 | 工具运行时 | `ai_tool_calls` | 工具执行、参数审计、幂等键和结果 |
 | 工作空间设置 | `workspace_settings` | 按 section 存储 JSON：`ai`、`appearance`、`dashboard`、`logging`、`telegram`、`telegram_status`；日志内容写入 stderr |
@@ -47,6 +47,9 @@ PostgreSQL 另外保留一个连接会话，以 advisory lock 限制同一数据
 | Investment | `investment_price_triggers` | `(rule_id, trading_date)` 唯一的触发快照、站内通知 ID；删除规则后保留 |
 | Investment | `investment_price_monitor` | 最近后台检查时间、状态和错误 |
 | Investment | `investment_watchlists` | 自选列表、分组和顺序、当前列表，以及防止迟到请求和旧窗口覆盖的编辑版本/会话/序号 |
+| News | `news_sources`、`news_origins` | 来源配置、条件请求与退避状态、条目身份和出处 |
+| News | `news_articles`、`news_rules` | 文章、阅读状态、匹配规则、翻译摘要及缓存 |
+| News | `news_settings`、`news_digests`、`news_ai_usage` | 处理与简报配置、简报快照和通知 ID、每日调用额度 |
 
 平台设置可供通用能力使用。例如总览布局由 Dashboard 能力管理，但保存在平台 `workspace_settings`；业务配置使用模块自己的表。
 
