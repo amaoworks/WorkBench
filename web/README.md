@@ -29,10 +29,12 @@ src/styles.css          主题变量和共享样式
 
 ## 界面约定
 
+完整的组件选型、状态、可达性与响应式要求见[前端界面规范](../doc/frontend-guidelines.md)。
+
 - 图标使用 Lucide。标题使用 PageHeader，卡片和按钮使用共享 Card、Button；按钮形式的站内跳转使用 ButtonLink。
 - 配色读取 `styles.css` 的语义变量，兼容明暗主题，尊重系统及工作空间的减少动态效果设置。
-- 删除确认使用共享 ConfirmDialog，支持键盘操作与关闭后的焦点恢复。
-- 设置页面有五个标签，切换时保留当前页面内的表单草稿；支持方向键、Home/End。`/settings?tab=modules|ai|security|appearance|data` 可定位标签。
+- 删除确认使用共享 ConfirmDialog 与 useConfirmDelete，支持键盘操作，并按操作结果恢复焦点。
+- 设置页面有六个标签：业务模块、AI 配置、通知推送、账户安全、外观、数据与运行。切换时保留当前页面内的表单草稿；支持方向键、Home/End。`/settings?tab=modules|ai|notifications|security|appearance|data` 可定位标签。
 - 业务设置弹窗最大宽度 480px，支持 Escape、遮罩及关闭按钮，并将焦点还给触发按钮。
 - 通知的查看、已读、归档使用共享 Button/ButtonLink 的 ghost、sm 规格；业务只提供 actionRoute 和 actionLabel。
 - 设置标签栏按需横向滚动，避免纵向溢出；新增页面检查桌面和窄屏宽度。

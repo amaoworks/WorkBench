@@ -42,7 +42,5 @@ export async function syncWallos() {
 
 export function useRefreshTodo() {
   const client = useQueryClient();
-  return () => {
-    for (const queryKey of [["todo"], ["dashboard"], ["widget"]]) void client.invalidateQueries({ queryKey });
-  };
+  return () => Promise.all([["todo"], ["dashboard"], ["widget"]].map((queryKey) => client.invalidateQueries({ queryKey })));
 }

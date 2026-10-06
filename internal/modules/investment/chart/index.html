@@ -14,8 +14,9 @@
     #terminal-loading[hidden] { display: none; }
     #terminal-loading-title { margin: 0; font-size: 18px; }
     #terminal-retry { padding: 10px 18px; border: 1px solid currentColor; border-radius: 6px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
-    #watchlist-status { position: fixed; bottom: 12px; left: 12px; right: 12px; z-index: 21000; padding: 10px 14px; background: #fff3cd; color: #664d03; border-radius: 6px; font: 14px/1.6 system-ui, sans-serif; }
-    #watchlist-retry { margin-left: 12px; cursor: pointer; }
+    #watchlist-status, #preferences-status { position: fixed; bottom: 12px; left: 12px; right: 12px; z-index: 21000; padding: 10px 14px; background: #fff3cd; color: #664d03; border-radius: 6px; font: 14px/1.6 system-ui, sans-serif; }
+    #preferences-status { bottom: 70px; }
+    #watchlist-retry, #preferences-retry { margin-left: 12px; cursor: pointer; }
   </style>
 </head>
 <body>
@@ -28,6 +29,7 @@
   <div id="session-toast" role="status" aria-live="polite" hidden></div>
   <div id="tv_chart_container"></div>
   <div id="watchlist-status" role="alert" hidden><span id="watchlist-message"></span><button id="watchlist-retry" type="button">重试保存</button></div>
+  <div id="preferences-status" role="alert" hidden><span id="preferences-message"></span><button id="preferences-retry" type="button">重试保存</button></div>
   <script src="/investment/terminal/loading.js"></script>
   <script type="module">
     import { widget as tvWidget } from "/charting_library/charting_library.esm.js";
@@ -39,10 +41,28 @@
     import { bindTheme } from "/investment/terminal/theme.js";
     import { loadWatchlists, bindWatchlists } from "/investment/terminal/watchlists.js";
     import { loadChartState, saveChartState, requiresMinuteResolution } from "/investment/terminal/chart-state.js";
+    import { loadPreferences } from "/investment/terminal/preferences.js";
+    import { bindChartLayout } from "/investment/terminal/chart-layout.js";
 
+    async function startTerminal() {
     const params = new URLSearchParams(location.search);
     const theme = params.get("theme") === "dark" ? "dark" : "light";
-    const initialChartState = loadChartState();
+    let preferences;
+    const reportPreferences = error => {
+      const panel = document.getElementById('preferences-status');
+      panel.hidden = !error;
+      if (!error) return;
+      document.getElementById('preferences-message').textContent = error.message;
+      const retry = document.getElementById('preferences-retry');
+      retry.textContent = error.conflict ? '加载工作台版本' : '重试保存';
+      retry.onclick = () => {
+        if (error.conflict || !preferences) location.reload();
+        else void Promise.resolve(layoutSync?.capture()).then(() => preferences.retry());
+      };
+    };
+    preferences = await loadPreferences({ report: reportPreferences });
+    const initialChartState = loadChartState(preferences);
+    const initialSymbol = params.get("symbol") || initialChartState.symbol;
     window.ws = new SchwabStream();
     window.futu = new FutuStream();
     const status = document.getElementById('stream-status');
@@ -51,7 +71,7 @@
       status.hidden = false;
       window.parent.postMessage({ type: 'workbench.schwab.status_changed' }, location.origin);
     });
-    let broker, widget, unbindTheme, watchlistSync, sessionMenu, intervalSubscription, symbolSubscription, sessionResolutionTimer, sessionToastTimer, disposed = false, chartInitialized = false;
+    let broker, widget, unbindTheme, watchlistSync, layoutSync, sessionMenu, intervalSubscription, symbolSubscription, sessionResolutionTimer, sessionToastTimer, disposed = false, chartInitialized = false;
     let resolvedSession = initialChartState.session, pendingSession = null, latestSessionResolution;
     const sessionToast = document.getElementById('session-toast');
     const showSessionToast = message => {
@@ -64,10 +84,11 @@
     const intervalNotice = session => session === EQUITY_24H_SESSION
       ? '全天行情仅支持 1、5、15、30 分钟，已切换到 5 分钟'
       : session === 'extended' ? '扩展行情已切换到 5 分钟' : '夜盘仅支持 1、5、15、30 分钟，已切换到 5 分钟';
-    const persistChartState = () => {
+    const persistChartState = (includeLayout = true) => {
       if (!chartInitialized || disposed) return;
       const chart = widget.activeChart();
-      saveChartState({ symbol: chart.symbol(), resolution: String(chart.resolution()), session: activeSession() });
+      saveChartState({ symbol: chart.symbol(), resolution: String(chart.resolution()), session: activeSession() }, preferences);
+      if (includeLayout) layoutSync?.schedule();
     };
     const ensureSessionResolution = session => {
       if (!requiresMinuteResolution(session) || NIGHT_RESOLUTIONS.has(String(widget.activeChart().resolution()))) return;
@@ -151,6 +172,9 @@
     } });
     window.addEventListener('pagehide', () => {
       persistChartState();
+      const capturedLayout = layoutSync?.dispose();
+      preferences.leave();
+      void capturedLayout?.then(() => preferences.leave());
       disposed = true;
       clearTimeout(sessionResolutionTimer);
       clearTimeout(sessionToastTimer);
@@ -158,6 +182,14 @@
       symbolSubscription?.unsubscribe(null, onSymbolChanged);
       sessionMenu?.dispose();
       unbindTheme?.(); watchlistSync?.dispose(); window.ws.close(); window.futu.close(); datafeed.destroy(); broker?.destroy();
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'hidden' || disposed) return;
+      persistChartState();
+      const capturedLayout = layoutSync?.capture();
+      if (capturedLayout) void capturedLayout.then(() => preferences.flush());
+      else void preferences.flush();
+      void watchlistSync?.flush();
     });
     const onIntervalChanged = interval => {
       if (!requiresMinuteResolution(activeSession()) || NIGHT_RESOLUTIONS.has(String(interval))) {
@@ -178,9 +210,12 @@
       container: "tv_chart_container",
       library_path: "/charting_library/quotes-v1/",
       custom_css_url: "/investment/terminal/custom.css",
-      symbol: params.get("symbol") || initialChartState.symbol,
+      symbol: initialSymbol,
       interval: initialChartState.resolution,
       overrides: { 'mainSeriesProperties.sessionId': initialChartState.session },
+      saved_data: preferences.get('layout') || undefined,
+      settings_adapter: preferences.settingsAdapter(),
+      auto_save_delay: 1,
       theme,
       locale: "zh",
       custom_translate_function: (originalText) => {
@@ -195,10 +230,16 @@
       symbol_search_request_delay: 1000,
       fullscreen: false,
       autosize: true,
-      disabled_features: ["header_saveload", "study_templates"],
-      enabled_features: ["pre_post_market_sessions", "iframe_loading_same_origin"],
+      disabled_features: ["header_saveload", "study_templates", "use_localstorage_for_settings"],
+      enabled_features: ["pre_post_market_sessions", "iframe_loading_same_origin", "items_favoriting"],
       widgetbar: { details: true, watchlist: true, news: false, datawindow: true },
-      broker_factory: function (host) { broker = new Broker(host); return broker; },
+      broker_factory: function (host) {
+        broker = new Broker(host, {
+          preferredAccount: preferences.get('account') || '',
+          onAccountChanged: account => preferences.set('account', account),
+        });
+        return broker;
+      },
       broker_config: {
         durations: [
           { name: "DAY(当天有效)", value: "DAY", default: true },
@@ -220,7 +261,7 @@
       onError: error => console.error('创建行情时段菜单失败', error),
     });
     if (latestSessionResolution) sessionMenu.setResolvedSession(latestSessionResolution.session, latestSessionResolution.nightAvailable, latestSessionResolution.fullDayAvailable);
-    unbindTheme = bindTheme(widget, theme);
+    unbindTheme = bindTheme(widget, theme, window, () => layoutSync?.schedule());
     const showWatchlistError = message => {
       const panel = document.getElementById('watchlist-status');
       panel.hidden = false;
@@ -228,12 +269,31 @@
     };
     widget.chartReady().then(async () => {
       if (disposed) return;
+      // A saved layout includes its interval and session. Keep the separately
+      // saved selections authoritative, including a newer URL symbol.
+      if (widget.activeChart().symbol() !== initialSymbol) {
+        await widget.activeChart().setSymbol(initialSymbol);
+      }
+      if (disposed) return;
+      const restoredSession = resolvedSession;
+      if ((widget.activeChart().symbolExt()?.subsession_id || 'regular') !== restoredSession) pendingSession = restoredSession;
+      if (String(widget.activeChart().resolution()) !== initialChartState.resolution) {
+        await widget.activeChart().setResolution(initialChartState.resolution);
+      }
+      if (disposed) return;
+      widget.applyOverrides({ 'mainSeriesProperties.sessionId': restoredSession });
+      ensureSessionResolution(restoredSession);
       intervalSubscription = widget.activeChart().onIntervalChanged();
       intervalSubscription.subscribe(null, onIntervalChanged);
       symbolSubscription = widget.activeChart().onSymbolChanged();
       symbolSubscription.subscribe(null, onSymbolChanged);
       chartInitialized = true;
-      onSymbolChanged(widget.activeChart().symbolExt());
+      const symbolInfo = widget.activeChart().symbolExt();
+      if (symbolInfo) onSymbolChanged(symbolInfo);
+      layoutSync = bindChartLayout(widget, preferences, {
+        beforeCapture: () => persistChartState(false), report: reportPreferences,
+      });
+      layoutSync.capture();
       // The chart can paint before watchlist restoration. Keeping the cover up
       // waits on another widget bundle and hides an already drawn chart.
       window.terminalLoad.ready();
@@ -251,7 +311,7 @@
           document.getElementById('watchlist-message').textContent = error.message;
           const retry = document.getElementById('watchlist-retry');
           retry.textContent = error.conflict ? '加载工作台版本' : '重试保存';
-          retry.onclick = () => { if (error.conflict) { watchlistSync?.dispose({ discard: true }); saved.value.discardDraft(); location.reload(); } else void watchlistSync?.retry(); };
+          retry.onclick = () => { if (error.conflict) { watchlistSync?.dispose({ discard: true }); location.reload(); } else void watchlistSync?.retry(); };
         });
       } catch (error) {
         showWatchlistError(error.message);
@@ -259,6 +319,8 @@
       }
       if (disposed) watchlistSync.dispose();
     }).catch(error => window.terminalLoad.fail(error.message));
+    }
+    void startTerminal().catch(error => window.terminalLoad.fail(error.message));
   </script>
 </body>
 </html>

@@ -12,7 +12,7 @@ const baseURL = process.env.WORKBENCH_TEST_URL || "http://127.0.0.1:18086";
       const errors = [];
       page.on("pageerror", (error) => errors.push(error.message));
       await page.goto(`${baseURL}/settings?tab=modules`);
-      await page.getByRole("heading", { name: "业务模块" }).waitFor();
+      await page.getByRole("heading", { name: "业务", exact: true }).waitFor();
       assert.equal(await page.getByText("添加外部模块", { exact: true }).count(), 0);
       assert.equal(await page.getByRole("heading", { name: "外部示例", exact: true }).count(), 1, "Requires a workspace with a legacy demo_external fixture");
       await page.getByRole("heading", { name: "外部示例", exact: true }).waitFor();
@@ -36,8 +36,9 @@ const baseURL = process.env.WORKBENCH_TEST_URL || "http://127.0.0.1:18086";
       }
       await page.waitForFunction(() => document.querySelector('[role="switch"][aria-label="外部示例"]')?.getAttribute("aria-checked") === "false");
       await page.getByRole("button", { name: "外部示例设置", exact: true }).click();
-      await page.getByText("业务已停用，仍可修改配置和连接。").waitFor();
-      await page.getByRole("button", { name: "关闭模块设置", exact: true }).click();
+      const disabledNotice = page.getByRole("status").filter({ hasText: "业务已停用" });
+      await disabledNotice.getByText("可修改配置和连接。", { exact: true }).waitFor();
+      await page.getByRole("button", { name: "关闭业务设置", exact: true }).click();
       assert.equal(errors.length, 0, errors.join("\n"));
       if (viewport.width >= 1440 && process.env.E2E_SCREENSHOT) {
         await page.screenshot({ path: process.env.E2E_SCREENSHOT, fullPage: true });

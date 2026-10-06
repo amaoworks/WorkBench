@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { api, apiResponse } from "../../shared/api";
 import { moduleSchema, type ExternalModule, type WorkbenchModule } from "../../shared/schema";
@@ -8,12 +8,22 @@ import { Button } from "../../components/ui/Button";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { Skeleton } from "../../components/ui/States";
 import { ModuleSettingsDialog } from "./ModuleSettingsDialog";
+import { Badge } from "../../components/ui/Badge";
+import { Field } from "../../components/ui/Field";
+import { Notice } from "../../components/ui/Notice";
+import { Switch } from "../../components/ui/Switch";
+import { useConfirmDelete } from "../../components/ui/useConfirmDelete";
 
 export function ModulesPanel() {
   const modules = useModules();
   const client = useQueryClient();
+  const heading = useRef<HTMLHeadingElement>(null);
   const refresh = async () => {
-    await Promise.all([client.invalidateQueries({ queryKey: ["modules"] }), client.invalidateQueries({ queryKey: ["dashboard"] }), client.invalidateQueries({ queryKey: ["ai"] })]);
+    await Promise.all([
+      client.invalidateQueries({ queryKey: ["modules"] }),
+      client.invalidateQueries({ queryKey: ["dashboard"] }),
+      client.invalidateQueries({ queryKey: ["ai"] }),
+    ]);
   };
   const toggle = useMutation({
     mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) => {
@@ -30,27 +40,66 @@ export function ModulesPanel() {
         return;
       }
       toast.success(enabled ? "业务已启用" : "业务已停用");
-    }, onError: async (err) => { await refresh(); toast.error(err.message); }
+    },
+    onError: async (err) => {
+      await refresh();
+      toast.error(err.message);
+    },
   });
   if (modules.isPending) return <Skeleton className="h-32" />;
-  if (modules.isError) return <p role="alert">模块加载失败：{modules.error.message}</p>;
-  return <div className="studio-form">
-    <div className="control-heading"><div><h3>业务模块</h3></div></div>
-    {modules.data.items.map((module) => <div key={module.id} className="module-row">
-      <div>
-        <h3>{module.name}</h3>
-        <p className="text-sm text-[var(--muted)]">版本 {module.version} · {moduleStatus(module)}</p>
-        {module.lastError && <p className="text-sm text-[var(--danger)]" role="status">{module.lastError}</p>}
-        {module.kind === "external" && module.connectionNote && <p className="text-sm text-[var(--muted)]">{module.connectionNote}</p>}
+  if (modules.isError)
+    return (
+      <Notice tone="danger" title="业务加载失败">
+        {modules.error.message}
+      </Notice>
+    );
+  return (
+    <div className="studio-form">
+      <div className="control-heading">
+        <h3 ref={heading} tabIndex={-1} className="focus-ring">
+          业务
+        </h3>
       </div>
-      <div className="module-actions">
-        <ModuleSettingsDialog module={module} />
-        {module.kind === "external" && <ExternalActions module={module} onChange={refresh} />}
-        {module.kind === "builtin" && module.lastError && <Button variant="secondary" disabled={toggle.isPending} onClick={() => toggle.mutate({ id: module.id, enabled: module.enabled })}>重试</Button>}
-        <Button variant="secondary" role="switch" aria-label={module.name} aria-checked={module.enabled} disabled={toggle.isPending} onClick={() => toggle.mutate({ id: module.id, enabled: !module.enabled })}>{module.enabled ? "停用" : "启用"}</Button>
-      </div>
-    </div>)}
-  </div>;
+      {modules.data.items.map((module) => (
+        <div key={module.id} className="module-row">
+          <div>
+            <h3>{module.name}</h3>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-[var(--muted)]">
+              <span>版本 {module.version}</span>
+              <Badge tone={module.lastError ? "danger" : module.pending ? "warning" : module.observedEnabled ? "success" : "neutral"}>
+                {moduleStatus(module)}
+              </Badge>
+            </div>
+            {module.lastError && (
+              <Notice tone="danger" title="业务运行异常" className="mt-2">
+                {module.lastError}
+              </Notice>
+            )}
+            {module.kind === "external" && module.connectionNote && <p className="text-sm text-[var(--muted)]">{module.connectionNote}</p>}
+          </div>
+          <div className="module-actions">
+            <ModuleSettingsDialog module={module} />
+            {module.kind === "external" && <ExternalActions module={module} onChange={refresh} fallbackFocus={() => heading.current} />}
+            {module.kind === "builtin" && module.lastError && (
+              <Button
+                variant="secondary"
+                disabled={toggle.isPending}
+                onClick={() => toggle.mutate({ id: module.id, enabled: module.enabled })}
+              >
+                重试
+              </Button>
+            )}
+            <Switch
+              label={module.name}
+              checked={module.enabled}
+              disabled={toggle.isPending}
+              onChange={(enabled) => toggle.mutate({ id: module.id, enabled })}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function moduleStatus(module: WorkbenchModule) {
@@ -64,26 +113,65 @@ function moduleStatus(module: WorkbenchModule) {
   return module.enabled ? "已启用" : "已停用";
 }
 
-function ExternalActions({ module, onChange }: { module: ExternalModule; onChange: () => Promise<void> }) {
-  const [confirmOpen, setConfirmOpen] = useState(false);
+function ExternalActions({
+  module,
+  onChange,
+  fallbackFocus,
+}: {
+  module: ExternalModule;
+  onChange: () => Promise<void>;
+  fallbackFocus: () => HTMLElement | null;
+}) {
   const [connectionOpen, setConnectionOpen] = useState(false);
   const refresh = useMutation({
     mutationFn: () => api(`/api/modules/${module.id}/refresh`, { method: "POST", body: "{}" }),
-    onSuccess: async () => { toast.success("已刷新模块描述"); await onChange(); },
-    onError: (err) => toast.error(err.message)
+    onSuccess: async () => {
+      toast.success("业务信息已刷新");
+      await onChange();
+    },
+    onError: (err) => toast.error(err.message),
   });
   const unregister = useMutation({
-    mutationFn: () => apiResponse(`/api/modules/external/${module.id}`, { method: "DELETE" }),
-    onSuccess: async () => { setConfirmOpen(false); toast.success("已解除接入，远端数据未删除"); await onChange(); },
-    onError: (err) => toast.error(err.message)
+    mutationFn: (id: string) => apiResponse(`/api/modules/external/${id}`, { method: "DELETE" }),
+    onSuccess: async () => {
+      await onChange();
+      toast.success("接入已解除");
+    },
+    onError: (err) => toast.error(err.message),
   });
-  return <>
-    <Button variant="secondary" onClick={() => refresh.mutate()} disabled={refresh.isPending}>刷新</Button>
-    <Button variant="secondary" onClick={() => setConnectionOpen((value) => !value)} disabled={module.enabled}>连接</Button>
-    <Button variant="danger" onClick={() => setConfirmOpen(true)} disabled={module.enabled || unregister.isPending}>解除接入</Button>
-    {connectionOpen && <ConnectionForm module={module} onSaved={async () => { setConnectionOpen(false); await onChange(); }} />}
-    <ConfirmDialog open={confirmOpen} title="解除外部模块" description="将删除本机连接和目录，不会删除外部服务中的业务数据。" busy={unregister.isPending} onCancel={() => setConfirmOpen(false)} onConfirm={() => unregister.mutate()} onClosed={() => setConfirmOpen(false)} />
-  </>;
+  const deletion = useConfirmDelete<ExternalModule>({
+    title: "解除外部业务",
+    description: (target) => `确定解除“${target.name}”的接入吗？远端业务数据将保留。`,
+    onConfirm: (target) => unregister.mutateAsync(target.id),
+    fallbackFocus,
+  });
+  return (
+    <>
+      <Button variant="secondary" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
+        刷新
+      </Button>
+      <Button variant="secondary" onClick={() => setConnectionOpen((value) => !value)} disabled={module.enabled}>
+        连接
+      </Button>
+      <Button
+        variant="danger"
+        onClick={(event) => deletion.request(module, event.currentTarget)}
+        disabled={module.enabled || unregister.isPending}
+      >
+        解除接入
+      </Button>
+      {connectionOpen && (
+        <ConnectionForm
+          module={module}
+          onSaved={async () => {
+            setConnectionOpen(false);
+            await onChange();
+          }}
+        />
+      )}
+      <ConfirmDialog {...deletion.dialogProps} />
+    </>
+  );
 }
 
 function ConnectionForm({ module, onSaved }: { module: ExternalModule; onSaved: () => Promise<void> }) {
@@ -91,14 +179,41 @@ function ConnectionForm({ module, onSaved }: { module: ExternalModule; onSaved: 
   const [serviceToken, setServiceToken] = useState("");
   const [allowNonLocal, setAllowNonLocal] = useState(Boolean(module.allowNonLocal));
   const save = useMutation({
-    mutationFn: () => api(`/api/modules/${module.id}/connection`, { method: "PUT", body: JSON.stringify({ baseUrl, serviceToken, allowNonLocal }) }),
-    onSuccess: async () => { toast.success("连接已更新"); await onSaved(); },
-    onError: (err) => toast.error(err.message)
+    mutationFn: () =>
+      api(`/api/modules/${module.id}/connection`, { method: "PUT", body: JSON.stringify({ baseUrl, serviceToken, allowNonLocal }) }),
+    onSuccess: async () => {
+      toast.success("连接已更新");
+      await onSaved();
+    },
+    onError: (err) => toast.error(err.message),
   });
-  return <form className="external-connect" onSubmit={(event) => { event.preventDefault(); save.mutate(); }}>
-    <label className="studio-field"><span>服务地址</span><input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} required /></label>
-    <label className="studio-field"><span>服务凭据</span><input type="password" autoComplete="new-password" value={serviceToken} onChange={(event) => setServiceToken(event.target.value)} placeholder={module.hasServiceToken ? "更换地址时必填" : ""} /></label>
-    <label className="check-option"><input type="checkbox" checked={allowNonLocal} onChange={(event) => setAllowNonLocal(event.target.checked)} />允许非本机地址</label>
-    <Button type="submit" disabled={save.isPending}>保存连接</Button>
-  </form>;
+  return (
+    <form
+      className="external-connect"
+      onSubmit={(event) => {
+        event.preventDefault();
+        save.mutate();
+      }}
+    >
+      <Field label="服务地址">
+        <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} required />
+      </Field>
+      <Field label="服务凭据" meta={module.hasServiceToken ? <Badge>已保存</Badge> : undefined}>
+        <input
+          type="password"
+          autoComplete="new-password"
+          value={serviceToken}
+          onChange={(event) => setServiceToken(event.target.value)}
+          placeholder={module.hasServiceToken ? "更换地址时必填" : ""}
+        />
+      </Field>
+      <div className="flex items-center justify-between gap-3 text-sm">
+        <span>允许非本机地址</span>
+        <Switch label="允许非本机地址" checked={allowNonLocal} onChange={setAllowNonLocal} />
+      </div>
+      <Button type="submit" disabled={save.isPending}>
+        {save.isPending ? "保存中…" : "保存"}
+      </Button>
+    </form>
+  );
 }

@@ -123,9 +123,26 @@ npm --prefix web run build
 go build -o /tmp/workbench-e2e-bin ./cmd/workbench
 ```
 
+### 前端体验
+
+`frontend-ux.e2e.cjs` 自行启动并清理临时工作空间，使用浏览器夹具隔离外部业务发现、投资终端和预期的删除失败，不刷新订阅源、不发送通知，也不连接券商。脚本在触屏上下文覆盖 Todo、订阅源、关注规则、监控规则和外部业务五处删除流程的焦点恢复，其中 Todo 还检查删除按钮常显与失败后重试；同时验证中文截止时间选择器、密码确认错误的 `aria-invalid` 与 `aria-describedby` 关联、Telegram 共享开关、三种主题卡名称、资讯页四个视图，以及控制台和页面错误。
+
+脚本检查 Todo、资讯、价格监控在 390×800 下没有横向溢出，并检查设置页在 1440×900 浅色、1440×900 深色、390×800 浅色和 360×800 浅色下的布局。先构建最新前端和 Go 程序，再运行回归：
+
+```bash
+npm --prefix web run build
+go build -o /tmp/workbench-ux-e2e-bin ./cmd/workbench
+PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
+  CHROMIUM_PATH=/usr/bin/chromium \
+  WORKBENCH_BIN=/tmp/workbench-ux-e2e-bin \
+  node scripts/frontend-ux.e2e.cjs
+```
+
+`WORKBENCH_BIN` 默认使用仓库根目录的 `./workbench`。截图写入 `/tmp/workbench-frontend-ux-*.png`。
+
 ### 开发登录
 
-`dev-auth.e2e.cjs` 使用临时数据库、密码和自签证书，启动真实开发脚本并通过 HTTPS → Vite → Go 链路验证登录。覆盖缺少 `-public-url` 时的 `403 invalid_origin`、配置后的登录、Secure Cookie、首次改密、资讯导航和刷新后的会话保留，需要本机 OpenSSL。
+`dev-auth.e2e.cjs` 使用临时数据库、密码和自签证书，启动真实开发脚本并通过 HTTPS → Vite → Go 链路验证登录。覆盖缺少 `-public-url` 时的 `403 invalid_origin`、配置后的登录、Secure Cookie、首次改密、资讯导航和刷新后的会话保留，以及投资终端模块、真实图表库和非空虚构 K 线加载。需要本机 OpenSSL；图表库通过 Go 代理访问 TradingView 公开静态资源站，券商 API 和实时连接使用虚构响应。
 
 ```bash
 PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
@@ -217,6 +234,15 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 
 `investment-terminal.e2e.cjs` 在 Chromium 中加载仓库内的终端代码和实际 TradingView 库，验证主题、账户和下单面板，以及完整图表实例保留。增加 `--night` 会运行 Night 与 24H 时段回归；`--24h` 可单独运行全天行情回归。时段回归检查图表顶栏恰有常规、扩展、夜盘、全天四个选项且无说明项，并验证首次从日线常规切到扩展会自动进入 5 分钟并载入非空行情；Night 只用非空 Futu K 线，24H 使用非空虚构 Schwab/Futu K 线并检查 04:00/20:00 ET 边界过滤、跨午夜合并、真实可见图表数据、缓存会话切回、1/5/15/30 分钟及不支持周期回退、夜盘关闭和非正股门控、主题及图表高度。另检查 10 分钟周期已移除；桌面详情面板验证盘前/盘后相对常规收盘的涨跌、夜盘零涨跌、缺失成交时间和日统计不被夜盘替换。库分包补丁与生产代理读取同一兼容规则，Go 测试另覆盖压缩、磁盘资源和 ETag。`--night --mobile`、`--night --webkit` 另外覆盖 320/390/844px 窄屏、横屏和菜单可达性。券商与 Futu API 均由脚本拦截为虚构响应；不读取凭据、不连接真实账户、不提交交易。
 
+`--app --preferences` 使用临时工作空间的真实数据库，验证标的、周期、行情时段、指标、画线、自选表、交易账户、TradingView 偏好和页面铺满在空白浏览器环境中的恢复；之后修改、删除并刷新，检查服务端保存的新内容。`--state` 检查图表选择的服务端保存和恢复。
+
+```bash
+GOCACHE=/tmp/workbench-go-cache go build -o /tmp/workbench-investment-preferences-test ./cmd/workbench
+PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
+CHROMIUM_PATH=/usr/bin/chromium WORKBENCH_BIN=/tmp/workbench-investment-preferences-test \
+node scripts/investment-terminal.e2e.cjs --app --preferences
+```
+
 ```bash
 PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
   CHROMIUM_PATH=/usr/bin/chromium \
@@ -240,7 +266,7 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 
 脚本需要访问 TradingView 静态资源站，带内容哈希的库文件缓存在系统临时目录 `workbench-tv-test-cache/`。截图写入 `/tmp/workbench-investment-account-manager.png` 和 `/tmp/workbench-investment-order-ticket.png`；`--night`/`--24h` 时段截图写入 `/tmp/workbench-investment-session-desktop.png`，手机模式为 `/tmp/workbench-investment-session-{320,390,844}.png`（WebKit 文件名增加 `webkit-`）。终端 JS 通过 Go embed 编入程序；修改后需重新编译并启动工作台进程，再刷新浏览器。
 
-桌面模式还验证工作台自选表保存：多列表的名称、分组、标的顺序和当前列表在清空浏览器本地存储后恢复，删除非当前列表会保存，保存失败可重试，清空列表后刷新不会恢复旧标的；旧保存请求未返回时刷新仍恢复最新编辑，跨设备冲突后可保留本页草稿或载入工作台版本。后端版本冲突、迟到请求、CSRF 和进程重启持久化另由 Go 测试覆盖。
+桌面模式还验证工作台自选表保存：多列表的名称、分组、标的顺序和当前列表在清空浏览器本地存储后恢复，删除非当前列表会保存，保存失败可重试，清空列表后刷新不会恢复旧标的；慢保存完成后刷新恢复最新编辑，跨设备冲突后保留本页改动并提供载入工作台版本的入口。后端版本冲突、迟到请求、CSRF 和进程重启持久化另由 Go 测试覆盖。
 
 添加 `--mobile` 可在 Chromium 的 iPhone 尺寸、触屏和浏览器标识模拟环境中验证真实图表加载、历史 K 线、触摸及横竖屏切换。此模式使用 HTTPS 双层 iframe，并通过 `frame-src 'self'` 禁止图表的 `blob:` 导航，验证官方同源加载模式；同时模拟旧版 Safari/WebView 拒绝相对 WebSocket 地址的行为。不替代 Safari 真机验收。截图写入 `/tmp/workbench-investment-chart-mobile-{390,844,320}.png`。
 

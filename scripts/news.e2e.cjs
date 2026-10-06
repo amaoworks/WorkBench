@@ -54,6 +54,69 @@ async function stopProcess(process) {
   await stopped;
 }
 
+async function expectSearchIconSpacing(search, label) {
+  const geometry = await search.evaluate((input) => {
+    const box = input.getBoundingClientRect();
+    const icon = input.parentElement.querySelector("svg").getBoundingClientRect();
+    const style = getComputedStyle(input);
+    return {
+      textLeft: box.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft),
+      iconRight: icon.right,
+      centerOffset: Math.abs(box.top + box.height / 2 - (icon.top + icon.height / 2))
+    };
+  });
+  assert(geometry.textLeft >= geometry.iconRight + 4, `${label}: search text overlaps the icon: ${JSON.stringify(geometry)}`);
+  assert(geometry.centerOffset <= 1, `${label}: search icon is not vertically centered: ${JSON.stringify(geometry)}`);
+}
+
+async function expectFormControlStyles(page, reference, label) {
+  await reference.blur();
+  await reference.evaluate((node) => Promise.all(node.getAnimations().map((animation) => animation.finished)));
+  const form = reference.locator("xpath=ancestor::form[1]");
+  const controls = form.locator(".studio-field > :is(input, select, textarea)");
+  const snapshots = await controls.evaluateAll((nodes) => nodes.map((node) => {
+    const style = getComputedStyle(node);
+    const box = node.getBoundingClientRect();
+    return {
+      tag: node.tagName,
+      height: box.height,
+      width: box.width,
+      fieldWidth: node.parentElement.getBoundingClientRect().width,
+      resize: style.resize,
+      style: Object.fromEntries([
+        "fontFamily", "fontSize", "color", "backgroundColor",
+        "borderTopWidth", "borderTopStyle", "borderTopColor", "borderRadius", "padding"
+      ].map((property) => [property, style[property]]))
+    };
+  }));
+  assert(snapshots.length > 1, `${label}: expected multiple form controls`);
+  for (const snapshot of snapshots) {
+    assert.deepEqual(snapshot.style, snapshots[0].style, `${label}: ${snapshot.tag} style differs from the input`);
+    assert(Math.abs(snapshot.width - snapshot.fieldWidth) <= 1, `${label}: ${snapshot.tag} does not fill its field`);
+    if (snapshot.tag === "TEXTAREA") {
+      assert(snapshot.height > snapshots[0].height, `${label}: multiline control must retain its rows`);
+      assert.equal(snapshot.resize, "vertical", `${label}: textarea must resize vertically`);
+    } else {
+      // Native selects compute normal line-height; compare their visible height.
+      assert.equal(snapshot.height, snapshots[0].height, `${label}: single-line control heights differ`);
+    }
+  }
+  async function focusedStyle(control) {
+    await control.focus();
+    return control.evaluate(async (node) => {
+      await Promise.all(node.getAnimations().map((animation) => animation.finished));
+      const style = getComputedStyle(node);
+      return { border: style.borderTopColor, shadow: style.boxShadow };
+    });
+  }
+  const focused = await focusedStyle(reference);
+  assert.notEqual(focused.shadow, "none", `${label}: focused input must have a visible ring`);
+  for (const control of await form.locator(".studio-field > :is(select, textarea)").all()) {
+    assert.deepEqual(await focusedStyle(control), focused, `${label}: focus styles differ from the input`);
+  }
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `${label}: form overflows the page`);
+}
+
 (async () => {
   const directory = await mkdtemp(join(tmpdir(), "workbench-news-"));
   const fixtureErrors = [];
@@ -152,38 +215,38 @@ async function stopProcess(process) {
 
     await page.getByRole("button", { name: "资讯设置", exact: true }).click();
     let settingsDialog = page.getByRole("dialog", { name: "资讯设置", exact: true });
-    const autoAI = settingsDialog.getByLabel("自动分析新资讯", { exact: true });
-    if (await autoAI.isChecked()) await autoAI.uncheck();
+    const autoAI = settingsDialog.getByRole("switch", { name: "自动分析新资讯", exact: true });
+    if (await autoAI.getAttribute("aria-checked") === "true") await autoAI.click();
     await settingsDialog.getByLabel("目标语言", { exact: true }).fill("zh-TW");
     await settingsDialog.getByLabel("每日 AI 上限", { exact: true }).fill("7");
     await settingsDialog.getByLabel("保留天数", { exact: true }).fill("45");
-    await settingsDialog.getByLabel("启用定时简报", { exact: true }).check();
+    await settingsDialog.getByRole("switch", { name: "启用定时简报", exact: true }).click();
     await settingsDialog.getByLabel("小时", { exact: true }).fill("8");
     await settingsDialog.getByLabel("分钟", { exact: true }).fill("30");
     await settingsDialog.getByLabel("时区", { exact: true }).fill("UTC");
     await settingsDialog.getByLabel("最多条数", { exact: true }).fill("12");
     await settingsDialog.getByLabel("主题", { exact: true }).fill("重点");
-    await settingsDialog.getByLabel("生成后提交推送", { exact: true }).check();
-    await settingsDialog.getByRole("button", { name: "保存配置", exact: true }).click();
-    await page.getByText("资讯配置已保存", { exact: true }).waitFor();
-    await page.getByRole("button", { name: "关闭模块设置", exact: true }).click();
+    await settingsDialog.getByRole("switch", { name: "生成后提交推送", exact: true }).click();
+    await settingsDialog.getByRole("button", { name: "保存", exact: true }).click();
+    await page.getByText("资讯设置已保存", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "关闭业务设置", exact: true }).click();
     await page.reload();
     await page.getByRole("button", { name: "资讯设置", exact: true }).click();
     settingsDialog = page.getByRole("dialog", { name: "资讯设置", exact: true });
     assert.equal(await settingsDialog.getByLabel("目标语言", { exact: true }).inputValue(), "zh-TW");
     assert.equal(await settingsDialog.getByLabel("每日 AI 上限", { exact: true }).inputValue(), "7");
     assert.equal(await settingsDialog.getByLabel("保留天数", { exact: true }).inputValue(), "45");
-    assert(await settingsDialog.getByLabel("启用定时简报", { exact: true }).isChecked());
+    assert.equal(await settingsDialog.getByRole("switch", { name: "启用定时简报", exact: true }).getAttribute("aria-checked"), "true");
     assert.equal(await settingsDialog.getByLabel("小时", { exact: true }).inputValue(), "8");
     assert.equal(await settingsDialog.getByLabel("分钟", { exact: true }).inputValue(), "30");
     assert.equal(await settingsDialog.getByLabel("时区", { exact: true }).inputValue(), "UTC");
     assert.equal(await settingsDialog.getByLabel("最多条数", { exact: true }).inputValue(), "12");
     assert.equal(await settingsDialog.getByLabel("主题", { exact: true }).inputValue(), "重点");
-    assert(await settingsDialog.getByLabel("生成后提交推送", { exact: true }).isChecked());
-    await settingsDialog.getByLabel("启用定时简报", { exact: true }).uncheck();
-    await settingsDialog.getByRole("button", { name: "保存配置", exact: true }).click();
-    await page.getByText("资讯配置已保存", { exact: true }).waitFor();
-    await page.getByRole("button", { name: "关闭模块设置", exact: true }).click();
+    assert.equal(await settingsDialog.getByRole("switch", { name: "生成后提交推送", exact: true }).getAttribute("aria-checked"), "true");
+    await settingsDialog.getByRole("switch", { name: "启用定时简报", exact: true }).click();
+    await settingsDialog.getByRole("button", { name: "保存", exact: true }).click();
+    await page.getByText("资讯设置已保存", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "关闭业务设置", exact: true }).click();
 
     await page.goto(`${baseURL}/news`);
     await page.getByRole("heading", { name: "资讯", exact: true }).waitFor();
@@ -192,13 +255,13 @@ async function stopProcess(process) {
       { name: "浏览器 RSS", url: `${fixtureURL}/rss.xml`, topic: "科技" },
       { name: "浏览器 Atom", url: `${fixtureURL}/atom.xml`, topic: "市场" }
     ]) {
-      await page.getByRole("button", { name: "添加来源", exact: true }).click();
+      await page.getByRole("button", { name: "添加订阅源", exact: true }).click();
       await page.getByLabel("名称", { exact: true }).fill(source.name);
       await page.locator("form select").selectOption("rss");
       await page.getByLabel("订阅地址", { exact: true }).fill(source.url);
       await page.getByLabel("主题", { exact: true }).fill(source.topic);
       await page.getByLabel("刷新间隔（分钟）", { exact: true }).fill("1440");
-      await page.getByLabel("启用", { exact: true }).uncheck();
+      await page.getByRole("switch", { name: "启用订阅源", exact: true }).click();
       const saved = page.waitForResponse((response) => response.url().endsWith("/api/modules/news/sources") && response.request().method() === "POST");
       await page.getByRole("button", { name: "保存", exact: true }).click();
       assert.equal((await saved).status(), 201);
@@ -276,7 +339,7 @@ async function stopProcess(process) {
     await page.getByLabel("主题", { exact: true }).fill("重点");
     await page.locator("form select").selectOption("24");
     await page.getByLabel("最多条数", { exact: true }).fill("10");
-    await page.getByLabel("提交推送", { exact: true }).check();
+    await page.getByRole("switch", { name: "提交推送", exact: true }).click();
     const createdDigest = page.waitForResponse((response) => response.url().endsWith("/api/modules/news/digests") && response.request().method() === "POST");
     await page.getByRole("button", { name: "生成简报", exact: true }).click();
     assert.equal((await createdDigest).status(), 201);
@@ -294,9 +357,39 @@ async function stopProcess(process) {
     await page.getByRole("button", { name: "资讯", exact: true }).click();
     await page.getByLabel("已匹配", { exact: true }).uncheck();
     await page.getByRole("button", { name: "筛选", exact: true }).click();
-    for (const width of [1440, 390]) {
-      await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
-      if (width === 390) await page.waitForFunction(() => document.querySelector(".workspace-sidebar")?.getBoundingClientRect().width <= 65);
+    for (const width of [1440, 390, 360]) {
+      await page.setViewportSize({ width, height: width < 600 ? 844 : 1000 });
+      if (width < 600) await page.waitForFunction(() => document.querySelector(".workspace-sidebar")?.getBoundingClientRect().width <= 65);
+      for (const dark of [false, true]) {
+        if (await page.evaluate(() => document.documentElement.classList.contains("dark")) !== dark) {
+          await page.getByRole("button", { name: "切换主题", exact: true }).click();
+          await page.waitForFunction((expected) => document.documentElement.classList.contains("dark") === expected, dark);
+        }
+        for (const text of ["", "搜索标题或内容"]) {
+          await search.fill(text);
+          await expectSearchIconSpacing(search, `${width}px ${dark ? "dark" : "light"} ${text ? "value" : "placeholder"}`);
+        }
+        const label = `${width}px ${dark ? "dark" : "light"}`;
+        await page.getByRole("button", { name: "订阅源", exact: true }).click();
+        await page.getByRole("button", { name: "添加订阅源", exact: true }).click();
+        await expectFormControlStyles(page, page.getByLabel("名称", { exact: true }), `${label} source`);
+        await page.locator("form").screenshot({ path: `/tmp/workbench-news-source-${width}-${dark ? "dark" : "light"}.png` });
+        const sourceKind = page.getByLabel("类型", { exact: true });
+        for (const kind of ["rss", "rsshub", "google", "yahoo"]) {
+          await sourceKind.selectOption(kind);
+          assert.equal(await page.getByLabel("订阅地址", { exact: true }).count(), kind === "rss" || kind === "rsshub" ? 1 : 0);
+          assert.equal(await page.getByLabel("查询词", { exact: true }).count(), kind === "google" ? 1 : 0);
+        }
+        await page.getByRole("button", { name: "取消", exact: true }).click();
+        await page.getByRole("button", { name: "关注规则", exact: true }).click();
+        await page.getByRole("button", { name: "添加规则", exact: true }).click();
+        await expectFormControlStyles(page, page.getByLabel("名称", { exact: true }), `${label} rule`);
+        await page.getByRole("button", { name: "取消", exact: true }).click();
+        await page.getByRole("button", { name: "简报", exact: true }).click();
+        await expectFormControlStyles(page, page.getByLabel("主题", { exact: true }), `${label} digest`);
+        await page.getByRole("button", { name: "资讯", exact: true }).click();
+      }
+      await search.fill("");
       const overflow = await page.evaluate(() => ({
         page: { scrollWidth: document.documentElement.scrollWidth, innerWidth },
         elements: [...document.querySelectorAll("body *")].map((element) => {
@@ -315,12 +408,12 @@ async function stopProcess(process) {
     assert.equal(await page.getByRole("link", { name: "资讯", exact: true }).count(), 0);
     assert.equal((await page.request.get(`${baseURL}/api/modules/news/settings`)).status(), 503);
     await page.getByRole("button", { name: "资讯设置", exact: true }).click();
-    await page.getByText("启用资讯模块后可以配置采集、AI 和简报。", { exact: true }).waitFor();
+    await page.getByText("启用后可配置采集、AI 和简报。", { exact: true }).waitFor();
 
     assert.deepEqual(fixtureErrors, []);
     assert.deepEqual(pageErrors, []);
     assert.deepEqual(unexpectedBrowserRequests, []);
-    console.log("PASS: news sources/refresh deduplication, rules/search/pagination, read/star/detail, AI cache, digest/local push, settings persistence, module gate, desktop/mobile layout; no real outbound delivery.");
+    console.log("PASS: news sources/refresh deduplication, rules/search/pagination, read/star/detail, AI cache, digest/local push, settings persistence, module gate, desktop/mobile layout, search icon spacing and consistent form controls in light/dark themes; no real outbound delivery.");
   } catch (error) {
     if (output) error.message += `\nTemporary Workbench output:\n${output}`;
     throw error;

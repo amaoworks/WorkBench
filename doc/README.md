@@ -12,6 +12,7 @@ Workbench 技术文档索引：
 | [配置与运行](configuration.md) | 构建、启动参数、设置、开发服务、备份恢复 |
 | [安全边界](security.md) | 鉴权模式、请求保护、凭据与外部服务处理 |
 | [文案与文档规范](copywriting-guidelines.md) | 界面文案与技术文档编写规范 |
+| [前端界面规范](frontend-guidelines.md) | 通用组件、页面状态、控件、可达性与响应式约定 |
 | [Todo](modules/todo.md) | 待办、分页、提醒、AI Tool 和代码入口 |
 | [Wallos 联动](modules/todo-wallos.md) | Todo 内的订阅同步与账期管理 |
 | [Investment](modules/investment.md) | Schwab 行情、持仓、订单、TradingView 终端与价格预警 |

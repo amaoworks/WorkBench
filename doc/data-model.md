@@ -47,6 +47,7 @@ PostgreSQL 另外保留一个连接会话，以 advisory lock 限制同一数据
 | Investment | `investment_price_triggers` | `(rule_id, trading_date)` 唯一的触发快照、站内通知 ID；删除规则后保留 |
 | Investment | `investment_price_monitor` | 最近后台检查时间、状态和错误 |
 | Investment | `investment_watchlists` | 自选列表、分组和顺序、当前列表，以及防止迟到请求和旧窗口覆盖的编辑版本/会话/序号 |
+| Investment | `investment_preferences` | 图表选择、完整图表与指标/画线、TradingView 偏好、当前交易账户、页面视图，以及各项独立的编辑版本/会话/序号 |
 | News | `news_sources`、`news_origins` | 来源配置、条件请求与退避状态、条目身份和出处 |
 | News | `news_articles`、`news_rules` | 文章、阅读状态、匹配规则、翻译摘要及缓存 |
 | News | `news_settings`、`news_digests`、`news_ai_usage` | 处理与简报配置、简报快照和通知 ID、每日调用额度 |

@@ -1,0 +1,1 @@
+import{K as e,r as t}from"./Notice-CxGbsFvr.js";var n=e();function r({checked:e,onChange:r,label:i,className:a,...o}){return(0,n.jsx)(`button`,{...o,type:`button`,className:t(`studio-switch focus-ring`,a),role:`switch`,"aria-checked":e,"aria-label":i,onClick:()=>r(!e),children:(0,n.jsx)(`span`,{className:`studio-switch-track`,children:(0,n.jsx)(`span`,{})})})}export{r as t};

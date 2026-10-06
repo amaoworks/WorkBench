@@ -58,11 +58,11 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 
     state = { ...healthy, lastError: "暂时无法连接 Schwab，请稍后重试。" };
     await signalStateChanged();
-    await page.getByRole("alert").filter({ hasText: "Schwab 连接出现问题" }).waitFor({ timeout: 5000 });
+    await page.getByRole("alert").filter({ hasText: "Schwab 连接异常" }).waitFor({ timeout: 5000 });
     assert.equal(await iframe.count(), 1);
     assert.equal(await page.getByRole("button", { name: "重新授权", exact: true }).count(), 0);
     await page.getByRole("button", { name: "重试连接", exact: true }).click();
-    await page.getByRole("alert").filter({ hasText: "Schwab 连接出现问题" }).waitFor({ state: "hidden" });
+    await page.getByRole("alert").filter({ hasText: "Schwab 连接异常" }).waitFor({ state: "hidden" });
     assert.equal(loads, 1, "temporary failures should preserve the chart");
 
     state = { ...healthy, connected: false, reauthorizationRequired: true, lastError: "Schwab 授权已失效，请重新授权。" };
@@ -86,7 +86,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     assert.equal(await dialog.getByRole("button", { name: "重新授权", exact: true }).isEnabled(), true);
     assert.equal(await dialog.getByRole("button", { name: "刷新令牌", exact: true }).isDisabled(), true);
     assert.equal(await dialog.getByText(/^已连接/).count(), 0);
-    await page.getByRole("button", { name: "关闭模块设置", exact: true }).click();
+    await page.getByRole("button", { name: "关闭业务设置", exact: true }).click();
 
     await page.getByRole("link", { name: "总览", exact: true }).click();
     await page.getByText("Schwab 授权已失效", { exact: true }).waitFor();

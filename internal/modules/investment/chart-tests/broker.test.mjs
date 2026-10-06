@@ -9,7 +9,7 @@ const json = (data, status = 200, headers) => new Response(JSON.stringify(data),
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check) { for (let i = 0; i < 100; i++) { if (check()) return; await sleep(10); } assert.fail('condition timed out'); }
 
-async function setup(t, handler = () => undefined) {
+async function setup(t, handler = () => undefined, options = {}) {
     const calls = [], updates = [], errors = [];
     let accountUpdates = 0;
     const events = new EventTarget();
@@ -18,7 +18,7 @@ async function setup(t, handler = () => undefined) {
         ordersFullUpdate() {}, positionsFullUpdate() {}, orderUpdate(value) { updates.push(value); }, positionUpdate() {},
         showNotification(_title, message) { errors.push(message); },
     }, {
-        events, pollInterval: 0,
+        events, pollInterval: 0, ...options,
         request: async (path, init = {}) => {
             calls.push({ path, init });
             const result = await handler(path, init);
@@ -35,6 +35,44 @@ async function setup(t, handler = () => undefined) {
     clearTimeout(broker._refreshTimer); broker._refreshTimer = undefined;
     return { broker, calls, updates, errors, events, accountUpdates: () => accountUpdates };
 }
+
+test('saved trading accounts restore and unavailable accounts fall back and update the workspace', async t => {
+    const accounts = [];
+    const { broker } = await setup(t, undefined, { preferredAccount: 'B', onAccountChanged: id => accounts.push(id) });
+    assert.equal(broker.currentAccount(), 'B');
+    broker.setCurrentAccount('A');
+    assert.deepEqual(accounts, ['B', 'A']);
+    const fallback = await setup(t, undefined, { preferredAccount: 'removed', onAccountChanged: id => accounts.push(id) });
+    assert.equal(fallback.broker.currentAccount(), 'A');
+    assert.equal(accounts.at(-1), 'A');
+});
+
+test('temporary account discovery failure and overlapping reconnects preserve the preferred account', async t => {
+    let fail = false, held;
+    const selected = [];
+    const { broker, events } = await setup(t, path => {
+        if (!path.endsWith('/accountNumbers')) return;
+        if (fail) { fail = false; return json({ message: 'temporary' }, 503); }
+        if (held) { const waiting = held; held = null; return waiting.promise; }
+    }, { preferredAccount: 'B', onAccountChanged: id => selected.push(id) });
+    fail = true;
+    events.dispatchEvent(new Event('SCHWAB_STREAM_READY'));
+    await broker._ready;
+    assert.equal(broker.currentAccount(), '');
+    events.dispatchEvent(new Event('SCHWAB_STREAM_READY'));
+    await broker._ready;
+    assert.equal(broker.currentAccount(), 'B');
+    const old = Promise.withResolvers();
+    held = old;
+    events.dispatchEvent(new Event('SCHWAB_STREAM_READY'));
+    const previousInit = broker._ready;
+    events.dispatchEvent(new Event('SCHWAB_STREAM_READY'));
+    await broker._ready;
+    old.resolve(json([{ hashValue: 'A', accountNumber: '111' }, { hashValue: 'B', accountNumber: '222' }]));
+    await previousInit;
+    assert.equal(broker.currentAccount(), 'B');
+    assert.ok(selected.every(id => id === 'B'));
+});
 
 test('new orders default to DAY/NORMAL and preserve explicit duration', () => {
     assert.equal(buildOrder(order).duration, 'DAY');

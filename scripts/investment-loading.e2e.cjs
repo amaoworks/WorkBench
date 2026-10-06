@@ -18,6 +18,11 @@ const { chromium, webkit, devices } = require(process.env.PLAYWRIGHT_MODULE || "
     await page.route("https://workbench.test/**", async route => {
       const path = new URL(route.request().url()).pathname;
       if (path === "/api/auth/csrf") return route.fulfill({ json: { token: "fixture" } });
+      if (path === "/api/modules/investment/preferences") {
+        if (route.request().method() === "GET") return route.fulfill({ json: { entries: {} } });
+        const input = route.request().postDataJSON();
+        return route.fulfill({ json: { revision: input.sequence, sequence: input.sequence } });
+      }
       if (path === "/api/modules/investment/watchlists") return route.fulfill({ json: { revision: 1, state: { lists: [{ id: "test", title: "自选表", symbols: [] }], activeId: "test" } } });
       if (path === "/charting_library/charting_library.esm.js") {
         if (mode === "module-error") return route.fulfill({ status: 503, contentType: "text/plain", body: "chart library unavailable" });
@@ -34,6 +39,10 @@ const { chromium, webkit, devices } = require(process.env.PLAYWRIGHT_MODULE || "
             headerReady() { return ready; }
             createDropdown() { return Promise.resolve({ applyOptions() {}, remove() {} }); }
             showNoticeDialog() { return Promise.resolve(); }
+            applyOverrides() {}
+            subscribe() {}
+            unsubscribe() {}
+            save(callback) { callback({ charts: [{ panes: [] }] }); return Promise.resolve(); }
             changeTheme() { return Promise.resolve(); }
             resetCache() {}
             chartsCount() { return 0; }

@@ -26,12 +26,14 @@ function accountLabel(accountNumber) {
 }
 
 export default class Broker {
-    constructor(host, { request = schwabFetch, events = window, pollInterval = 15000 } = {}) {
+    constructor(host, { request = schwabFetch, events = window, pollInterval = 15000, preferredAccount = '', onAccountChanged = () => {} } = {}) {
         this.host = host;
         this.request = request;
         this.events = events;
         this._accounts = [];
-        this._account = '';
+        this._account = preferredAccount;
+        this._preferredAccount = preferredAccount;
+        this._onAccountChanged = onAccountChanged;
         this._epoch = 0;
         this._connectionStatus = 2;
         this._orders = new Map();
@@ -75,7 +77,7 @@ export default class Broker {
         this._orderSignatures = undefined;
     }
     async _init() {
-        const preferredAccount = this._account;
+        const preferredAccount = this._preferredAccount;
         this._invalidate();
         this._account = '';
         const epoch = this._epoch;
@@ -94,6 +96,8 @@ export default class Broker {
                 currencySign: '$',
             }));
             this._account = this._accounts.some(a => a.id === preferredAccount) ? preferredAccount : this._accounts[0].id;
+            this._preferredAccount = this._account;
+            this._onAccountChanged(this._account);
             this._setStatus(1);
             this.host.currentAccountUpdate();
             // The library is about to call orders() and ordersHistory() itself.
@@ -241,6 +245,8 @@ export default class Broker {
         if (id === this._account) return;
         this._invalidate();
         this._account = id;
+        this._preferredAccount = id;
+        this._onAccountChanged(id);
         this.host.currentAccountUpdate();
         this.host.ordersFullUpdate();
         this.host.positionsFullUpdate();

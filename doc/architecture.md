@@ -45,7 +45,7 @@ web/src/
     todo/                      Todo 页面、Widget、设置、查询、schema
     investment/                行情页面、Widget、Schwab 设置、查询、schema
     news/                      资讯、来源、规则、简报、设置、查询、schema
-  components/ui/               通用界面组件
+  components/ui/               Button、Card、PageHeader、ConfirmDialog、Skeleton、Switch、Badge、Notice、Field、EmptyState、useConfirmDelete
   shared/                      HTTP 客户端、平台共享 schema、工具
   styles.css                   主题变量与共享样式
 futu-opend/                    可搬走的 Futu OpenD 容器封装（行情网关，非交易）
@@ -75,7 +75,7 @@ contracts → 标准库
 
 业务通过构造函数接收数据库连接、事件发布器、通知服务和文本生成等依赖，不直接依赖其他业务或通用能力实现。能力层可以组合能力，例如 conversation 使用 ai Gateway。底座不依赖业务，模块不读写其他业务的表。
 
-前端业务目录使用共享组件、HTTP 客户端和平台描述类型，通过 `*.module.ts` 提供页面、Widget、图标和可选设置。Shell 根据平台返回的标识映射本地注册项，不包含具体业务页面实现。模块之间不直接导入彼此实现。
+前端业务目录使用共享组件、HTTP 客户端和平台描述类型，通过 `*.module.ts` 提供页面、Widget、图标和可选设置。Shell 根据平台返回的标识映射本地注册项，不包含具体业务页面实现。模块之间不直接导入彼此实现。组件选型、页面状态、可达性和响应式约定见[前端界面规范](frontend-guidelines.md)。
 
 [架构测试](../internal/modules/architecture_test.go) 当前检查后端业务跨模块导入和直接依赖能力/app 实现。SQL 表归属及前端导入边界仍需审查；共享数据库连接没有提供模块级权限隔离。
 

@@ -54,10 +54,10 @@ test('rapid theme updates finish in order and preserve the latest requested colo
     await setImmediate();
     f.send('light'); f.send('dark'); f.send('light');
     await setImmediate();
-    assert.deepEqual(f.calls, ['dark']);
+    assert.deepEqual(f.calls, ['light', 'dark']);
     dark.resolve();
     await setImmediate();
-    assert.deepEqual(f.calls, ['dark', 'light']);
+    assert.deepEqual(f.calls, ['light', 'dark', 'light']);
     assert.equal(maxActive, 1);
     assert.equal(f.host.document.documentElement.style.colorScheme, 'light');
     dispose();
@@ -73,7 +73,7 @@ test('only valid theme messages from the same-origin parent are accepted', async
     f.send('dark', { data: { type: 'unrelated', theme: 'dark' } });
     f.send('dark', { data: null });
     await setImmediate();
-    assert.deepEqual(f.calls, []);
+    assert.deepEqual(f.calls, ['light']);
     dispose();
 });
 
@@ -91,7 +91,7 @@ test('disposing before readiness prevents queued and later theme changes', async
 
 test('a failed theme change does not block later updates', async () => {
     let attempts = 0;
-    const f = fixture(async () => { if (++attempts === 1) throw new Error('theme unavailable'); });
+    const f = fixture(async theme => { if (theme === 'dark' && ++attempts === 1) throw new Error('theme unavailable'); });
     const dispose = bindTheme(f.widget, 'light', f.host);
     await setImmediate();
     f.send('dark');
@@ -99,7 +99,17 @@ test('a failed theme change does not block later updates', async () => {
     assert.equal(f.errors.length, 1);
     f.send('dark');
     await setImmediate();
-    assert.deepEqual(f.calls, ['dark', 'dark']);
+    assert.deepEqual(f.calls, ['light', 'dark', 'dark']);
     assert.equal(f.host.document.documentElement.style.colorScheme, 'dark');
+    dispose();
+});
+
+test('the shell theme is reapplied after loading a differently themed saved layout', async () => {
+    const f = fixture();
+    let applied = 0;
+    const dispose = bindTheme(f.widget, 'light', f.host, () => applied++);
+    await setImmediate();
+    assert.deepEqual(f.calls, ['light']);
+    assert.equal(applied, 1);
     dispose();
 });

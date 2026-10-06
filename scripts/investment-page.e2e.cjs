@@ -146,11 +146,21 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
       await checkTheme(colorScheme);
     }
     assert.equal(loads, systemLoads, "system theme changes must not reload the chart");
+    const [monitorSaved] = await Promise.all([
+      page.waitForResponse(response => response.url().endsWith('/api/modules/investment/preferences') &&
+        response.request().method() === 'PUT' && response.request().postDataJSON()?.value?.tab === 'monitor'),
+      page.getByRole('button', { name: '价格监控', exact: true }).click(),
+    ]);
+    assert.equal(monitorSaved.status(), 200);
+    await page.goto(`${baseURL}/investment`, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => document.querySelector('button[aria-pressed="true"]')?.textContent === '价格监控');
+    assert.equal(new URL(page.url()).searchParams.get('tab'), 'monitor');
+    assert.equal(await page.getByRole('region', { name: '投资终端', exact: true }).isVisible(), false);
     await page.getByRole("link", { name: "总览", exact: true }).click();
     await page.getByRole("heading", { name: "总览", exact: true }).waitFor();
     assert.notEqual(await page.evaluate(() => getComputedStyle(document.body).overflow), "hidden");
     assert.deepEqual(errors, []);
-    console.log("PASS: repeated and system theme changes, expanded/normal layout, native fullscreen, new window, mobile sizing, chart preservation and fullscreen failure recovery; no trades.");
+    console.log("PASS: repeated and system theme changes, expanded/normal layout, native fullscreen, new window, mobile sizing, chart preservation, fullscreen failure recovery and server-saved monitor view; no trades.");
   } finally {
     await browser?.close();
     if (app && app.exitCode === null && app.pid) {

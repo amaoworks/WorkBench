@@ -125,6 +125,8 @@ func (m *Module) Migrations() contracts.MigrationSet {
 func (m *Module) Register(r contracts.ModuleRegistrar) error {
 	proxyMethods := []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch}
 	regs := []error{
+		r.Handle("GET", "/api/modules/investment/preferences", http.HandlerFunc(m.getPreferences)),
+		r.Handle("PUT", "/api/modules/investment/preferences", http.HandlerFunc(m.savePreference)),
 		r.Handle("GET", "/api/modules/investment/watchlists", http.HandlerFunc(m.getWatchlists)),
 		r.Handle("PUT", "/api/modules/investment/watchlists", http.HandlerFunc(m.saveWatchlists)),
 		r.Handle("GET", "/api/modules/investment/monitor", http.HandlerFunc(m.getPriceMonitor)),

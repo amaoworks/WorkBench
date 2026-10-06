@@ -36,6 +36,7 @@ Workbench 是本地优先、单用户的个人工作台，采用 Go 模块化单
 ### 4. 前端类型与注册约定
 * 共享 `api` 返回 `unknown`；消费 JSON 响应字段前使用 `apiValidated` 或生产 Zod schema 校验。业务响应 schema 按需放在模块内的 `schema.ts`，平台共享响应放在共享或平台功能目录。
 * 内置业务前端在 `web/src/modules/<id>/<id>.module.ts` 声明实际提供的资源，由平台 Registry 装配。`pages`、`widgets` 字段可为空映射，`settings`、`icons` 可选；禁止在外壳层强耦合业务组件。
+* 界面组件、页面状态、控件选型、可达性与响应式遵循 [doc/frontend-guidelines.md](doc/frontend-guidelines.md)，不得在业务模块内重复实现共享交互。
 
 ---
 
@@ -81,6 +82,7 @@ Workbench 是本地优先、单用户的个人工作台，采用 Go 模块化单
 * **跨层接口与契约规范**：[doc/contracts.md](doc/contracts.md)
 * **数据库模型与维护**：[doc/data-model.md](doc/data-model.md)
 * **文案与文档规范**：[doc/copywriting-guidelines.md](doc/copywriting-guidelines.md)
+* **前端界面规范**：[doc/frontend-guidelines.md](doc/frontend-guidelines.md)
 * **部署与运维发布**：[doc/deployment.md](doc/deployment.md)
 * **配置参数与运行日志**：[doc/configuration.md](doc/configuration.md)
 * **安全边界与鉴权模型**：[doc/security.md](doc/security.md)

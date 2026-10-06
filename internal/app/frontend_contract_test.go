@@ -77,6 +77,11 @@ func TestFrontendContracts(t *testing.T) {
 	capture("futu.saved", "futu", "PUT", "/api/modules/investment/futu", `{"enabled":false,"account":"","password":"","clearPassword":true}`, 200)
 	capture("overnight", "overnight", "GET", "/api/modules/investment/overnight", "", 200)
 	capture("overnight.saved", "overnight", "PUT", "/api/modules/investment/overnight", `{"enabled":false}`, 200)
+	capture("preferences.empty", "investmentPreferences", "GET", "/api/modules/investment/preferences", "", 200)
+	capture("preferences.saved", "investmentPreferenceSaved", "PUT", "/api/modules/investment/preferences", `{"name":"view","revision":0,"writer":"contract","sequence":1,"value":{"tab":"monitor","expanded":false}}`, 200)
+	capture("preferences.view", "investmentPreferences", "GET", "/api/modules/investment/preferences", "", 200)
+	capture("preferences.deleted", "investmentPreferenceSaved", "PUT", "/api/modules/investment/preferences", `{"name":"view","revision":0,"writer":"contract","sequence":2,"value":null}`, 200)
+	capture("preferences.tombstone", "investmentPreferences", "GET", "/api/modules/investment/preferences", "", 200)
 	capture("monitor.empty", "priceMonitor", "GET", "/api/modules/investment/monitor", "", 200)
 	ruleJSON := capture("monitor.rule.created", "priceRule", "POST", "/api/modules/investment/monitor/rules", `{"symbol":"AAPL","direction":"up","thresholdPercent":3,"enabled":true}`, 201)
 	var rule struct {

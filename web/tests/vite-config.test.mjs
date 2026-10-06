@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
+import { createServer, request } from "node:http";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { loadConfigFromFile } from "vite";
+import { createServer as createViteServer, loadConfigFromFile } from "vite";
 
 const webDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const configPath = resolve(webDir, "vite.config.ts");
@@ -51,11 +52,11 @@ test("dev defaults keep the local backend proxy and strict Vite port", async () 
 		assert.equal(proxy["/api"].ws, true);
 		assert.equal(proxy["/modules"].target, "http://127.0.0.1:8080");
 		assert.equal(proxy["/modules"].ws, true);
-		assert.equal(proxy["/health"], "http://127.0.0.1:8080");
-		assert.equal(proxy["/oauth/schwab"], "http://127.0.0.1:8080");
-		assert.equal(proxy["/investment/terminal"], "http://127.0.0.1:8080");
-		assert.equal(proxy["/charting_library"], "http://127.0.0.1:8080");
-		assert.equal(proxy["/api"].changeOrigin, undefined);
+		assert.equal(proxy["/health"].target, "http://127.0.0.1:8080");
+		assert.equal(proxy["/oauth/schwab"].target, "http://127.0.0.1:8080");
+		assert.equal(proxy["/investment/terminal"].target, "http://127.0.0.1:8080");
+		assert.equal(proxy["/charting_library"].target, "http://127.0.0.1:8080");
+		assert.equal(proxy["/api"].changeOrigin, false);
 	});
 });
 
@@ -79,7 +80,7 @@ test("dev environment configures explicit hosts, backend and external HMR websoc
 				clientPort: 443,
 			});
 			assert.equal(server.proxy["/api"].target, "https://api.example.test:8443");
-			assert.equal(server.proxy["/api"].changeOrigin, undefined);
+			assert.equal(server.proxy["/api"].changeOrigin, false);
 		},
 	);
 });
@@ -127,4 +128,57 @@ test("dev config rejects invalid ports and URLs", async () => {
 	await withWorkbenchDevEnv({ WORKBENCH_DEV_BACKEND_URL: "relative/backend" }, async () => {
 		await assert.rejects(loadDevConfig(), /WORKBENCH_DEV_BACKEND_URL/);
 	});
+});
+
+test("dev proxies preserve the browser Host and Origin on every backend route", async () => {
+	const origin = "https://dev-proxy.workbench.test:8443";
+	const backend = createServer((req, res) => {
+		res.setHeader("Content-Type", "application/json");
+		res.end(JSON.stringify({ host: req.headers.host, origin: req.headers.origin, path: req.url }));
+	});
+	let vite;
+	try {
+		backend.listen(0, "127.0.0.1");
+		await once(backend, "listening");
+		await withWorkbenchDevEnv({
+			WORKBENCH_DEV_BACKEND_URL: `http://127.0.0.1:${backend.address().port}`,
+			WORKBENCH_DEV_PUBLIC_URL: origin,
+		}, async () => {
+			vite = await createViteServer({
+				configFile: configPath,
+				root: webDir,
+				logLevel: "silent",
+				server: { port: 0, ws: false },
+				optimizeDeps: { noDiscovery: true, include: [] },
+			});
+			await vite.listen();
+			const paths = [
+				"/api/auth/status", "/health/ready", "/oauth/schwab?code=fixture",
+				"/investment/terminal", "/investment/terminal/datafeed.js",
+				"/charting_library/charting_library.esm.js", "/modules/fixture/page",
+			];
+			const results = await Promise.all(paths.map(path => new Promise((resolveResponse, reject) => {
+				const req = request({
+					host: "127.0.0.1", port: vite.httpServer.address().port, path,
+					headers: { Host: new URL(origin).host, Origin: origin },
+				}, res => {
+					let body = "";
+					res.on("data", chunk => { body += chunk; });
+					res.on("end", () => {
+						try { resolveResponse({ path, status: res.statusCode, body: JSON.parse(body) }); }
+						catch (error) { reject(error); }
+					});
+				});
+				req.on("error", reject);
+				req.end();
+			})));
+			for (const result of results) {
+				assert.equal(result.status, 200, result.path);
+				assert.deepEqual(result.body, { host: new URL(origin).host, origin, path: result.path }, result.path);
+			}
+		});
+	} finally {
+		if (vite) await vite.close();
+		await new Promise(resolveClose => backend.close(resolveClose));
+	}
 });

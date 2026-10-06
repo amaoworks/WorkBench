@@ -10,8 +10,8 @@ import "./styles.css";
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: { staleTime: 20_000, retry: 1, refetchOnWindowFocus: false },
-    mutations: { retry: 0 }
-  }
+    mutations: { retry: 0 },
+  },
 });
 
 createRoot(document.getElementById("root")!).render(
@@ -19,8 +19,19 @@ createRoot(document.getElementById("root")!).render(
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <App />
-        <Toaster richColors position="bottom-right" icons={{ success: <CircleCheck size={18} />, error: <CircleX size={18} />, info: <Info size={18} />, warning: <TriangleAlert size={18} />, loading: <LoaderCircle size={18} className="animate-spin" /> }} />
+        <Toaster
+          richColors
+          visibleToasts={3}
+          position="top-right"
+          icons={{
+            success: <CircleCheck size={18} />,
+            error: <CircleX size={18} />,
+            info: <Info size={18} />,
+            warning: <TriangleAlert size={18} />,
+            loading: <LoaderCircle size={18} className="animate-spin" />,
+          }}
+        />
       </BrowserRouter>
     </QueryClientProvider>
-  </StrictMode>
+  </StrictMode>,
 );

@@ -298,6 +298,9 @@ func TestUnavailableAIDoesNotConsumeBudgetAndDigestKeepsLinks(t *testing.T) {
 
 func TestScheduledDigestAndPushAreIdempotentAndAtomic(t *testing.T) {
 	m, db, ai := openModule(t)
+	// UTC noon is after the scheduled hour and keeps expiry ahead of the notification wall clock.
+	now := time.Now().UTC().Truncate(24 * time.Hour).Add(12 * time.Hour)
+	m.now = func() time.Time { return now }
 	ingest(t, m)
 	ai.fn = func(context.Context, contracts.TextRequest) (string, error) {
 		return "公司收入增长10%。[1]", nil

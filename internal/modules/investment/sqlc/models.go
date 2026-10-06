@@ -32,6 +32,15 @@ type InvestmentFutuBar struct {
 	Volume     float64 `json:"volume"`
 }
 
+type InvestmentPreference struct {
+	Name         string `json:"name"`
+	Content      string `json:"content"`
+	Revision     int64  `json:"revision"`
+	Writer       string `json:"writer"`
+	BaseRevision int64  `json:"base_revision"`
+	Sequence     int64  `json:"sequence"`
+}
+
 type InvestmentPriceMonitor struct {
 	ID        int64         `json:"id"`
 	Status    string        `json:"status"`

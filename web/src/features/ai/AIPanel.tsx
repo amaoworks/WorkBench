@@ -3,9 +3,10 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Bot, Send, X } from "lucide-react";
 import { apiValidated, apiResponse } from "../../shared/api";
-import { Button } from "../../components/ui/Button";
+import { Button, ButtonLink } from "../../components/ui/Button";
+import { EmptyState } from "../../components/ui/EmptyState";
+import { Notice } from "../../components/ui/Notice";
 import { cn } from "../../shared/cn";
-import { Link } from "react-router-dom";
 import * as Dialog from "@radix-ui/react-dialog";
 
 type Message = { role: "user" | "assistant"; text: string };
@@ -15,11 +16,11 @@ async function streamChat(
   conversationId: string,
   message: string,
   onStarted: (conversationId: string) => void,
-  onDelta: (text: string) => void
+  onDelta: (text: string) => void,
 ): Promise<ChatResponse> {
   const response = await apiResponse("/api/chat/stream", {
     method: "POST",
-    body: JSON.stringify({ conversationId, message })
+    body: JSON.stringify({ conversationId, message }),
   });
   if (!response.body) throw new Error("浏览器不支持流式响应");
   const reader = response.body.getReader();
@@ -70,22 +71,29 @@ export function AIPanel({ open, onClose }: { open: boolean; onClose: () => void 
     mutationFn: (message: string) => {
       let receivedDelta = false;
       return streamChat(conversationId, message, setConversationId, (delta) => {
-        setMessages((current) => current.map((item, index) => {
-          if (index !== current.length - 1 || item.role !== "assistant") return item;
-          return { ...item, text: receivedDelta ? item.text + delta : delta };
-        }));
+        setMessages((current) =>
+          current.map((item, index) => {
+            if (index !== current.length - 1 || item.role !== "assistant") return item;
+            return { ...item, text: receivedDelta ? item.text + delta : delta };
+          }),
+        );
         receivedDelta = true;
       });
     },
     onSuccess: (response) => {
       setConversationId(response.conversationId);
-      setMessages((current) => current.map((item, index) => index === current.length - 1 && item.role === "assistant" ? { ...item, text: response.text } : item));
+      setMessages((current) =>
+        current.map((item, index) => (index === current.length - 1 && item.role === "assistant" ? { ...item, text: response.text } : item)),
+      );
     },
-    onError: (error) => setMessages((current) => current.map((item, index) => {
-      if (index !== current.length - 1 || item.role !== "assistant") return item;
-      const prefix = item.text === "正在思考…" ? "" : `${item.text}\n\n`;
-      return { ...item, text: `${prefix}请求失败：${error.message}` };
-    }))
+    onError: (error) =>
+      setMessages((current) =>
+        current.map((item, index) => {
+          if (index !== current.length - 1 || item.role !== "assistant") return item;
+          const prefix = item.text === "正在思考…" ? "" : `${item.text}\n\n`;
+          return { ...item, text: `${prefix}请求失败：${error.message}` };
+        }),
+      ),
   });
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -96,22 +104,67 @@ export function AIPanel({ open, onClose }: { open: boolean; onClose: () => void 
     chat.mutate(message);
   }
   return (
-    <Dialog.Root open={open} onOpenChange={(value) => { if (!value) onClose(); }}><Dialog.Portal><Dialog.Overlay className="ai-overlay z-30" /><Dialog.Content className="ai-panel z-40">
-      <div className="flex h-16 items-center justify-between border-b border-[var(--border)] px-4">
-        <Dialog.Title className="flex items-center gap-2 font-semibold"><Bot size={19} className="text-brand" />Workbench AI</Dialog.Title>
-        <Dialog.Description className="sr-only">与 AI 对话，协助安排工作和处理待办。</Dialog.Description>
-        <Dialog.Close asChild><Button variant="ghost" size="icon" aria-label="关闭 AI 面板"><X size={18} /></Button></Dialog.Close>
-      </div>
-      <div className="flex-1 space-y-4 overflow-y-auto p-4" role="log" aria-live="polite" aria-relevant="additions text">
-        {status.isError && <p className="text-sm text-danger" role="alert">无法获取 AI 状态，请稍后重试。</p>}
-        {status.data && !status.data.available && <div className="rounded-lg border border-[var(--border)] bg-[var(--soft)] p-3 text-sm text-[var(--muted)]">AI 尚未启用。<Link to="/settings?tab=ai" onClick={onClose} className="text-link ml-1">前往设置连接服务</Link></div>}
-        {messages.length === 0 && <div className="empty-state"><div className="icon-tile"><Bot size={22} /></div><h3>从一句话开始</h3><p>例如：“帮我创建明天下午完成报告的待办”</p></div>}
-        {messages.map((message, index) => <div key={index} className={cn("ai-message", message.role === "user" && "user")}>{message.text}</div>)}
-      </div>
-      <form onSubmit={submit} className="flex gap-2 border-t border-[var(--border)] p-4">
-        <textarea aria-label="发送给 Workbench AI 的消息" rows={2} value={input} onChange={(event) => setInput(event.target.value)} placeholder="输入消息…" className="ui-input min-h-11 flex-1 resize-none" />
-        <Button size="icon" aria-label="发送消息" disabled={!input.trim() || chat.isPending || status.data?.available === false}><Send size={17} /></Button>
-      </form>
-    </Dialog.Content></Dialog.Portal></Dialog.Root>
+    <Dialog.Root
+      open={open}
+      onOpenChange={(value) => {
+        if (!value) onClose();
+      }}
+    >
+      <Dialog.Portal>
+        <Dialog.Overlay className="ai-overlay z-30" />
+        <Dialog.Content className="ai-panel z-40">
+          <div className="flex h-16 items-center justify-between border-b border-[var(--border)] px-4">
+            <Dialog.Title className="flex items-center gap-2 font-semibold">
+              <Bot size={19} className="text-brand" />
+              Workbench AI
+            </Dialog.Title>
+            <Dialog.Description className="sr-only">与 AI 对话，协助安排工作和处理待办。</Dialog.Description>
+            <Dialog.Close asChild>
+              <Button variant="ghost" size="icon" aria-label="关闭 AI 面板">
+                <X size={18} />
+              </Button>
+            </Dialog.Close>
+          </div>
+          <div className="flex-1 space-y-4 overflow-y-auto p-4" role="log" aria-live="polite" aria-relevant="additions text">
+            {status.isError && (
+              <Notice tone="danger" title="AI 状态加载失败">
+                {status.error.message}
+              </Notice>
+            )}
+            {status.data && !status.data.available && (
+              <Notice
+                title="AI 尚未启用"
+                action={
+                  <ButtonLink variant="secondary" size="sm" to="/settings?tab=ai" onClick={onClose}>
+                    打开设置
+                  </ButtonLink>
+                }
+              />
+            )}
+            {messages.length === 0 && (
+              <EmptyState icon={<Bot size={22} />} title="对话" description="例如：帮我创建明天下午完成报告的待办。" />
+            )}
+            {messages.map((message, index) => (
+              <div key={index} className={cn("ai-message", message.role === "user" && "user")}>
+                {message.text}
+              </div>
+            ))}
+          </div>
+          <form onSubmit={submit} className="flex gap-2 border-t border-[var(--border)] p-4">
+            <textarea
+              aria-label="发送给 Workbench AI 的消息"
+              rows={2}
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              placeholder="输入消息…"
+              className="ui-input min-h-11 flex-1 resize-none"
+            />
+            <Button size="icon" aria-label="发送消息" disabled={!input.trim() || chat.isPending || status.data?.available === false}>
+              <Send size={17} />
+            </Button>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }

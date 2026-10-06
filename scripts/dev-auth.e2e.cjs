@@ -1,4 +1,4 @@
-// Disposable HTTPS -> Vite -> Go login regression. Uses temporary credentials and data.
+// Disposable HTTPS -> Vite -> Go login and chart regression. Uses temporary credentials and data.
 const assert = require("node:assert/strict");
 const { mkdtemp, readFile, rm } = require("node:fs/promises");
 const { tmpdir } = require("node:os");
@@ -16,6 +16,74 @@ async function port() {
   const value = server.address().port;
   await new Promise(resolve => server.close(resolve));
   return value;
+}
+
+async function verifyInvestmentChart(page) {
+  const responses = [], fixtureErrors = [];
+  let historyCandles = 0;
+  const onResponse = response => {
+    const path = new URL(response.url()).pathname;
+    if (path.startsWith("/investment/terminal") || path.startsWith("/charting_library/")) {
+      responses.push({ path, status: response.status() });
+    }
+  };
+  page.on("response", onResponse);
+  await page.route("**/api/modules/investment/schwab", route => route.fulfill({ json: {
+    appKey: "fixture", callbackUrl: "https://example.test/oauth/schwab", hasAppSecret: true,
+    connected: true, reauthorizationRequired: false, lastError: "",
+  } }));
+  await page.routeWebSocket("**/trader/ws", socket => {
+    socket.send(JSON.stringify({ stream: { status: "ready" } }));
+  });
+  await page.route("**/api/modules/investment/schwab/**", async route => {
+    const request = route.request(), url = new URL(request.url()), path = url.pathname;
+    try {
+      if (path.endsWith("/ws/command") && request.method() === "POST") {
+        return await route.fulfill({ json: { success: true } });
+      }
+      assert.equal(request.method(), "GET", "only subscription commands may write during this test");
+      if (path.endsWith("/accountNumbers")) return await route.fulfill({ json: [{ accountNumber: "111", hashValue: "DEV-PROXY" }] });
+      if (path.endsWith("/accounts/DEV-PROXY")) return await route.fulfill({ json: { securitiesAccount: { positions: [] } } });
+      if (path.endsWith("/orders") || path.endsWith("/transactions")) return await route.fulfill({ json: [] });
+      if (path.endsWith("/instruments")) return await route.fulfill({ json: { instruments: [{ symbol: "AAPL", description: "Apple", assetType: "EQUITY", exchange: "NASDAQ" }] } });
+      if (path.endsWith("/quotes")) return await route.fulfill({ json: Object.fromEntries((url.searchParams.get("symbols") || "").split(",").map(symbol => [symbol, {
+        symbol, assetMainType: "EQUITY",
+        quote: { lastPrice: 102, closePrice: 100, bidPrice: 101, askPrice: 103, openPrice: 100, highPrice: 105, lowPrice: 98, totalVolume: 10000, tradeTime: Date.now() },
+      }])) });
+      if (path.endsWith("/pricehistory")) {
+        const start = Number(url.searchParams.get("startDate")), end = Number(url.searchParams.get("endDate"));
+        const candles = [];
+        for (let time = Math.floor(start / 86400000) * 86400000; time < end && candles.length < 2000; time += 86400000) {
+          if ([0, 6].includes(new Date(time).getUTCDay())) continue;
+          candles.push({ datetime: time, open: 100, high: 105, low: 98, close: 102, volume: 1000 });
+        }
+        historyCandles += candles.length;
+        return await route.fulfill({ json: { candles } });
+      }
+      assert.fail(`unexpected broker API: ${path}`);
+    } catch (error) {
+      fixtureErrors.push(error.message);
+      await route.fulfill({ status: 500, json: { message: "dev chart fixture failed" } }).catch(() => {});
+    }
+  });
+  try {
+    const firstModule = page.waitForResponse(response => new URL(response.url()).pathname === "/investment/terminal/datafeed.js");
+    await page.getByRole("link", { name: "投资", exact: true }).click();
+    assert([200, 304].includes((await firstModule).status()), "terminal modules must pass HTTPS origin checks through Vite");
+    const terminal = page.frameLocator("iframe[title='TradingView 投资终端']");
+    await terminal.locator("#terminal-loading").waitFor({ state: "hidden", timeout: 90000 });
+    await terminal.frameLocator("#tv_chart_container iframe").first().locator("canvas").first().waitFor({ state: "visible", timeout: 90000 });
+    assert(historyCandles > 0, "chart must load non-empty historical candles");
+    assert(responses.some(response => response.path === "/investment/terminal" && response.status === 200));
+    assert(responses.some(response => response.path.endsWith("/charting_library.esm.js") && response.status === 200));
+    assert(responses.some(response => response.path.endsWith("/sameorigin.html") && response.status === 200));
+    assert.deepEqual(responses.filter(response => response.status >= 400), [], "terminal and chart-library assets must pass the real HTTPS -> Vite -> Go proxy");
+    assert.deepEqual(fixtureErrors, []);
+    await page.getByRole("link", { name: "资讯", exact: true }).click();
+    await page.getByRole("heading", { name: "资讯", exact: true }).waitFor();
+  } finally {
+    page.off("response", onResponse);
+  }
 }
 
 (async () => {
@@ -130,9 +198,10 @@ async function port() {
     assert.equal(status.code, 200);
     assert.equal(status.body.authenticated, true);
     assert.equal(status.body.mustChangePassword, false);
+    await verifyInvestmentChart(page);
     assert.deepEqual(errors, []);
     await context.close();
-    console.log("PASS: HTTPS -> Vite -> Go reproduces 403 without public URL; configured origin supports login, Secure cookies, first password change, news navigation and persisted browser session.");
+    console.log("PASS: HTTPS -> Vite -> Go reproduces 403 without public URL; configured origin supports login, Secure cookies, first password change, persisted session and the real investment chart with non-empty fixture candles.");
   } finally {
     if (browser) await browser.close();
     await stop();

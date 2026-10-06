@@ -108,12 +108,13 @@ export default defineConfig({
 				}
 			: undefined,
 		proxy: {
-			"/api": { target: backendOrigin.origin, ws: true },
-			"/health": backendOrigin.origin,
-			"/oauth/schwab": backendOrigin.origin,
-			"/investment/terminal": backendOrigin.origin,
-			"/charting_library": backendOrigin.origin,
-			"/modules": { target: backendOrigin.origin, ws: true },
+			// Go validates Origin against Host. Vite's string shorthand rewrites Host.
+			"/api": { target: backendOrigin.origin, changeOrigin: false, ws: true },
+			"/health": { target: backendOrigin.origin, changeOrigin: false },
+			"/oauth/schwab": { target: backendOrigin.origin, changeOrigin: false },
+			"/investment/terminal": { target: backendOrigin.origin, changeOrigin: false },
+			"/charting_library": { target: backendOrigin.origin, changeOrigin: false },
+			"/modules": { target: backendOrigin.origin, changeOrigin: false, ws: true },
 		},
 	},
 	build: {

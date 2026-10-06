@@ -24,7 +24,9 @@ assert(["sqlite", "postgres"].includes(driver));
       const response = page.waitForResponse((result) => result.url() === `${baseURL}/api/system/backup` && result.request().method() === "POST");
       await backup.click();
       assert.equal((await response).status(), 201);
-      await page.getByRole("status").filter({ hasText: "已保存至 backups/" }).waitFor();
+      const notice = page.getByRole("status").filter({ hasText: "备份已创建" });
+      await notice.waitFor();
+      assert.match(await notice.innerText(), /backups\/.+/);
     } else {
       assert.equal(await backup.count(), 0);
       assert(await page.getByText("由数据库服务管理", { exact: true }).isVisible());

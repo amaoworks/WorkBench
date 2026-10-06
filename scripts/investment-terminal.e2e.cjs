@@ -14,6 +14,7 @@ const testNight = process.argv.includes("--night");
 const test24h = process.argv.includes("--24h") || testNight;
 const testSessions = testNight || test24h;
 const testChartState = process.argv.includes("--state");
+const testPreferences = process.argv.includes("--preferences");
 const mobile = useApp || useWebKit || process.argv.includes("--mobile");
 const origin = useApp ? "http://127.0.0.1:18140" : mobile ? "https://workbench.test" : "http://workbench.test";
 const libraryOrigin = "https://trading-terminal.tradingview-widget.com";
@@ -29,11 +30,13 @@ let watchlists = { revision: 0, state: null };
 let watchlistWriter = '', watchlistBase = 0, watchlistSequence = 0;
 let failWatchlistSave = false;
 let heldWatchlistSave;
+let preferences = { entries: {} };
+const preferenceWriters = new Map();
 const history = [
   { ...order, orderId: 40, status: "FILLED", filledQuantity: 2 },
   { ...order, orderId: 41, status: "CANCELED" },
 ];
-let overnightEnabled = testSessions || testChartState;
+let overnightEnabled = testSessions || testChartState || testPreferences;
 let fullDayFixtures = false;
 
 const etFixtureClock = new Intl.DateTimeFormat("en-US", {
@@ -72,7 +75,52 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
   return candles;
 }
 
+async function fulfillPreferences(route) {
+  if (route.request().method() === 'GET') return route.fulfill({ json: preferences });
+  assert.equal(route.request().method(), 'PUT');
+  assert.equal(route.request().headers()['x-csrf-token'], 'test-csrf');
+  const input = route.request().postDataJSON();
+  assert.equal(typeof input.name, 'string');
+  assert.equal(typeof input.writer, 'string');
+  assert(Number.isSafeInteger(input.revision) && input.revision >= 0);
+  assert(Number.isSafeInteger(input.sequence) && input.sequence > 0);
+  const current = preferences.entries[input.name];
+  const revision = current?.revision || 0;
+  const previous = preferenceWriters.get(input.name);
+  const sameWriter = previous?.writer === input.writer && previous.base === input.revision;
+  if (input.revision !== revision && !sameWriter) {
+    return route.fulfill({ status: 409, json: { code: 'preferences_conflict', message: '投资设置已在其他窗口更新' } });
+  }
+  if (!sameWriter || input.sequence > previous.sequence) {
+    const nextRevision = revision + 1;
+    preferences.entries[input.name] = { revision: nextRevision, value: input.value };
+    preferenceWriters.set(input.name, {
+      writer: input.writer,
+      base: sameWriter ? previous.base : input.revision,
+      sequence: input.sequence,
+    });
+  }
+  const accepted = preferenceWriters.get(input.name);
+  return route.fulfill({ json: { revision: preferences.entries[input.name].revision, sequence: accepted.sequence } });
+}
+
+async function pollUntil(check, message, timeout = 30000) {
+  const deadline = Date.now() + timeout;
+  let lastError;
+  while (Date.now() < deadline) {
+    try {
+      const result = await check();
+      if (result) return result;
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  throw new Error(`${message}${lastError ? `: ${lastError.message}` : ''}`);
+}
+
 (async () => {
+  assert(!testPreferences || useApp, '--preferences requires --app so restoration uses one temporary workspace database');
   await mkdir(cache, { recursive: true });
   const quoteCompat = JSON.parse(await readFile(join(assets, 'tv-quotes-compat.json'), 'utf8'));
   let browser, app, directory;
@@ -94,29 +142,30 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
       assert(ready, "temporary Workbench did not become ready");
     }
     browser = useWebKit ? await webkit.launch({ headless: true }) : await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH || undefined, args: ["--no-sandbox"] });
-    const context = await browser.newContext(mobile ? devices["iPhone 13"] : { viewport: { width: 1440, height: 1000 } });
-    const page = await context.newPage();
+    let context = await browser.newContext(mobile ? devices["iPhone 13"] : { viewport: { width: 1440, height: 1000 } });
+    let page = await context.newPage();
     const errors = [], calls = [], sockets = [];
     let resizeNotifications = 0;
-    page.on("pageerror", error => {
+    const installPageRoutes = async (targetContext, targetPage) => {
+    targetPage.on("pageerror", error => {
       // WebKit can defer a ResizeObserver notification during layout changes.
       // The sizing and readiness assertions below still require a usable chart.
       if (["ResizeObserver loop completed with undelivered notifications.", "ResizeObserver loop limit exceeded"].includes(error.message)) { resizeNotifications++; return; }
       errors.push(error.message);
     });
-    page.on("console", message => {
+    targetPage.on("console", message => {
       if (message.type() !== "error") return;
       if (message.location().url?.endsWith('/api/modules/investment/watchlists') && /503|409/.test(message.text())) return;
       errors.push(message.text());
     });
-    await page.routeWebSocket("**/trader/ws", socket => {
+    await targetPage.routeWebSocket("**/trader/ws", socket => {
       sockets.push(socket);
       socket.send(JSON.stringify({ stream: { status: "ready" } }));
     });
-    if (testSessions || testChartState) await page.routeWebSocket("**/futu/quote/ws", socket => {
+    if (testSessions || testChartState || testPreferences) await targetPage.routeWebSocket("**/futu/quote/ws", socket => {
       socket.send(JSON.stringify({ stream: { status: "ready", generation: "fixture-futu-1" } }));
     });
-    await page.route(`${origin}/**`, async route => {
+    await targetPage.route(`${origin}/**`, async route => {
       const url = new URL(route.request().url()), path = url.pathname;
       try {
         if (testChartState && path === '/state-away') return await route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>总览</title>' });
@@ -133,7 +182,7 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
             try { asset = JSON.parse(await readFile(file, "utf8")); } catch { /* first visit */ }
           }
           if (!asset) {
-            const response = await context.request.get(libraryOrigin + libraryPath);
+            const response = await targetContext.request.get(libraryOrigin + libraryPath);
             assert(response.ok(), `TradingView asset HTTP ${response.status()}: ${path}`);
             asset = { type: response.headers()["content-type"], body: (await response.body()).toString("base64") };
             await writeFile(file, JSON.stringify(asset));
@@ -169,10 +218,29 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
             }
             // Capture references in the test document only; constructor timing and
             // all host callbacks still run through the actual TradingView library.
-            assert(body.includes("broker = new Broker(host); return broker;"));
-            body = body.replace("broker = new Broker(host); return broker;", "window.__host = host; window.__orderUpdates = []; const update = host.orderUpdate.bind(host); host.orderUpdate = order => { window.__orderUpdates.push(order); update(order); }; broker = new Broker(host); window.__broker = broker; return broker;");
-            assert(body.includes("unbindTheme = bindTheme(widget, theme);"));
-            body = body.replace("unbindTheme = bindTheme(widget, theme);", "unbindTheme = bindTheme(widget, theme); window.__widget = widget;");
+            const brokerFactory = `      broker_factory: function (host) {
+        broker = new Broker(host, {
+          preferredAccount: preferences.get('account') || '',
+          onAccountChanged: account => preferences.set('account', account),
+        });
+        return broker;
+      },`;
+            assert(body.includes(brokerFactory));
+            body = body.replace(brokerFactory, `      broker_factory: function (host) {
+        window.__host = host;
+        window.__orderUpdates = [];
+        const update = host.orderUpdate.bind(host);
+        host.orderUpdate = order => { window.__orderUpdates.push(order); update(order); };
+        broker = new Broker(host, {
+          preferredAccount: preferences.get('account') || '',
+          onAccountChanged: account => preferences.set('account', account),
+        });
+        window.__broker = broker;
+        return broker;
+      },`);
+            const themeBinding = "unbindTheme = bindTheme(widget, theme, window, () => layoutSync?.schedule());";
+            assert(body.includes(themeBinding));
+            body = body.replace(themeBinding, `${themeBinding} window.__widget = widget;`);
             assert(body.includes('if (disposed) watchlistSync.dispose();'));
             body = body.replace('if (disposed) watchlistSync.dispose();', 'window.__watchlistRestored = true; if (disposed) watchlistSync.dispose();');
             const pagehide = "    window.addEventListener('pagehide', () => {";
@@ -196,11 +264,20 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
             headers: mobile && file === "index.html" ? { "Content-Security-Policy": "frame-src 'self'" } : {},
           });
         }
-        if (path === "/api/auth/csrf") return await route.fulfill({ json: { token: "test-csrf" } });
+        if (path === "/api/auth/csrf") {
+          if (useApp) return await route.continue();
+          return await route.fulfill({ json: { token: "test-csrf" } });
+        }
+        if (path === "/api/modules/investment/preferences") {
+          if (useApp) return await route.continue();
+          return await fulfillPreferences(route);
+        }
         if (path === "/api/modules/investment/watchlists") {
+          if (useApp && testPreferences) return await route.continue();
           if (route.request().method() === "PUT") {
             if (failWatchlistSave) return await route.fulfill({ status: 503, json: { message: '自选表保存暂时失败' } });
-            assert.equal(route.request().headers()['x-csrf-token'], "test-csrf");
+            if (useApp) assert(route.request().headers()['x-csrf-token']);
+            else assert.equal(route.request().headers()['x-csrf-token'], "test-csrf");
             const input = route.request().postDataJSON();
             const sameWriter = input.writer === watchlistWriter && input.revision === watchlistBase;
             if (input.revision !== watchlists.revision && !sameWriter) return await route.fulfill({ status: 409, json: { code: "watchlists_conflict", message: "自选表已在其他窗口更新，本页改动尚未保存" } });
@@ -227,7 +304,7 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
           assert.equal(route.request().method(), "GET");
           return await route.fulfill({ json: { enabled: overnightEnabled, provider: "futu", providerEnabled: overnightEnabled } });
         }
-        if ((testSessions || testChartState) && path.startsWith("/api/modules/investment/futu/")) {
+        if ((testSessions || testChartState || testPreferences) && path.startsWith("/api/modules/investment/futu/")) {
           if (path.endsWith('/kline')) {
             const from = Number(url.searchParams.get('from')) * 1000;
             const to = Number(url.searchParams.get('to')) * 1000;
@@ -272,7 +349,7 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
         }])) });
         if (path.endsWith("/pricehistory")) {
           const start = Number(url.searchParams.get("startDate")), end = Number(url.searchParams.get("endDate"));
-          if ((testSessions || testChartState) && url.searchParams.get('frequencyType') === 'minute') {
+          if ((testSessions || testChartState || testPreferences) && url.searchParams.get('frequencyType') === 'minute') {
             const candles = minuteHistoryFixture(start, end, url.searchParams.get('frequency'), 'schwab', fullDayFixtures);
             calls.at(-1).source = 'schwab';
             calls.at(-1).barCount = candles.length;
@@ -293,6 +370,8 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
         await route.fulfill({ status: 500, json: { error: "browser fixture failed" } }).catch(() => {});
       }
     });
+    };
+    await installPageRoutes(context, page);
 
     await page.goto(`${origin}${useApp ? "/investment" : mobile ? "/mobile-fixture" : "/investment/terminal"}`);
     if (useApp) await page.locator("iframe[title='TradingView 投资终端']").waitFor();
@@ -307,6 +386,177 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
     assert.equal(new URL(chart.url()).pathname, "/charting_library/quotes-v1/sameorigin.html", "chart must use a real same-origin document");
     const resolutions = await terminal.evaluate(() => new Promise(resolve => window.__datafeed.onReady(config => resolve(config.supported_resolutions))));
     assert.deepEqual(resolutions, ['1', '5', '15', '30', '1D', '1W', '1M'], '10-minute bars must be absent from the TV datafeed');
+    const readPreferences = () => terminal.evaluate(async () => {
+      const response = await fetch('/api/modules/investment/preferences');
+      if (!response.ok) throw new Error(`preferences HTTP ${response.status}`);
+      return (await response.json()).entries;
+    });
+    const waitForPreferences = async (check, message) => {
+      let last;
+      try {
+        return await pollUntil(async () => {
+          last = await readPreferences();
+          return check(last) ? last : null;
+        }, message);
+      } catch (error) {
+        const sources = last?.layout?.value?.charts?.flatMap(chart => chart.panes?.flatMap(pane => pane.sources?.map(({ id, type }) => ({ id, type })) || []) || []);
+        const concise = Object.fromEntries(Object.entries(last || {}).filter(([name]) => name !== 'layout').map(([name, entry]) => [name, {
+          revision: entry.revision, value: typeof entry.value === 'string' && entry.value.length > 160 ? `${entry.value.slice(0, 160)}…` : entry.value,
+        }]));
+        console.error('Saved preferences:', JSON.stringify({ ...concise, layout: { revision: last?.layout?.revision, sources } }));
+        throw error;
+      }
+    };
+    if (testPreferences) {
+      await page.getByRole('button', { name: '页面铺满', exact: true }).click();
+      await page.getByRole('button', { name: '返回工作台', exact: true }).waitFor();
+      const sessionButton = label => chart.getByRole('button', { name: new RegExp(`^行情时段：${label}。`) });
+      const chooseSession = async (label, title, nextLabel) => {
+        await sessionButton(label).click();
+        await chart.getByText(title, { exact: true }).click();
+        await sessionButton(nextLabel).waitFor();
+      };
+      await terminal.evaluate(() => window.__widget.setSymbol('MSFT', '15'));
+      await terminal.waitForFunction(() => window.__widget.activeChart().symbol() === 'MSFT' && window.__widget.activeChart().resolution() === '15' && window.__widget.activeChart().dataReady());
+      await chooseSession('常规', '扩展 (ETH)', '扩展');
+      await waitForPreferences(entries => entries.chart?.value?.symbol === 'MSFT' && entries.chart.value.resolution === '15' &&
+        entries.chart.value.session === 'extended', 'chart selections were not saved');
+      await sessionButton('扩展').waitFor();
+      assert.equal(await terminal.evaluate(() => window.__widget.activeChart().symbol()), 'MSFT');
+      assert.equal(await terminal.evaluate(() => window.__widget.activeChart().resolution()), '15');
+
+      await chooseSession('扩展', '常规 (RTH)', '常规');
+      await terminal.evaluate(() => window.__widget.setSymbol('AAPL', '5'));
+      await terminal.waitForFunction(() => window.__widget.activeChart().symbol() === 'AAPL' && window.__widget.activeChart().resolution() === '5' && window.__widget.activeChart().dataReady());
+      await terminal.waitForFunction(() => window.__watchlistRestored);
+      const workspaceListSaved = page.waitForResponse(response => response.url().endsWith('/watchlists') &&
+        response.request().method() === 'PUT' && response.request().postDataJSON().state.lists.some(list =>
+          list.title === '服务端关注' && JSON.stringify(list.symbols) === JSON.stringify(['###科技', 'MSFT', 'AAPL'])) && response.ok());
+      const created = await terminal.evaluate(async () => {
+        const active = window.__widget.activeChart();
+        const studyId = await active.createStudy('Moving Average', false, false, { length: 9 });
+        const range = active.getVisibleRange();
+        const span = Math.max(120, Math.floor((range.to - range.from) / 4));
+        const shapeId = await active.createMultipointShape([
+          { time: range.from + span, price: 99 },
+          { time: range.from + 2 * span, price: 104 },
+        ], { shape: 'trend_line', overrides: { linecolor: '#ef5350', linewidth: 2 } });
+        window.__widget.dateFormat().setValue('dd-MM-yyyy');
+        window.__widget.timeHoursFormat().setValue('12-hours');
+        window.__broker.setCurrentAccount('B');
+        const lists = await window.__widget.watchList();
+        const watchlistId = lists.getActiveListId();
+        lists.renameList(watchlistId, '服务端关注');
+        lists.updateList(watchlistId, ['###科技', 'MSFT', 'AAPL']);
+        return { studyId, shapeId, watchlistId };
+      });
+      await workspaceListSaved;
+      assert(created.studyId != null && created.shapeId != null, 'real TradingView indicator and drawing must be created');
+      await waitForPreferences(entries => {
+        const values = Object.entries(entries).filter(([name]) => name.startsWith('tv:')).map(([, entry]) => entry.value);
+        const savedLayout = JSON.stringify(entries.layout?.value);
+        return entries.chart?.value?.symbol === 'AAPL' && entries.chart.value.resolution === '5' && entries.chart.value.session === 'regular' &&
+          entries.layout?.value?.charts?.length && savedLayout.includes(String(created.studyId)) && savedLayout.includes(String(created.shapeId)) &&
+          entries.account?.value === 'B' && entries.view?.value?.tab === 'terminal' && entries.view.value.expanded === true &&
+          values.includes('dd-MM-yyyy') && values.includes('12-hours');
+      }, 'created chart objects and preferences were not saved');
+      const firstEntries = await readPreferences();
+      const firstLayoutRevision = firstEntries.layout.revision;
+      assert(JSON.stringify(firstEntries.layout.value).includes(String(created.studyId)), 'saved layout must contain the created indicator ID');
+      assert(JSON.stringify(firstEntries.layout.value).includes(String(created.shapeId)), 'saved layout must contain the created drawing ID');
+      assert(Object.keys(firstEntries).some(name => name.startsWith('tv:')), 'TradingView settings must reach workspace preferences');
+
+      await context.close();
+      context = await browser.newContext(mobile ? devices['iPhone 13'] : { viewport: { width: 1440, height: 1000 } });
+      page = await context.newPage();
+      await installPageRoutes(context, page);
+      await page.goto(`${origin}/investment`);
+      await page.getByRole('button', { name: '返回工作台', exact: true }).waitFor();
+      assert.equal(await page.locator('.investment-page').getAttribute('data-expanded'), 'true', 'the server-saved expanded view must restore in a clean context');
+      await page.locator("iframe[title='TradingView 投资终端']").waitFor();
+      terminal = await (await page.locator("iframe[title='TradingView 投资终端']").elementHandle()).contentFrame();
+      await terminal.waitForFunction(() => window.__broker?.connectionStatus() === 1, null, { timeout: 30000 });
+      assert.deepEqual((await readPreferences()).view.value, { tab: 'terminal', expanded: true }, 'clean-context expansion must come from the server view preference');
+      await terminal.evaluate(() => window.__widget.chartReady());
+      await terminal.locator('#terminal-loading').waitFor({ state: 'hidden' });
+      chart = terminal.childFrames()[0];
+      assert(chart, 'TradingView chart iframe missing after clean-context restore');
+      await terminal.waitForFunction(() => window.__widget.activeChart().dataReady());
+      await terminal.waitForFunction(() => window.__watchlistRestored);
+      assert.deepEqual(await terminal.evaluate(async () => {
+        const lists = await window.__widget.watchList();
+        return { activeId: lists.getActiveListId(), title: lists.getAllLists()[lists.getActiveListId()].title, symbols: lists.getList() };
+      }), { activeId: created.watchlistId, title: '服务端关注', symbols: ['###科技', 'MSFT', 'AAPL'] }, 'workspace watchlists must restore from the real database in a clean context');
+      await sessionButton('常规').waitFor();
+      assert.deepEqual(await terminal.evaluate(() => ({
+        symbol: window.__widget.activeChart().symbol(),
+        resolution: String(window.__widget.activeChart().resolution()),
+        account: window.__broker.currentAccount(),
+        dateFormat: window.__widget.dateFormat().value(),
+        timeHoursFormat: window.__widget.timeHoursFormat().value(),
+      })), { symbol: 'AAPL', resolution: '5', account: 'B', dateFormat: 'dd-MM-yyyy', timeHoursFormat: '12-hours' });
+      const restoredObjects = await terminal.evaluate(() => ({
+        studies: window.__widget.activeChart().getAllStudies(),
+        shapes: window.__widget.activeChart().getAllShapes(),
+      }));
+      const restoredStudy = restoredObjects.studies.find(study => /moving average/i.test(study.name));
+      const restoredShape = restoredObjects.shapes.find(shape => shape.id === created.shapeId) || restoredObjects.shapes[0];
+      assert(restoredStudy, 'saved indicator must restore in a clean browser context');
+      assert(restoredShape, 'saved drawing must restore in a clean browser context');
+
+      const removed = { studyId: restoredStudy.id, shapeId: restoredShape.id };
+      await terminal.evaluate(({ studyId, shapeId }) => {
+        const active = window.__widget.activeChart();
+        const study = active.getAllStudies().find(item => item.id === studyId);
+        const shape = active.getAllShapes().find(item => item.id === shapeId);
+        if (!study || !shape) throw new Error('restored chart objects are missing');
+        active.removeEntity(study.id);
+        active.removeEntity(shape.id);
+        window.__widget.dateFormat().setValue('yyyy-MM-dd');
+        window.__widget.timeHoursFormat().setValue('24-hours');
+        window.__broker.setCurrentAccount('A');
+      }, removed);
+      await terminal.evaluate(() => window.__widget.setSymbol('MSFT', '15'));
+      await terminal.waitForFunction(() => window.__widget.activeChart().symbol() === 'MSFT' && window.__widget.activeChart().resolution() === '15' && window.__widget.activeChart().dataReady());
+      await chooseSession('常规', '扩展 (ETH)', '扩展');
+      await waitForPreferences(entries => {
+        const values = Object.entries(entries).filter(([name]) => name.startsWith('tv:')).map(([, entry]) => entry.value);
+        const savedLayout = JSON.stringify(entries.layout?.value);
+        return entries.layout?.revision > firstLayoutRevision && !savedLayout.includes(String(removed.studyId)) && !savedLayout.includes(String(removed.shapeId)) &&
+          entries.chart?.value?.symbol === 'MSFT' &&
+          entries.chart.value.resolution === '15' && entries.chart.value.session === 'extended' && entries.account?.value === 'A' &&
+          values.includes('yyyy-MM-dd') && values.includes('24-hours');
+      }, 'deleted chart objects and later preferences were not saved');
+      await page.reload();
+      await page.locator("iframe[title='TradingView 投资终端']").waitFor();
+      terminal = await (await page.locator("iframe[title='TradingView 投资终端']").elementHandle()).contentFrame();
+      await terminal.waitForFunction(() => window.__broker?.connectionStatus() === 1, null, { timeout: 30000 });
+      await terminal.evaluate(() => window.__widget.chartReady());
+      await terminal.locator('#terminal-loading').waitFor({ state: 'hidden' });
+      chart = terminal.childFrames()[0];
+      await terminal.waitForFunction(() => window.__widget.activeChart().dataReady());
+      await sessionButton('扩展').waitFor();
+      assert.deepEqual(await terminal.evaluate(() => ({
+        symbol: window.__widget.activeChart().symbol(),
+        resolution: String(window.__widget.activeChart().resolution()),
+        account: window.__broker.currentAccount(),
+        dateFormat: window.__widget.dateFormat().value(),
+        timeHoursFormat: window.__widget.timeHoursFormat().value(),
+        studies: window.__widget.activeChart().getAllStudies().filter(study => /moving average/i.test(study.name)).length,
+        shapes: window.__widget.activeChart().getAllShapes().length,
+      })), { symbol: 'MSFT', resolution: '15', account: 'A', dateFormat: 'yyyy-MM-dd', timeHoursFormat: '24-hours', studies: 0, shapes: 0 });
+      await page.goto(`${origin}/investment/terminal?symbol=AAPL`);
+      terminal = page.mainFrame();
+      await terminal.waitForFunction(() => window.__broker?.connectionStatus() === 1, null, { timeout: 30000 });
+      await terminal.evaluate(() => window.__widget.chartReady());
+      await terminal.locator('#terminal-loading').waitFor({ state: 'hidden' });
+      await terminal.waitForFunction(() => window.__widget.activeChart().symbol() === 'AAPL' && window.__widget.activeChart().dataReady());
+      await waitForPreferences(entries => entries.chart?.value?.symbol === 'AAPL' && entries.chart.value.resolution === '15' &&
+        entries.chart.value.session === 'extended', 'URL symbol did not override the saved layout');
+      assert.deepEqual(errors, []);
+      console.log('PASS (Chromium, Workbench app): workspace chart layout, watchlists, account, indicator, drawing and user settings survive a storage-empty browser context; later edits and deletions survive refresh.');
+      return;
+    }
     if (testChartState) {
       if (useApp) await page.getByRole('button', { name: '页面铺满', exact: true }).click();
       const sessionButton = label => chart.getByRole('button', { name: new RegExp(`^行情时段：${label}。`) });
@@ -315,7 +565,11 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
         await chart.getByText(title, { exact: true }).click();
         await sessionButton(nextLabel).waitFor();
       };
-      const storedState = () => terminal.evaluate(() => JSON.parse(localStorage.getItem('workbench.investment.chart.v1')));
+      const storedState = async expected => {
+        const entries = await waitForPreferences(current => JSON.stringify(current.chart?.value) === JSON.stringify(expected),
+          `chart preference was not saved as ${JSON.stringify(expected)}`);
+        return entries.chart.value;
+      };
       const reopen = async (reload = false) => {
         if (reload) await page.reload();
         else {
@@ -326,7 +580,11 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
         terminal = useApp ? await (await page.locator("iframe[title='TradingView 投资终端']").elementHandle()).contentFrame() : mobile ? page.frame('investment-terminal') : page.mainFrame();
         await terminal.waitForFunction(() => Boolean(window.__widget));
         await terminal.evaluate(() => window.__widget.chartReady());
-        await terminal.locator('#terminal-loading').waitFor({ state: 'hidden' });
+        try { await terminal.locator('#terminal-loading').waitFor({ state: 'hidden' }); }
+        catch (error) {
+          console.error('Terminal restore failure:', await terminal.locator('#terminal-loading').innerText(), errors);
+          throw error;
+        }
         chart = terminal.childFrames()[0];
       };
       assert.equal(await terminal.evaluate(() => window.__widget.activeChart().resolution()), '1D');
@@ -342,9 +600,9 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
       await watchlistSaved;
       await terminal.evaluate(() => window.__widget.setSymbol('MSFT', '15'));
       await terminal.waitForFunction(() => window.__widget.activeChart().symbol() === 'MSFT' && window.__widget.activeChart().resolution() === '15' && window.__widget.activeChart().dataReady());
-      assert.deepEqual(await storedState(), { symbol: 'MSFT', resolution: '15', session: 'extended' });
+      assert.deepEqual(await storedState({ symbol: 'MSFT', resolution: '15', session: 'extended' }), { symbol: 'MSFT', resolution: '15', session: 'extended' });
       await terminal.evaluate(() => new Promise((resolve, reject) => window.__datafeed.resolveSymbol('MSFT', resolve, reject)));
-      assert.deepEqual(await storedState(), { symbol: 'MSFT', resolution: '15', session: 'extended' }, 'a regular-hours watchlist resolution of the same symbol must not overwrite chart state');
+      assert.deepEqual(await storedState({ symbol: 'MSFT', resolution: '15', session: 'extended' }), { symbol: 'MSFT', resolution: '15', session: 'extended' }, 'a regular-hours watchlist resolution of the same symbol must not overwrite chart state');
       for (const reload of [false, true]) {
         await reopen(reload);
         await sessionButton('扩展').waitFor();
@@ -352,18 +610,18 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
         assert.equal(await terminal.evaluate(() => window.__widget.activeChart().resolution()), '15');
         await terminal.waitForFunction(() => window.__barResults.some(result => result.symbol === 'MSFT' && result.session === 'extended' && result.count > 0));
         await terminal.waitForFunction(async () => window.__watchlistRestored && (await window.__widget.watchList()).getList().includes('SPY'));
-        assert.deepEqual(await storedState(), { symbol: 'MSFT', resolution: '15', session: 'extended' });
+        assert.deepEqual(await storedState({ symbol: 'MSFT', resolution: '15', session: 'extended' }), { symbol: 'MSFT', resolution: '15', session: 'extended' });
         assert.equal(await terminal.evaluate(() => window.__widget.activeChart().symbol()), 'MSFT', 'watchlist restoration must preserve the selected chart symbol');
       }
       await chooseSession('扩展', '夜盘 (Night)', '夜盘');
       await terminal.waitForFunction(() => window.__barResults.some(result => result.session === 'night' && result.count > 0));
       await reopen(true);
       await sessionButton('夜盘').waitFor();
-      assert.deepEqual(await storedState(), { symbol: 'MSFT', resolution: '15', session: 'night' });
+      assert.deepEqual(await storedState({ symbol: 'MSFT', resolution: '15', session: 'night' }), { symbol: 'MSFT', resolution: '15', session: 'night' });
       overnightEnabled = false;
       await reopen(true);
       await sessionButton('常规').waitFor();
-      assert.deepEqual(await storedState(), { symbol: 'MSFT', resolution: '15', session: 'regular' });
+      assert.deepEqual(await storedState({ symbol: 'MSFT', resolution: '15', session: 'regular' }), { symbol: 'MSFT', resolution: '15', session: 'regular' });
       await sessionButton('常规').click();
       assert.equal(await chart.getByText('夜盘 (Night)', { exact: true }).count(), 0);
       assert.equal(await chart.getByText('全天 (24H)', { exact: true }).count(), 0);
@@ -371,7 +629,7 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
       await terminal.evaluate(() => window.__widget.activeChart().setResolution('1W'));
       await terminal.waitForFunction(() => window.__widget.activeChart().resolution() === '1W' && window.__widget.activeChart().dataReady());
       await reopen(true);
-      assert.deepEqual(await storedState(), { symbol: 'MSFT', resolution: '1W', session: 'regular' });
+      assert.deepEqual(await storedState({ symbol: 'MSFT', resolution: '1W', session: 'regular' }), { symbol: 'MSFT', resolution: '1W', session: 'regular' });
       assert.equal(await terminal.evaluate(() => window.__widget.activeChart().resolution()), '1W');
       overnightEnabled = true;
       fullDayFixtures = true;
@@ -380,7 +638,7 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
       await terminal.waitForFunction(() => window.__widget.activeChart().resolution() === '5' && window.__barResults.some(result => result.session === 'equity24h' && result.count > 0));
       await reopen(true);
       await sessionButton('全天').waitFor();
-      assert.deepEqual(await storedState(), { symbol: 'MSFT', resolution: '5', session: 'equity24h' });
+      assert.deepEqual(await storedState({ symbol: 'MSFT', resolution: '5', session: 'equity24h' }), { symbol: 'MSFT', resolution: '5', session: 'equity24h' });
       await terminal.waitForFunction(() => window.__barResults.some(result => result.session === 'equity24h' && result.count > 0));
       assert.deepEqual(errors, []);
       console.log(`PASS (${useWebKit ? 'WebKit' : 'Chromium'}, ${mobile ? 'mobile' : 'desktop'}): first RTH → ETH on daily bars, symbol/interval/session restoration alongside workspace watchlists after leaving and reload, Night/24H restoration and disabled-coverage fallback.`);
@@ -783,13 +1041,16 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
       const api = await window.__widget.watchList();
       api.updateList(api.getActiveListId(), ['NVDA']);
     });
+    const latestSaved = page.waitForResponse(response => response.url().endsWith('/watchlists') &&
+      response.request().method() === 'PUT' && response.request().postDataJSON().state.lists[0].symbols.includes('NVDA') && response.ok());
+    heldWatchlistSave.release.resolve();
+    await latestSaved;
     await page.reload();
     await page.locator('#terminal-loading').waitFor({ state: 'hidden' });
-    heldWatchlistSave.release.resolve();
     assert.deepEqual(await page.evaluate(async () => {
       const api = await window.__widget.watchList();
       return api.getList(api.getActiveListId());
-    }), ['NVDA'], 'refresh during an older save must recover the latest edit');
+    }), ['NVDA'], 'refresh must restore the latest edit confirmed by the server');
     assert.deepEqual(watchlists.state.lists[0].symbols, ['NVDA']);
     watchlistBase = watchlists.revision;
     watchlists = { revision: watchlists.revision + 1, state: { ...watchlists.state, lists: watchlists.state.lists.map(list => ({ ...list, symbols: ['IBM'] })) } };
@@ -799,10 +1060,7 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
       api.updateList(api.getActiveListId(), ['AAPL']);
     });
     await page.getByRole('button', { name: '加载工作台版本', exact: true }).waitFor();
-    await page.reload();
-    await page.locator('#terminal-loading').waitFor({ state: 'hidden' });
-    await page.getByRole('button', { name: '加载工作台版本', exact: true }).waitFor();
-    assert.deepEqual(await page.evaluate(async () => (await window.__widget.watchList()).getList()), ['AAPL'], 'conflicting local edits must remain recoverable');
+    assert.deepEqual(await page.evaluate(async () => (await window.__widget.watchList()).getList()), ['AAPL'], 'conflicting edits remain in this page until the user loads the server state');
     assert.deepEqual(watchlists.state.lists[0].symbols, ['IBM'], 'the old page must not replace the other device state');
     await page.getByRole('button', { name: '加载工作台版本', exact: true }).click();
     await page.waitForFunction(() => document.getElementById('terminal-loading').hidden && document.getElementById('watchlist-status').hidden);

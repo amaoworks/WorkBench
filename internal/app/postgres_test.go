@@ -174,6 +174,15 @@ func TestPostgresWorkspace(t *testing.T) {
 		call("PUT", "/api/modules/investment/watchlists", watchlists, 200)
 		call("PUT", "/api/modules/investment/watchlists", watchlists, 200)
 		call("GET", "/api/modules/investment/watchlists", "", 200)
+		preference := `{"name":"account","revision":0,"writer":"postgres-test","sequence":1,"value":"account-B"}`
+		call("PUT", "/api/modules/investment/preferences", preference, 200)
+		call("PUT", "/api/modules/investment/preferences", preference, 200)
+		call("PUT", "/api/modules/investment/preferences", `{"name":"account","revision":1,"writer":"other","sequence":1,"value":"account-A"}`, 200)
+		call("PUT", "/api/modules/investment/preferences", preference, 409)
+		prefs := call("GET", "/api/modules/investment/preferences", "", 200)
+		if !bytes.Contains(prefs.Bytes(), []byte(`"value":"account-A"`)) {
+			t.Fatalf("preference did not round trip through PostgreSQL: %s", prefs)
+		}
 		call("PUT", "/api/settings/logging", `{"level":"warn"}`, 200)
 		settings := call("GET", "/api/settings", "", 200)
 		if !bytes.Contains(settings.Bytes(), []byte(`"databaseDriver":"postgres"`)) || !bytes.Contains(settings.Bytes(), []byte(`"backupSupported":false`)) || bytes.Contains(settings.Bytes(), []byte(cfg.DatabaseURL)) {

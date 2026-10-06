@@ -83,6 +83,12 @@ Registry 通过 `./*/*.module.ts` 收集声明，校验模块和资源标识。�
 
 共享 `api` 客户端处理同源凭据、CSRF 和标准错误。复用 `components/ui` 中的页面标题、卡片、按钮和确认弹窗，配色使用 `styles.css` 语义变量，图标使用 Lucide；其余交互约定见 [web/README](../web/README.md)。
 
+## 前端页面
+
+新业务页面按[前端界面规范](frontend-guidelines.md)选用共享组件。加载使用 `Skeleton`，空数据使用 `EmptyState`，请求失败使用 `Notice`；布尔设置使用 `Switch`。删除流程使用 `ConfirmDialog` 与 `useConfirmDelete`，不新增重复的确认弹窗、状态组件或焦点恢复实现。
+
+页面在桌面和最小 360px 宽度下保持可操作，使用主题变量并验证浅色与深色主题。图标按钮提供 `aria-label`，帮助和错误文字通过 `aria-describedby` 关联控件，任何操作都不能只在悬停时出现。
+
 ## 外部模块
 
 当前仅从项目代码和文件注册新业务，不开放通过网址新增外部模块。已保存的外部模块仍以独立 HTTP 服务运行，不导入 `workbench/internal/...`，也不编入核心二进制；宿主保留管理和页面加载兼容。现行接口见[接口与契约](contracts.md)，远端 v1 类型见 [contracts/external.go](../internal/contracts/external.go)，第一阶段设计与验收见[历史记录](archive/external-modules-phase-1.md)。[examples/external-module](../examples/external-module/README.md) 用于兼容测试。

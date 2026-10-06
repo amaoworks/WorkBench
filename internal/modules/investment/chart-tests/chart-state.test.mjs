@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { loadChartState, saveChartState } from '../chart/chart-state.js';
+import { loadChartState, saveChartState, normalizeChartState } from '../chart/chart-state.js';
 
-function browserStorage() {
+function preferences() {
     const values = new Map();
-    return { localStorage: { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) } };
+    return { get: key => values.get(key) ?? null, set: (key, value) => values.set(key, value) };
 }
 
 test('chart selections survive reopening, including option and futures symbols', () => {
-    const host = browserStorage();
+    const host = preferences();
     assert.deepEqual(loadChartState(host), { symbol: 'AAPL', resolution: '1D', session: 'regular' });
     for (const state of [
         { symbol: 'MSFT', resolution: '15', session: 'extended' },
@@ -23,19 +23,20 @@ test('chart selections survive reopening, including option and futures symbols',
 });
 
 test('unsupported stored selections recover to valid chart defaults', () => {
-    const host = browserStorage();
-    host.localStorage.getItem = () => '{invalid json';
+    const host = preferences();
+    host.get = () => null;
     assert.deepEqual(loadChartState(host), { symbol: 'AAPL', resolution: '1D', session: 'regular' });
-    host.localStorage.getItem = () => JSON.stringify({ symbol: ' ', resolution: '10', session: 'unknown' });
+    host.get = () => ({ symbol: ' ', resolution: '10', session: 'unknown' });
     assert.deepEqual(loadChartState(host), { symbol: 'AAPL', resolution: '1D', session: 'regular' });
     for (const session of ['extended', 'night', 'equity24h']) {
-        host.localStorage.getItem = () => JSON.stringify({ symbol: 'MSFT', resolution: '1D', session });
+        host.get = () => ({ symbol: 'MSFT', resolution: '1D', session });
         assert.deepEqual(loadChartState(host), { symbol: 'MSFT', resolution: '5', session });
     }
 });
 
-test('unavailable browser storage does not prevent chart startup or selection', () => {
-    const host = { get localStorage() { throw new Error('storage disabled'); } };
+test('chart selections use the workspace store without accessing browser storage', () => {
+    const host = Object.defineProperty(preferences(), 'localStorage', { get() { throw new Error('storage disabled'); } });
     assert.deepEqual(loadChartState(host), { symbol: 'AAPL', resolution: '1D', session: 'regular' });
     assert.doesNotThrow(() => saveChartState({ symbol: 'MSFT', resolution: '5', session: 'extended' }, host));
+    assert.deepEqual(normalizeChartState(host.get('chart')), { symbol: 'MSFT', resolution: '5', session: 'extended' });
 });

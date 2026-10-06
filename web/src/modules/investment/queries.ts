@@ -1,7 +1,34 @@
-import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRef, useState } from "react";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, apiValidated } from "../../shared/api";
 import type { Widget } from "../../shared/schema";
-import { futuSettingsSchema, overnightSettingsSchema, schwabSettingsSchema, priceMonitorSchema, priceHistorySchema, priceRuleSchema, type PriceRuleInput, type FutuSettingsInput, type SchwabSettingsInput } from "./schema";
+import { futuSettingsSchema, overnightSettingsSchema, schwabSettingsSchema, priceMonitorSchema, priceHistorySchema, priceRuleSchema, investmentPreferencesSchema, investmentPreferenceSavedSchema, investmentViewSchema, type InvestmentView, type PriceRuleInput, type FutuSettingsInput, type SchwabSettingsInput } from "./schema";
+
+const PREFERENCES = "/api/modules/investment/preferences";
+const VIEW_KEY = ["investment", "preferences", "view"];
+export function useInvestmentView() {
+  const [writer] = useState(() => Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join(""));
+  const [draft, setDraft] = useState<InvestmentView | null>(null);
+  const base = useRef<number | null>(null);
+  const sequence = useRef(0);
+  const query = useQuery({ queryKey: VIEW_KEY, gcTime: 0, refetchOnWindowFocus: false, queryFn: async () => {
+    const result = await apiValidated(PREFERENCES, investmentPreferencesSchema);
+    const entry = result.entries.view;
+    return { revision: entry?.revision ?? 0, value: investmentViewSchema.parse(entry?.value ?? { tab: "terminal", expanded: false }) };
+  } });
+  const save = useMutation({
+    scope: { id: "investment-view" },
+    mutationFn: (value: InvestmentView) => {
+      base.current ??= query.data?.revision ?? 0;
+      return apiValidated(PREFERENCES, investmentPreferenceSavedSchema, { method: "PUT", keepalive: true,
+        body: JSON.stringify({ name: "view", value, revision: base.current, writer, sequence: ++sequence.current }),
+      });
+    },
+  });
+  return { query, save, view: draft ?? query.data?.value,
+    setView(value: InvestmentView) { setDraft(value); save.mutate(value); },
+  };
+}
 
 const MONITOR = "/api/modules/investment/monitor";
 export function usePriceMonitor() {

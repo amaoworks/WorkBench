@@ -44,7 +44,7 @@ test('workspace lists replace local defaults without saving restoration events o
     assert.deepEqual(writes[0][1].lists.map(list => list.symbols), [[], []]);
 });
 
-test('first use imports existing browser lists, including order and sections', async t => {
+test('first use saves default lists, including order and sections', async t => {
     const chart = fixture(saved), writes = [];
     const sync = await bindWatchlists(chart.widget, { initial: { revision: 0, state: null }, save: async (revision, state) => { writes.push({ revision, state }); return 1; } });
     t.after(() => sync.dispose());
@@ -158,52 +158,37 @@ test('leaving during a save submits the newest state without waiting for the old
     await flushing;
 });
 
-test('refresh replays the latest staged draft before restoring, and old responses cannot erase it', async () => {
-    const values = new Map();
-    const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
-    const old = Promise.withResolvers();
+test('new edits save directly to the workspace and a fresh browser reads them', async () => {
     let state = local, puts = 0;
     const request = async (url, init) => {
         if (url.endsWith('/csrf')) return Response.json({ token: 'csrf' });
         if (init.method !== 'PUT') return Response.json({ revision: puts, state });
         const input = JSON.parse(init.body);
         state = input.state;
-        if (++puts === 1) return old.promise;
+        puts++;
         return Response.json({ revision: puts, sequence: input.sequence });
     };
-    const store = await loadWatchlists(request, storage);
-    const saving = store.save(0, local);
+    const store = await loadWatchlists(request);
+    assert.deepEqual(store.initial.state, local);
+    assert.equal(puts, 0, 'reading server state must not submit any browser draft');
     store.stage(saved);
-    old.resolve(Response.json({ revision: 1, sequence: 1 }));
-    await saving;
-    assert.equal(values.size, 1, 'the old response must retain the newer pending snapshot');
-    const reloaded = await loadWatchlists(request, storage);
+    await store.save(0, saved);
+    const reloaded = await loadWatchlists(request);
     assert.deepEqual(reloaded.initial.state, saved);
-    assert.equal(puts, 2, 'the draft must be submitted before the chart is restored');
-    assert.equal(values.size, 0);
+    assert.equal(puts, 1);
 });
 
-test('a rejected draft can be edited after refresh and a conflict never acquires the newer remote base', async t => {
-    for (const status of [400, 409, 503]) {
-        let draft = JSON.stringify({ revision: 0, writer: 'old-tab', sequence: 2, state: saved });
-        const storage = { getItem: () => draft, setItem: (_, value) => { draft = value; }, removeItem: () => { draft = null; } };
-        const store = await loadWatchlists(async (url, init) => {
-            if (url.endsWith('/csrf')) return Response.json({ token: 'csrf' });
-            if (init.method !== 'PUT') return Response.json({ revision: 5, state: local });
-            return Response.json({ message: 'save rejected' }, { status });
-        }, storage);
-        assert.deepEqual(store.initial.state, saved);
-        const chart = fixture();
-        const sync = await bindWatchlists(chart.widget, store);
-        t.after(() => sync.dispose());
-        chart.api.updateList('empty', ['NVDA']);
-        await sync.flush();
-        const pending = JSON.parse(draft);
-        assert.equal(pending.revision, 0, 'editing a rejected draft must not rebase onto the remote version');
-        assert.deepEqual(pending.state.lists[1].symbols, ['NVDA']);
-        sync.dispose({ discard: true });
-        store.discardDraft();
-        sync.dispose();
-        assert.equal(draft, null, 'choosing remote state must not recreate the discarded draft during pagehide');
-    }
+test('rejected edits keep their original revision for retry', async () => {
+    const drafts = [];
+    const store = await loadWatchlists(async (url, init) => {
+        if (url.endsWith('/csrf')) return Response.json({ token: 'csrf' });
+        if (init.method !== 'PUT') return Response.json({ revision: 5, state: local });
+        drafts.push(JSON.parse(init.body));
+        return Response.json({ message: 'save rejected' }, { status: 409 });
+    });
+    await assert.rejects(store.save(5, saved), /save rejected/);
+    await assert.rejects(store.save(6, local), /save rejected/);
+    assert.deepEqual(drafts.map(draft => draft.revision), [5, 5]);
+    assert.deepEqual(drafts.map(draft => draft.sequence), [1, 2]);
+    assert.equal(drafts[0].writer, drafts[1].writer);
 });
