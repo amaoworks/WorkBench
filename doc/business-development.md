@@ -2,6 +2,8 @@
 
 先阅读[架构与目录](architecture.md)，再按本次需求定位模块。现有模块是实现参考，按实际职责选择文件；不要求复制所有文件或预先创建空目录。
 
+**注意：** 通过网址接入外部模块已取消；新业务只以进程内模块加入（见下文与 [`examples/external-module`](../examples/external-module) 兼容说明）。历史设计见 [归档文档](archive/external-modules-phase-1.md)。
+
 ## 代码归属
 
 一个业务对应 `internal/modules/<id>/` 和 `web/src/modules/<id>/`。模型、查询、迁移、业务用例、HTTP、定时任务、事件、工具、页面和模块设置都归该业务管理。第三方集成如果只服务一个业务，先留在该模块内，例如 Todo 的 Wallos 联动。

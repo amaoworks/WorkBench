@@ -64,6 +64,10 @@ Workbench 前端使用统一的页面结构、状态反馈和交互组件。业�
 - 侧栏在窄屏折叠为图标栏；标签栏允许横向滚动；表单在窄屏变为单列。
 - 标题、状态原因和动态错误允许自然换行；交互控件保持可见、可点击并保留清晰焦点。
 
+## 模块导入边界
+
+与后端 `internal/modules/architecture_test.go` 对齐：`web/src/modules/<id>/` 不得 import 其他业务模块，也不得 import `web/src/app/`。总览、设置和应用外壳在 `features/` / `app/` 中组合各模块；模块可复用 `components/`、`shared/` 以及平台 settings 等 features 只读 hooks。该边界由 `web/eslint.config.js` 的 `no-restricted-imports` 强制检查（`npm run lint`）。
+
 ## 代码要求
 
 - TypeScript 类型完整，不使用 `any`，不为共享组件引入重复实现或兼容层。

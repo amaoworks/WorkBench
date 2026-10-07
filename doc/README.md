@@ -22,4 +22,4 @@ Workbench 技术文档索引：
 
 ## 历史归档
 
-- [外部业务模块第一阶段历史记录](archive/external-modules-phase-1.md)：当时的设计、执行与验收记录，以及当前兼容范围。新网址接入已取消，已有记录的管理接口见[接口与契约](contracts.md)。
+- [外部业务模块第一阶段历史记录](archive/external-modules-phase-1.md)（**已废弃归档**）：网址动态接入已取消；现行方式仅为进程内模块（`internal/modules/<id>/`、`web/src/modules/<id>/`），示例见 [`examples/external-module`](../examples/external-module)。已有外部模块记录的兼容管理接口见[接口与契约](contracts.md)。

@@ -1,5 +1,8 @@
 # 外部业务模块第一阶段历史记录
 
+> **Deprecated（已废弃）**：通过网址在设置页动态接入外部模块的能力已取消；`POST /api/modules/external` 返回 404。现行方式是进程内模块（见 [`examples/external-module`](../../examples/external-module) 仅作兼容测试样例，以及 `internal/modules/<id>/` + `web/src/modules/<id>/`）。下文为 2026-09-13 阶段历史记录，不作为当前开发指南。
+
+
 记录时间：2026-09-13。本文保留第一阶段当时的设计、执行计划与验收结果。
 
 ## 当前兼容范围
