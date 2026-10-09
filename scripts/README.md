@@ -12,7 +12,7 @@
   --web-port 9090
 ```
 
-首次使用密码模式时，沿用 `WORKBENCH_PASSWORD` 设置初始密码。`-data`、`-public-url`、`-log-level`、重复的 `-allowed-host` 等后端参数原样支持，对应环境变量也继续生效；命令行优先于环境变量。未传 `-data` 时仍使用 `~/.workbench/data.db`，如需独立开发数据，可指定 `-data .workbench/dev/data.db`。
+首次使用密码模式时，沿用 `WORKBENCH_PASSWORD` 设置初始密码。`-data`、`-public-url`、`-log-level`、重复的 `-allowed-host` 等后端参数原样支持，对应环境变量也继续生效；命令行优先于环境变量。命令行 `-data`、Shell 环境和 `--config` 文件都未设置数据路径时，开发脚本使用仓库内的 `.workbench/dev/data.db`（按仓库根目录解析，目录不存在时自动创建，已被 Git 忽略），不与原生默认的 `~/.workbench/data.db` 共用工作空间；启动日志和 `--print-config` 会标明 `from dev default`。图表库缓存 `chart-library/` 和 OpenD 运行目录 `futu-opend/` 默认位于数据库同级，因此也随之独立：首次启用 Futu 会重新下载 OpenD 并需要在投资设置中重新登录。若同时运行另一个已启用 OpenD 的工作台，两者默认都使用 `127.0.0.1:11111`，需用 `-futu-opend-address` 等参数错开。沿用原工作空间时显式传 `-data ~/.workbench/data.db`。
 
 脚本每次启动编译一次 Go，然后运行后端和 Vite。上例反代目标为 `http://127.0.0.1:9090`，浏览器访问 `https://w.vm2.de5.net`。直接本机调试时可使用 `./scripts/dev.sh -auth password`，前端默认地址为 `http://127.0.0.1:5173`。访问后端端口仍会得到内嵌的生产页面。开发代理要求 `-listen` 使用 1–65535 的固定数字端口，不支持随机端口 `:0`。
 

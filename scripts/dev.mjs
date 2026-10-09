@@ -2,7 +2,6 @@
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { readdirSync, readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
-import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isIP } from "node:net";
@@ -10,6 +9,8 @@ import { loadConfigEnv, maskValue, splitConfigArgs } from "./env-file.mjs";
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const defaultListen = "127.0.0.1:8080";
+// Development data stays apart from the native default ~/.workbench/data.db.
+export const devDataPath = ".workbench/dev/data.db";
 const defaultWebHost = "127.0.0.1";
 const defaultWebPort = 5173;
 const shutdownGraceMs = 15_000;
@@ -213,7 +214,8 @@ export function makeDevPlan(options, env = process.env, root = repoRoot) {
   }
   const dbDriver = value("db-driver", "WORKBENCH_DB_DRIVER", "sqlite");
   const auth = value("auth", "WORKBENCH_AUTH", "local");
-  const dataPath = value("data", "WORKBENCH_DATA", join(homedir(), ".workbench", "data.db"));
+  const dataSource = flags.values.has("data") ? "-data" : env.WORKBENCH_DATA ? "WORKBENCH_DATA" : "dev default";
+  const dataPath = value("data", "WORKBENCH_DATA", resolve(root, devDataPath));
   const publicUrlRaw = value("public-url", "WORKBENCH_PUBLIC_URL", "");
   let publicUrl = "";
   if (publicUrlRaw) {
@@ -283,6 +285,7 @@ export function makeDevPlan(options, env = process.env, root = repoRoot) {
     : options.goArgs.filter((_, index) => !(explicitAllowed && !explicitInvalid && flags.allowedIndexes.includes(index)));
   const childEnv = { ...env };
   if (!flags.oneShot) {
+    if (dataSource === "dev default") childEnv.WORKBENCH_DATA = dataPath;
     if (!explicitInvalid) childEnv.WORKBENCH_ALLOWED_HOSTS = allowedHosts.join(",");
     childEnv.WORKBENCH_DEV_CHART_DIR = resolve(root, "internal/modules/investment/chart");
     childEnv.WORKBENCH_DEV_BACKEND_URL = backendUrl;
@@ -303,6 +306,7 @@ export function makeDevPlan(options, env = process.env, root = repoRoot) {
     auth,
     dbDriver,
     dataPath,
+    dataSource,
     publicUrl,
     backendUrl,
     webUrl: `http://${formatHostPort(displayWebHost, options.webPort)}`,
@@ -583,10 +587,10 @@ async function main(argv = process.argv.slice(2), shellEnv = process.env) {
   }
   if (options.printConfig) {
     console.log(`[dev] Go API: ${plan.backendUrl} (listen ${plan.listen}, auth ${plan.auth}, db ${plan.dbDriver})`);
-    console.log(`[dev] Data: ${plan.dataPath}`);
+    console.log(`[dev] Data: ${plan.dataPath} (from ${plan.dataSource})`);
     console.log(`[dev] Vite: ${plan.webUrl}`);
     if (plan.publicUrl) console.log(`[dev] Public URL: ${plan.publicUrl}`);
-    if (plan.options.goArgs.length) console.log(`[dev] Backend flags (override config): ${plan.options.goArgs.join(" ")}`);
+    if (plan.options.goArgs.length) console.log(`[dev] Backend flags: ${plan.options.goArgs.join(" ")}`);
     for (const entry of configReport) {
       console.log(`[dev]   ${entry.key}=${maskValue(entry.key, entry.value)}  (${entry.source === "shell" ? "shell" : "file"})`);
     }
@@ -617,7 +621,10 @@ async function main(argv = process.argv.slice(2), shellEnv = process.env) {
     } else {
       console.log("[dev] Compiling Go backend with -tags dev...");
       console.log(`[dev] Go API: ${plan.backendUrl} (auth: ${plan.auth})`);
-      console.log(`[dev] Data: ${plan.dataPath} (db: ${plan.dbDriver})`);
+      console.log(`[dev] Data: ${plan.dataPath} (db: ${plan.dbDriver}, from ${plan.dataSource})`);
+      if (plan.dataSource === "dev default") {
+        console.log("[dev] Using the dev-only workspace; pass -data or WORKBENCH_DATA to open another one (native default: ~/.workbench/data.db).");
+      }
       console.log(`[dev] Vite: ${plan.webUrl}`);
       if (options.devUrl || plan.publicUrl) console.log(`[dev] Browser origin: ${options.devUrl || plan.publicUrl}`);
       for (const host of plan.externalHosts) {

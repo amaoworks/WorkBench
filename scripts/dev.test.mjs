@@ -150,6 +150,38 @@ test("WORKBENCH_HTTP_PORT replaces the listen port unless -listen is explicit", 
   assert.throws(() => makeDevPlan(parseDevArgs([]), { WORKBENCH_HTTP_PORT: "x" }, "/repo"), /WORKBENCH_HTTP_PORT/);
 });
 
+test("dev uses its own data path unless -data or WORKBENCH_DATA is set", async () => {
+  const defaultPlan = makeDevPlan(parseDevArgs([]), {}, "/repo");
+  assert.equal(defaultPlan.dataPath, "/repo/.workbench/dev/data.db");
+  assert.equal(defaultPlan.dataSource, "dev default");
+  assert.equal(defaultPlan.env.WORKBENCH_DATA, "/repo/.workbench/dev/data.db");
+  assert.deepEqual(defaultPlan.options.goArgs, []);
+  assert.equal(makeDevPlan(parseDevArgs([]), { WORKBENCH_DATA: "" }, "/repo").dataSource, "dev default");
+
+  const cliPlan = makeDevPlan(parseDevArgs(["-data", "/tmp/cli.db"]), { WORKBENCH_DATA: "/tmp/env.db" }, "/repo");
+  assert.equal(cliPlan.dataPath, "/tmp/cli.db");
+  assert.equal(cliPlan.dataSource, "-data");
+  assert.equal(cliPlan.env.WORKBENCH_DATA, "/tmp/env.db");
+
+  const shellPlan = makeDevPlan(parseDevArgs([]), { WORKBENCH_DATA: "/tmp/shell.db" }, "/repo");
+  assert.equal(shellPlan.dataPath, "/tmp/shell.db");
+  assert.equal(shellPlan.dataSource, "WORKBENCH_DATA");
+  assert.equal(shellPlan.env.WORKBENCH_DATA, "/tmp/shell.db");
+
+  const directory = await mkdtemp(join(tmpdir(), "workbench-config-test-"));
+  try {
+    const file = join(directory, "dev.env");
+    await writeFile(file, "WORKBENCH_DATA=/tmp/config.db\n");
+    const { env } = loadConfigEnv([file], {});
+    const configPlan = makeDevPlan(parseDevArgs([], env), env, "/repo");
+    assert.equal(configPlan.dataPath, "/tmp/config.db");
+    assert.equal(configPlan.dataSource, "WORKBENCH_DATA");
+    assert.equal(configPlan.env.WORKBENCH_DATA, "/tmp/config.db");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 function fixture(command, args) {
   return { command: process.execPath, args: ["-e", command, ...(args || [])], env: process.env };
 }
