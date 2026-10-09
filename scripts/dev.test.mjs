@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { makeDevPlan, parseDevArgs, supervise } from "./dev.mjs";
+import { loadConfigEnv, maskValue, parseEnvFile, splitConfigArgs } from "./env-file.mjs";
 
 test("dev options and Go flags preserve CLI precedence and separated flag values", () => {
   const options = parseDevArgs([
@@ -65,6 +66,88 @@ test("dev mode rejects backend listen addresses without a fixed proxy port", () 
     );
   }
   assert.equal(makeDevPlan(parseDevArgs(["--listen=:9090"]), {}, "/repo").backendUrl, "http://127.0.0.1:9090");
+});
+
+test("env files follow Docker Compose .env syntax and interpolation", () => {
+  const text = [
+    "\uFEFF# comment",
+    "export A=alpha",
+    "B = beta  # inline comment",
+    'C="dq ${A} \\n x # kept"',
+    "D='sq ${A} $A'",
+    "E=${A}-$A-${NOPE:-def}-${NOPE-d2}-${A:+alt}-$$lit",
+    "F=x#kept",
+    "P=file",
+    "G=${P}",
+    'H="multi',
+    'line"',
+    "I=",
+    "BARE",
+    "J=${UNSET_THING}end",
+  ].join("\r\n");
+  const values = Object.fromEntries(parseEnvFile(text, { lookup: (name) => ({ P: "shell" })[name] })
+    .map(({ key, value }) => [key, value]));
+  assert.deepEqual(values, {
+    A: "alpha", B: "beta", C: "dq alpha \n x # kept", D: "sq ${A} $A",
+    E: "alpha-alpha-def-d2-alt-$lit", F: "x#kept", P: "file", G: "shell", H: "multi\nline", I: "", J: "end",
+  });
+});
+
+test("env file errors name the line but never the value", () => {
+  for (const [text, pattern] of [
+    ["SECRET_PASSWORD='hunter2", /x\.env:1: unterminated single quote for SECRET_PASSWORD/],
+    ["OK=1\n1BAD=hunter2", /x\.env:2: invalid variable name/],
+    ["just some words", /x\.env:1: expected KEY=VALUE/],
+    ['K="hunter2" trailing', /unexpected text after closing quote/],
+    ["K=${NEEDED:?set it}", /required variable NEEDED is not set/],
+  ]) {
+    assert.throws(() => parseEnvFile(text, { source: "x.env" }), (error) => {
+      assert.match(error.message, pattern);
+      assert.doesNotMatch(error.message, /hunter2/);
+      return true;
+    });
+  }
+});
+
+test("config precedence is flags, then shell environment, then later files, then earlier files", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "workbench-config-test-"));
+  try {
+    const base = join(directory, "base.env");
+    const local = join(directory, "local.env");
+    await writeFile(base, [
+      "WORKBENCH_LISTEN=127.0.0.1:8080", "WORKBENCH_AUTH=password", "WORKBENCH_DATA=/data/data.db",
+      "POSTGRES_USER=workbench", "POSTGRES_PASSWORD=from-file", "WORKBENCH_DEV_PORT=5190",
+    ].join("\n"));
+    await writeFile(local, [
+      "WORKBENCH_DATA=.workbench/dev/data.db",
+      "WORKBENCH_DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/dev",
+    ].join("\n"));
+    const shell = { POSTGRES_PASSWORD: "from-shell", WORKBENCH_AUTH: "local" };
+    const { configFiles, rest } = splitConfigArgs(["--config", base, `--config=${local}`, "-listen", "127.0.0.1:19091", "--", "-config", "x"]);
+    assert.deepEqual(configFiles, [base, local]);
+    assert.deepEqual(rest, ["-listen", "127.0.0.1:19091", "--", "-config", "x"]);
+    const { env, report } = loadConfigEnv(configFiles, shell);
+    assert.equal(env.WORKBENCH_AUTH, "local");
+    assert.equal(env.POSTGRES_PASSWORD, "from-shell");
+    assert.equal(env.WORKBENCH_DATA, ".workbench/dev/data.db");
+    assert.equal(env.WORKBENCH_DATABASE_URL, "postgresql://workbench:from-shell@127.0.0.1:5432/dev");
+    assert.equal(report.find((entry) => entry.key === "WORKBENCH_AUTH").source, "shell");
+    const plan = makeDevPlan(parseDevArgs(rest.slice(0, 2), env), env, "/repo");
+    assert.equal(plan.listen, "127.0.0.1:19091");
+    assert.equal(plan.webUrl, "http://127.0.0.1:5190");
+    assert.equal(maskValue("WORKBENCH_DATABASE_URL", env.WORKBENCH_DATABASE_URL), "(set, hidden)");
+    assert.throws(() => loadConfigEnv([join(directory, "missing.env")], {}), /cannot read config file .*missing\.env: file not found/);
+    assert.throws(() => splitConfigArgs(["--config"]), /requires a file path/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("WORKBENCH_HTTP_PORT replaces the listen port unless -listen is explicit", () => {
+  const env = { WORKBENCH_LISTEN: "127.0.0.1:8080", WORKBENCH_HTTP_PORT: "9191" };
+  assert.equal(makeDevPlan(parseDevArgs([]), env, "/repo").backendUrl, "http://127.0.0.1:9191");
+  assert.equal(makeDevPlan(parseDevArgs(["-listen", "127.0.0.1:9092"]), env, "/repo").backendUrl, "http://127.0.0.1:9092");
+  assert.throws(() => makeDevPlan(parseDevArgs([]), { WORKBENCH_HTTP_PORT: "x" }, "/repo"), /WORKBENCH_HTTP_PORT/);
 });
 
 function fixture(command, args) {

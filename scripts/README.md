@@ -21,7 +21,23 @@
 | `--web-port 5173` | Vite 前端端口；占用时失败，不自动改端口 |
 | `--web-host 127.0.0.1` | Vite 监听地址 |
 | `--dev-url https://w.vm2.de5.net` | 浏览器访问的外部来源，用于热更新连接；默认采用已有 `-public-url` |
+| `--config .env.dev` | 加载环境变量文件，可重复，后者覆盖前者；见下文 |
+| `--print-config` | 输出解析后的地址、数据路径和文件变量（隐藏密钥）后退出，不编译、不启动 |
 | `--help` | 查看开发脚本用法 |
+
+### 配置文件
+
+`--config FILE`（也可写 `-config FILE`、`--config=FILE`）读取与 Compose `.env` 相同格式的文件，变量注入后端和 Vite 进程。优先级为命令行参数 → Shell 已有环境变量 → 配置文件 → 默认值；Shell 中已定义的变量（含空值）不被文件覆盖，与 Compose 处理 `.env` 插值时一致。多个 `--config` 按顺序加载，后者覆盖前者。
+
+```bash
+cp scripts/dev.env.example .env.dev && chmod 600 .env.dev
+./scripts/dev.sh --config .env.dev --print-config
+./scripts/dev.sh --config .env.dev -public-url https://w.vm2.de5.net
+```
+
+支持的语法：`KEY=VALUE`、`#` 整行注释和值前带空白的行尾注释、空行、`export ` 前缀、单引号（原样，不插值）、双引号（支持 `\n`、`\t`、`\"` 转义和跨行）、单独的 `KEY`（沿用 Shell 中的值）。未加引号和双引号的值支持 `$VAR`、`${VAR}`、`${VAR:-默认}`、`${VAR-默认}`、`${VAR:+替换}`、`${VAR:?提示}`，`$$` 表示字面 `$`；引用先查 Shell 环境，再查已加载的文件变量。无法读取的文件或无效行会报出文件和行号并以退出码 2 结束，错误与日志只显示变量名；`--print-config` 对名称含 `PASSWORD`、`SECRET`、`TOKEN`、`API_KEY`、`DATABASE_URL` 等的变量只显示是否设置。
+
+同一个文件也可用于 `docker compose --env-file`，但 `.env.example` 面向容器：数据库主机为 Compose 服务名 `postgres`，`WORKBENCH_DATA=/data/data.db` 是容器路径，且内置 PostgreSQL 不发布宿主机端口。原生开发时在开发文件中把连接串主机改为 `127.0.0.1`（或实际地址）、数据路径改为本地目录，可参考 [dev.env.example](dev.env.example)；也可叠加 `--config .env --config .env.dev`，由后者覆盖这些差异项。根目录 `.env`、`.env.*` 和 `.workbench/` 已被 Git 忽略。
 
 `-version` 和 `-healthcheck` 会在编译后仅执行对应后端命令，保留退出码，不启动 Vite；健康检查沿用原始后端参数和 Host 配置。
 

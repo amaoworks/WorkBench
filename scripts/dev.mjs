@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isIP } from "node:net";
+import { loadConfigEnv, maskValue, splitConfigArgs } from "./env-file.mjs";
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const defaultListen = "127.0.0.1:8080";
@@ -22,6 +23,9 @@ Dev options:
   --web-port PORT   Vite port (default: ${defaultWebPort}; fixed, no port drift)
   --web-host HOST   Vite bind host (default: ${defaultWebHost})
   --dev-url URL     Browser-facing origin used for Vite HMR through a proxy
+  --config FILE     Load a Docker Compose style env file (repeatable; later files win).
+                    Precedence: command-line flags > shell environment > config file > defaults
+  --print-config    Print the resolved settings (secrets hidden) and exit without starting
   -h, --help        Show this help without starting services
 
 All other options are passed to ./workbench, including -listen, -auth,
@@ -58,6 +62,7 @@ export function parseDevArgs(argv, env = process.env) {
     devUrl: "",
     goArgs: [],
     help: false,
+    printConfig: false,
   };
   if (!options.webHost.trim()) throw new Error("--web-host cannot be empty");
 
@@ -69,6 +74,10 @@ export function parseDevArgs(argv, env = process.env) {
     }
     if (["-h", "--help", "-help"].includes(arg)) {
       options.help = true;
+      continue;
+    }
+    if (arg === "--print-config" || arg === "-print-config") {
+      options.printConfig = true;
       continue;
     }
 
@@ -99,7 +108,7 @@ function parseGoFlags(args) {
   const allowedHosts = [];
   const allowedIndexes = [];
   const valueFlags = new Set([
-    "listen", "data", "futu-config-dir", "futu-runtime-dir", "futu-opend-binary",
+    "listen", "data", "db-driver", "futu-config-dir", "futu-runtime-dir", "futu-opend-binary",
     "futu-opend-address", "auth", "public-url", "log-level", "allowed-host",
   ]);
   const boolFlags = new Set(["futu-allow-non-local", "version", "healthcheck"]);
@@ -192,7 +201,17 @@ function unique(values) {
 export function makeDevPlan(options, env = process.env, root = repoRoot) {
   const flags = parseGoFlags(options.goArgs);
   const value = (name, key, fallback) => flags.values.has(name) ? flags.values.get(name) : (env[key] || fallback);
-  const listen = value("listen", "WORKBENCH_LISTEN", defaultListen);
+  let listen = value("listen", "WORKBENCH_LISTEN", defaultListen);
+  if (!flags.values.has("listen") && env.WORKBENCH_HTTP_PORT) {
+    // Mirror the Go binary: WORKBENCH_HTTP_PORT replaces the port of WORKBENCH_LISTEN.
+    const port = env.WORKBENCH_HTTP_PORT;
+    const parsed = splitListenAddress(listen);
+    if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
+      throw new Error("WORKBENCH_HTTP_PORT must be between 1 and 65535");
+    }
+    if (parsed) listen = formatHostPort(parsed.host, Number(port));
+  }
+  const dbDriver = value("db-driver", "WORKBENCH_DB_DRIVER", "sqlite");
   const auth = value("auth", "WORKBENCH_AUTH", "local");
   const dataPath = value("data", "WORKBENCH_DATA", join(homedir(), ".workbench", "data.db"));
   const publicUrlRaw = value("public-url", "WORKBENCH_PUBLIC_URL", "");
@@ -282,6 +301,7 @@ export function makeDevPlan(options, env = process.env, root = repoRoot) {
     env: childEnv,
     listen,
     auth,
+    dbDriver,
     dataPath,
     publicUrl,
     backendUrl,
@@ -526,10 +546,20 @@ export async function supervise({ build, services, graceMs = shutdownGraceMs, lo
   }
 }
 
-async function main(argv = process.argv.slice(2), env = process.env) {
+async function main(argv = process.argv.slice(2), shellEnv = process.env) {
   let options;
+  let env = shellEnv;
+  let configFiles = [];
+  let configReport = [];
   try {
-    options = parseDevArgs(argv, env);
+    const split = splitConfigArgs(argv);
+    configFiles = split.configFiles;
+    if (configFiles.length > 0) {
+      const loaded = loadConfigEnv(configFiles, shellEnv);
+      env = loaded.env;
+      configReport = loaded.report;
+    }
+    options = parseDevArgs(split.rest, env);
   } catch (error) {
     console.error(`[dev] ${error.message}`);
     console.error("[dev] Run ./scripts/dev.sh --help for usage.");
@@ -546,6 +576,21 @@ async function main(argv = process.argv.slice(2), env = process.env) {
   } catch (error) {
     console.error(`[dev] ${error.message}`);
     return 2;
+  }
+  if (configFiles.length > 0) {
+    const shellWins = configReport.filter((entry) => entry.source === "shell").map((entry) => entry.key);
+    console.log(`[dev] Config: ${configFiles.map((file) => resolve(file)).join(", ")} (${configReport.length} variables${shellWins.length ? `; shell overrides ${shellWins.join(", ")}` : ""})`);
+  }
+  if (options.printConfig) {
+    console.log(`[dev] Go API: ${plan.backendUrl} (listen ${plan.listen}, auth ${plan.auth}, db ${plan.dbDriver})`);
+    console.log(`[dev] Data: ${plan.dataPath}`);
+    console.log(`[dev] Vite: ${plan.webUrl}`);
+    if (plan.publicUrl) console.log(`[dev] Public URL: ${plan.publicUrl}`);
+    if (plan.options.goArgs.length) console.log(`[dev] Backend flags (override config): ${plan.options.goArgs.join(" ")}`);
+    for (const entry of configReport) {
+      console.log(`[dev]   ${entry.key}=${maskValue(entry.key, entry.value)}  (${entry.source === "shell" ? "shell" : "file"})`);
+    }
+    return 0;
   }
   const webDir = join(repoRoot, "web");
   const viteEntry = join(webDir, "node_modules", "vite", "bin", "vite.js");
@@ -572,7 +617,7 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     } else {
       console.log("[dev] Compiling Go backend with -tags dev...");
       console.log(`[dev] Go API: ${plan.backendUrl} (auth: ${plan.auth})`);
-      console.log(`[dev] Data: ${plan.dataPath}`);
+      console.log(`[dev] Data: ${plan.dataPath} (db: ${plan.dbDriver})`);
       console.log(`[dev] Vite: ${plan.webUrl}`);
       if (options.devUrl || plan.publicUrl) console.log(`[dev] Browser origin: ${options.devUrl || plan.publicUrl}`);
       for (const host of plan.externalHosts) {

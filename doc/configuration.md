@@ -25,7 +25,7 @@ Go 版本以 [go.mod](../go.mod) 为准，当前为 1.27.1。前端使用 Node.j
 
 ## 启动参数和环境变量
 
-优先级为命令行参数 → 非空环境变量 → 默认值。程序不自动读取 `.env` 或配置文件；Compose 读取 `.env` 后传入容器，systemd 通过 `EnvironmentFile` 注入环境。
+优先级为命令行参数 → 非空环境变量 → 默认值。程序不自动读取 `.env` 或配置文件；Compose 读取 `.env` 后传入容器，systemd 通过 `EnvironmentFile` 注入环境，开发脚本通过 `./scripts/dev.sh --config FILE` 加载同格式文件（见[开发脚本 - 配置文件](../scripts/README.md#配置文件)）。直接运行二进制时可用 `set -a; . ./workbench.env; set +a` 导入简单的 `KEY=VALUE` 文件。
 
 | 参数 | 环境变量 | 默认值 / 行为 |
 |---|---|---|
@@ -99,7 +99,7 @@ export WORKBENCH_DATA='./data/data.db'
 ./scripts/dev.sh -auth password -listen 127.0.0.1:9090 -allowed-host w.vm2.de5.net
 ```
 
-脚本支持现有程序参数和环境变量，自动配置 Vite 的后端代理及开发 Host。`--web-port` 设置前端端口（默认 5173），`--web-host` 设置前端监听地址（默认 127.0.0.1），`--dev-url` 指定经反代访问的外部来源。端口占用时报错退出，不自动更换端口。React/CSS 保存后热更新；开发构建从磁盘读取投资终端 HTML/JS，修改后自动刷新。Go 修改需要退出并重新执行脚本，脚本每次启动会重新编译后端。
+脚本支持现有程序参数和环境变量，自动配置 Vite 的后端代理及开发 Host。`--web-port` 设置前端端口（默认 5173），`--web-host` 设置前端监听地址（默认 127.0.0.1），`--dev-url` 指定经反代访问的外部来源，`--config` 加载 Compose `.env` 格式的环境变量文件（命令行 → Shell 环境 → 文件 → 默认值）。端口占用时报错退出，不自动更换端口。React/CSS 保存后热更新；开发构建从磁盘读取投资终端 HTML/JS，修改后自动刷新。Go 修改需要退出并重新执行脚本，脚本每次启动会重新编译后端。
 
 域名访问时反代上游需改为 Vite 前端端口，并保留 Host、支持 WebSocket 和 SSE。HTTPS 入口同时配置 `-public-url` 以正确设置 Cookie 和来源校验；仅传 `--dev-url` 不会改变后端的安全配置。完整示例、参数与退出行为见[开发脚本](../scripts/README.md#开发模式)。
 
