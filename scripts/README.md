@@ -39,6 +39,29 @@ cp scripts/dev.env.example .env.dev && chmod 600 .env.dev
 
 同一个文件也可用于 `docker compose --env-file`，但 `.env.example` 面向容器：数据库主机为 Compose 服务名 `postgres`，`WORKBENCH_DATA=/data/data.db` 是容器路径，且内置 PostgreSQL 不发布宿主机端口。原生开发时在开发文件中把连接串主机改为 `127.0.0.1`（或实际地址）、数据路径改为本地目录，可参考 [dev.env.example](dev.env.example)；也可叠加 `--config .env --config .env.dev`，由后者覆盖这些差异项。根目录 `.env`、`.env.*` 和 `.workbench/` 已被 Git 忽略。
 
+### PostgreSQL 开发库
+
+`./scripts/db-init.sh` 一条命令在 Docker 中创建开发用 PostgreSQL，并生成可直接用于 `--config` 的环境变量文件：
+
+```bash
+./scripts/db-init.sh
+./scripts/dev.sh --config .env.dev-pg --print-config
+./scripts/dev.sh --config .env.dev-pg -auth password -listen 127.0.0.1:9091 \
+  -allowed-host w.vm2.de5.net -public-url https://w.vm2.de5.net --web-port 9090
+```
+
+默认创建容器 `workbench-pg-dev`（镜像与 `compose.yaml` 相同，为 `postgres:17-alpine`，`--restart unless-stopped`）、命名卷 `workbench-pg-dev-data`，端口只发布到宿主机 `127.0.0.1:5432`，数据库和用户均为 `workbench`。首次创建时生成 32 位字母数字随机密码，不输出到终端；脚本等待 `pg_isready` 通过后写入仓库根目录的 `.env.dev-pg`（权限 600，已被 `.env.*` 忽略），包含 `WORKBENCH_DB_DRIVER=postgres`、指向 `127.0.0.1` 的 `WORKBENCH_DATABASE_URL`，以及 `WORKBENCH_DATA=.workbench/dev-pg/data.db`，使 OpenD 和图表缓存与 SQLite 开发工作空间分开。
+
+| 参数 | 用途 |
+|---|---|
+| `--name`、`--volume`、`--port`、`--db`、`--user`、`--image` | 覆盖容器、卷、宿主机端口、库名、用户和镜像；也可用 `WORKBENCH_PG_*` 环境变量 |
+| `--env-file PATH`、`--data PATH` | 环境变量文件位置和本地运行文件路径 |
+| `--timeout 60` | 等待数据库就绪的秒数 |
+| `--force` | 改写已有环境变量文件；容器已存在时沿用文件中的密码 |
+| `--destroy --yes` | 删除本脚本创建的容器、卷和生成的环境变量文件；缺少 `--yes` 时只列出将删除的内容 |
+
+重复执行是安全的：容器已存在时直接复用（已停止则启动），沿用环境变量文件中的密码，不改写文件。容器或卷存在而环境变量文件缺失时，脚本报错并提示用 `--env-file` 指定原文件或 `--destroy --yes` 重建；端口被占用时报错，由 `--port` 改用其他端口。脚本只操作带 `io.workbench.dev-db` 标签的容器和卷。新数据库是空的工作空间，首次以密码模式启动时初始密码出现在日志中，原有 SQLite 数据不会迁移。
+
 `-version` 和 `-healthcheck` 会在编译后仅执行对应后端命令，保留退出码，不启动 Vite；健康检查沿用原始后端参数和 Host 配置。
 
 React 和 CSS 使用 Vite 热更新。投资终端 HTML/JS 通过开发构建从磁盘读取，文件修改触发页面刷新。TradingView 上游图表库继续使用现有代理和缓存。修改 Go 后按 Ctrl+C，再执行同一条开发命令；脚本不监听 Go 文件，也不执行生产前端构建。

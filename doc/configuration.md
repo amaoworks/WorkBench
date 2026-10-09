@@ -63,7 +63,7 @@ export WORKBENCH_DATA='./data/data.db'
 ./workbench
 ```
 
-应用不会把现有 SQLite 数据自动迁移到 PostgreSQL。PostgreSQL 部署仍需持久化 `WORKBENCH_DATA` 的父目录，其中保存图表缓存、OpenD 运行内容等本地文件。
+开发时可执行 `./scripts/db-init.sh` 在 Docker 中创建只监听 `127.0.0.1` 的 PostgreSQL，并生成供 `./scripts/dev.sh --config .env.dev-pg` 使用的环境变量文件，见[开发脚本 - PostgreSQL 开发库](../scripts/README.md#postgresql-开发库)。应用不会把现有 SQLite 数据自动迁移到 PostgreSQL。PostgreSQL 部署仍需持久化 `WORKBENCH_DATA` 的父目录，其中保存图表缓存、OpenD 运行内容等本地文件。
 
 `local` 仅接受 loopback 监听，适用于本机试用。配置 `public-url` 必须使用 `password`，且外部地址必须是 HTTPS origin。password 模式默认拒绝非 loopback 的纯 HTTP 监听；仅在受控网络中可显式设置 `WORKBENCH_ALLOW_INSECURE_HTTP=true`。二进制服务器部署通常仍监听 loopback，容器内监听 `0.0.0.0:8080`。Compose 默认允许容器内 HTTP，同时只向宿主机 `127.0.0.1` 发布端口。
 
