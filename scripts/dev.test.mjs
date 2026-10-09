@@ -182,6 +182,84 @@ test("dev uses its own data path unless -data or WORKBENCH_DATA is set", async (
   }
 });
 
+test("a config file alone configures backend, Vite proxy, hosts and dev options", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "workbench-config-test-"));
+  try {
+    const file = join(directory, "dev.env");
+    await writeFile(file, [
+      "WORKBENCH_AUTH=password",
+      "WORKBENCH_LISTEN=127.0.0.1:8080",
+      "WORKBENCH_HTTP_PORT=9091",
+      "WORKBENCH_PUBLIC_URL=https://w.vm2.de5.net",
+      "WORKBENCH_ALLOWED_HOSTS=w.vm2.de5.net,other.example.test",
+      "WORKBENCH_DEV_WEB_PORT=9090",
+      "WORKBENCH_DEV_WEB_HOST=127.0.0.1",
+      "WORKBENCH_DEV_URL=https://hmr.example.test",
+    ].join("\n"));
+    const { env } = loadConfigEnv([file], {});
+    const options = parseDevArgs([], env);
+    const plan = makeDevPlan(options, env, "/repo");
+    assert.equal(plan.auth, "password");
+    assert.equal(plan.listen, "127.0.0.1:9091");
+    assert.equal(plan.listenSource, "WORKBENCH_LISTEN + WORKBENCH_HTTP_PORT");
+    assert.equal(plan.backendUrl, "http://127.0.0.1:9091");
+    assert.equal(plan.env.WORKBENCH_DEV_BACKEND_URL, "http://127.0.0.1:9091");
+    assert.equal(plan.webUrl, "http://127.0.0.1:9090");
+    assert.equal(plan.env.WORKBENCH_DEV_PORT, "9090");
+    assert.equal(plan.env.WORKBENCH_DEV_PUBLIC_URL, "https://hmr.example.test");
+    assert.deepEqual(plan.options.sources, {
+      webHost: "WORKBENCH_DEV_WEB_HOST", webPort: "WORKBENCH_DEV_WEB_PORT", devUrl: "WORKBENCH_DEV_URL",
+    });
+    assert.deepEqual(plan.env.WORKBENCH_DEV_HOSTS.split(","), ["w.vm2.de5.net", "other.example.test", "hmr.example.test"]);
+    for (const host of ["w.vm2.de5.net", "other.example.test", "localhost:9090", "127.0.0.1:9091"]) {
+      assert.ok(plan.env.WORKBENCH_ALLOWED_HOSTS.split(",").includes(host), host);
+    }
+    assert.deepEqual(plan.options.goArgs, []);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("public URL host reaches Vite and backend allowed hosts without WORKBENCH_ALLOWED_HOSTS", () => {
+  const env = { WORKBENCH_PUBLIC_URL: "https://w.vm2.de5.net", WORKBENCH_LISTEN: "127.0.0.1:9091" };
+  const plan = makeDevPlan(parseDevArgs([], env), env, "/repo");
+  assert.equal(plan.env.WORKBENCH_DEV_HOSTS, "w.vm2.de5.net");
+  assert.ok(plan.env.WORKBENCH_ALLOWED_HOSTS.split(",").includes("w.vm2.de5.net"));
+  assert.equal(plan.env.WORKBENCH_DEV_PUBLIC_URL, "https://w.vm2.de5.net");
+});
+
+test("dev option precedence is CLI, then WORKBENCH_DEV_WEB_*, then legacy names, then defaults", () => {
+  assert.equal(parseDevArgs([], {}).webPort, 5173);
+  assert.deepEqual(parseDevArgs([], {}).sources, { webHost: "default", webPort: "default", devUrl: "" });
+  const legacy = parseDevArgs([], { WORKBENCH_DEV_PORT: "5180", WORKBENCH_DEV_HOST: "0.0.0.0" });
+  assert.equal(legacy.webPort, 5180);
+  assert.equal(legacy.webHost, "0.0.0.0");
+  assert.equal(legacy.sources.webPort, "WORKBENCH_DEV_PORT");
+  const env = { WORKBENCH_DEV_WEB_PORT: "5190", WORKBENCH_DEV_PORT: "5180", WORKBENCH_DEV_URL: "https://env.example.test" };
+  assert.equal(parseDevArgs([], env).webPort, 5190);
+  const cli = parseDevArgs(["--web-port", "19090", "--dev-url=https://cli.example.test"], env);
+  assert.equal(cli.webPort, 19090);
+  assert.equal(cli.sources.webPort, "--web-port");
+  assert.equal(cli.devUrl, "https://cli.example.test");
+  assert.throws(() => parseDevArgs([], { WORKBENCH_DEV_WEB_PORT: "abc" }), /WORKBENCH_DEV_WEB_PORT must be a port/);
+  assert.throws(() => parseDevArgs([], { WORKBENCH_DEV_URL: "https://x.test/path" }), /WORKBENCH_DEV_URL must be/);
+});
+
+test("shell environment overrides the config file and CLI flags override both", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "workbench-config-test-"));
+  try {
+    const file = join(directory, "dev.env");
+    await writeFile(file, "WORKBENCH_LISTEN=127.0.0.1:9091\nWORKBENCH_DEV_WEB_PORT=9090\nWORKBENCH_AUTH=password\n");
+    const { env } = loadConfigEnv([file], { WORKBENCH_LISTEN: "127.0.0.1:19091", WORKBENCH_DEV_WEB_PORT: "19090" });
+    const plan = makeDevPlan(parseDevArgs(["-auth", "local"], env), env, "/repo");
+    assert.equal(plan.backendUrl, "http://127.0.0.1:19091");
+    assert.equal(plan.webUrl, "http://127.0.0.1:19090");
+    assert.equal(plan.auth, "local");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 function fixture(command, args) {
   return { command: process.execPath, args: ["-e", command, ...(args || [])], env: process.env };
 }

@@ -21,9 +21,9 @@ Start a freshly compiled Go backend and the Vite development server.
 Go source files are not watched; run this script again after Go changes.
 
 Dev options:
-  --web-port PORT   Vite port (default: ${defaultWebPort}; fixed, no port drift)
-  --web-host HOST   Vite bind host (default: ${defaultWebHost})
-  --dev-url URL     Browser-facing origin used for Vite HMR through a proxy
+  --web-port PORT   Vite port (default: ${defaultWebPort}; fixed, no port drift; env WORKBENCH_DEV_WEB_PORT)
+  --web-host HOST   Vite bind host (default: ${defaultWebHost}; env WORKBENCH_DEV_WEB_HOST)
+  --dev-url URL     Browser-facing origin used for Vite HMR through a proxy (env WORKBENCH_DEV_URL)
   --config FILE     Load a Docker Compose style env file (repeatable; later files win).
                     Precedence: command-line flags > shell environment > config file > defaults
   --print-config    Print the resolved settings (secrets hidden) and exit without starting
@@ -31,6 +31,8 @@ Dev options:
 
 All other options are passed to ./workbench, including -listen, -auth,
 -allowed-host, -public-url and -data. Both -flag value and --flag=value work.
+Every option can come from the environment or a --config file instead, for example
+WORKBENCH_LISTEN, WORKBENCH_AUTH, WORKBENCH_PUBLIC_URL, WORKBENCH_ALLOWED_HOSTS.
 `;
 
 function portNumber(value, name) {
@@ -56,16 +58,33 @@ function browserOrigin(value, optionName) {
   return url.origin;
 }
 
+// Environment equivalents of the dev options. WORKBENCH_DEV_PORT/HOST are the
+// older names (also the values handed to Vite) and remain accepted as fallbacks.
+function envOption(env, names) {
+  for (const name of names) {
+    if (env[name]) return { value: env[name], source: name };
+  }
+  return undefined;
+}
+
 export function parseDevArgs(argv, env = process.env) {
+  const envHost = envOption(env, ["WORKBENCH_DEV_WEB_HOST", "WORKBENCH_DEV_HOST"]);
+  const envPort = envOption(env, ["WORKBENCH_DEV_WEB_PORT", "WORKBENCH_DEV_PORT"]);
+  const envDevUrl = envOption(env, ["WORKBENCH_DEV_URL"]);
   const options = {
-    webHost: env.WORKBENCH_DEV_HOST || defaultWebHost,
-    webPort: portNumber(env.WORKBENCH_DEV_PORT || defaultWebPort, "--web-port"),
-    devUrl: "",
+    webHost: envHost?.value ?? defaultWebHost,
+    webPort: envPort ? portNumber(envPort.value, envPort.source) : defaultWebPort,
+    devUrl: envDevUrl ? browserOrigin(envDevUrl.value, envDevUrl.source) : "",
+    sources: {
+      webHost: envHost?.source ?? "default",
+      webPort: envPort?.source ?? "default",
+      devUrl: envDevUrl?.source ?? "",
+    },
     goArgs: [],
     help: false,
     printConfig: false,
   };
-  if (!options.webHost.trim()) throw new Error("--web-host cannot be empty");
+  if (!options.webHost.trim()) throw new Error(`${options.sources.webHost} cannot be empty`);
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -94,12 +113,19 @@ export function parseDevArgs(argv, env = process.env) {
       value = argv[i + 1];
       i += 1;
     }
-    if (match[1] === "web-port") options.webPort = portNumber(value, "--web-port");
+    if (match[1] === "web-port") {
+      options.webPort = portNumber(value, "--web-port");
+      options.sources.webPort = "--web-port";
+    }
     if (match[1] === "web-host") {
       if (!value.trim()) throw new Error("--web-host cannot be empty");
       options.webHost = value;
+      options.sources.webHost = "--web-host";
     }
-    if (match[1] === "dev-url") options.devUrl = browserOrigin(value, "--dev-url");
+    if (match[1] === "dev-url") {
+      options.devUrl = browserOrigin(value, "--dev-url");
+      options.sources.devUrl = "--dev-url";
+    }
   }
   return options;
 }
@@ -203,7 +229,9 @@ export function makeDevPlan(options, env = process.env, root = repoRoot) {
   const flags = parseGoFlags(options.goArgs);
   const value = (name, key, fallback) => flags.values.has(name) ? flags.values.get(name) : (env[key] || fallback);
   let listen = value("listen", "WORKBENCH_LISTEN", defaultListen);
+  let listenSource = flags.values.has("listen") ? "-listen" : env.WORKBENCH_LISTEN ? "WORKBENCH_LISTEN" : "default";
   if (!flags.values.has("listen") && env.WORKBENCH_HTTP_PORT) {
+    listenSource += " + WORKBENCH_HTTP_PORT";
     // Mirror the Go binary: WORKBENCH_HTTP_PORT replaces the port of WORKBENCH_LISTEN.
     const port = env.WORKBENCH_HTTP_PORT;
     const parsed = splitListenAddress(listen);
@@ -303,6 +331,7 @@ export function makeDevPlan(options, env = process.env, root = repoRoot) {
     options: { ...options, goArgs },
     env: childEnv,
     listen,
+    listenSource,
     auth,
     dbDriver,
     dataPath,
@@ -586,10 +615,13 @@ async function main(argv = process.argv.slice(2), shellEnv = process.env) {
     console.log(`[dev] Config: ${configFiles.map((file) => resolve(file)).join(", ")} (${configReport.length} variables${shellWins.length ? `; shell overrides ${shellWins.join(", ")}` : ""})`);
   }
   if (options.printConfig) {
-    console.log(`[dev] Go API: ${plan.backendUrl} (listen ${plan.listen}, auth ${plan.auth}, db ${plan.dbDriver})`);
+    const sources = plan.options.sources;
+    console.log(`[dev] Go API: ${plan.backendUrl} (listen ${plan.listen} from ${plan.listenSource}, auth ${plan.auth}, db ${plan.dbDriver})`);
     console.log(`[dev] Data: ${plan.dataPath} (from ${plan.dataSource})`);
-    console.log(`[dev] Vite: ${plan.webUrl}`);
+    console.log(`[dev] Vite: ${plan.webUrl} (host from ${sources.webHost}, port from ${sources.webPort})`);
     if (plan.publicUrl) console.log(`[dev] Public URL: ${plan.publicUrl}`);
+    if (plan.options.devUrl) console.log(`[dev] Dev URL: ${plan.options.devUrl} (from ${sources.devUrl})`);
+    console.log(`[dev] Allowed hosts: ${plan.env.WORKBENCH_ALLOWED_HOSTS || "(backend default)"}`);
     if (plan.options.goArgs.length) console.log(`[dev] Backend flags: ${plan.options.goArgs.join(" ")}`);
     for (const entry of configReport) {
       console.log(`[dev]   ${entry.key}=${maskValue(entry.key, entry.value)}  (${entry.source === "shell" ? "shell" : "file"})`);

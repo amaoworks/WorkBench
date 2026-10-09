@@ -32,8 +32,18 @@
 ```bash
 cp scripts/dev.env.example .env.dev && chmod 600 .env.dev
 ./scripts/dev.sh --config .env.dev --print-config
-./scripts/dev.sh --config .env.dev -public-url https://w.vm2.de5.net
+./scripts/dev.sh --config .env.dev
 ```
+
+全部参数都可写入配置文件，只用 `./scripts/dev.sh --config FILE` 启动。后端参数使用程序已有的环境变量（`WORKBENCH_LISTEN`、`WORKBENCH_HTTP_PORT`、`WORKBENCH_AUTH`、`WORKBENCH_PUBLIC_URL`、逗号分隔的 `WORKBENCH_ALLOWED_HOSTS`、`WORKBENCH_LOG_LEVEL`、`WORKBENCH_DATA`、`WORKBENCH_DB_DRIVER`、`WORKBENCH_DATABASE_URL` 等），Vite 代理目标随最终监听地址变化，Vite 允许的 Host 包含允许列表和外部地址的主机。开发参数对应：
+
+| 开发参数 | 环境变量 |
+|---|---|
+| `--web-port` | `WORKBENCH_DEV_WEB_PORT`（兼容旧名 `WORKBENCH_DEV_PORT`） |
+| `--web-host` | `WORKBENCH_DEV_WEB_HOST`（兼容旧名 `WORKBENCH_DEV_HOST`） |
+| `--dev-url` | `WORKBENCH_DEV_URL` |
+
+`--print-config` 显示监听地址、Vite 端口与监听地址各自的来源，以及最终 Host 允许列表。临时改端口时可在命令行或 Shell 中覆盖，例如 `WORKBENCH_LISTEN=127.0.0.1:19091 ./scripts/dev.sh --config .env.dev --web-port 19090`。
 
 支持的语法：`KEY=VALUE`、`#` 整行注释和值前带空白的行尾注释、空行、`export ` 前缀、单引号（原样，不插值）、双引号（支持 `\n`、`\t`、`\"` 转义和跨行）、单独的 `KEY`（沿用 Shell 中的值）。未加引号和双引号的值支持 `$VAR`、`${VAR}`、`${VAR:-默认}`、`${VAR-默认}`、`${VAR:+替换}`、`${VAR:?提示}`，`$$` 表示字面 `$`；引用先查 Shell 环境，再查已加载的文件变量。无法读取的文件或无效行会报出文件和行号并以退出码 2 结束，错误与日志只显示变量名；`--print-config` 对名称含 `PASSWORD`、`SECRET`、`TOKEN`、`API_KEY`、`DATABASE_URL` 等的变量只显示是否设置。
 
@@ -41,26 +51,35 @@ cp scripts/dev.env.example .env.dev && chmod 600 .env.dev
 
 ### PostgreSQL 开发库
 
-`./scripts/db-init.sh` 一条命令在 Docker 中创建开发用 PostgreSQL，并生成可直接用于 `--config` 的环境变量文件：
+`./scripts/db-manage.sh` 在 Docker 中管理开发用 PostgreSQL，并生成可直接启动开发环境的配置文件：
 
 ```bash
-./scripts/db-init.sh
-./scripts/dev.sh --config .env.dev-pg --print-config
-./scripts/dev.sh --config .env.dev-pg -auth password -listen 127.0.0.1:9091 \
-  -allowed-host w.vm2.de5.net -public-url https://w.vm2.de5.net --web-port 9090
+./scripts/db-manage.sh init --public-url https://w.vm2.de5.net
+./scripts/dev.sh --config .env.dev-pg
 ```
 
-默认创建容器 `workbench-pg-dev`（镜像与 `compose.yaml` 相同，为 `postgres:17-alpine`，`--restart unless-stopped`）、命名卷 `workbench-pg-dev-data`，端口只发布到宿主机 `127.0.0.1:5432`，数据库和用户均为 `workbench`。首次创建时生成 32 位字母数字随机密码，不输出到终端；脚本等待 `pg_isready` 通过后写入仓库根目录的 `.env.dev-pg`（权限 600，已被 `.env.*` 忽略），包含 `WORKBENCH_DB_DRIVER=postgres`、指向 `127.0.0.1` 的 `WORKBENCH_DATABASE_URL`，以及 `WORKBENCH_DATA=.workbench/dev-pg/data.db`，使 OpenD 和图表缓存与 SQLite 开发工作空间分开。
+| 命令 | 作用 |
+|---|---|
+| `init` | 创建或复用容器与卷，等待 `pg_isready` 通过，写入配置文件；重复执行安全 |
+| `start` | 启动已有容器并等待就绪；未初始化时提示先执行 `init` |
+| `stop` | 停止容器，数据保留在卷中；已停止或不存在时只给出提示 |
+| `status` | 显示容器状态、端口、卷和配置文件，不显示密码 |
+| `uninit` | 删除容器、卷和生成的配置文件；终端中逐项确认，非交互环境须加 `--yes`，否则只列出待删除内容并失败退出 |
+
+`init` 默认创建容器 `workbench-pg-dev`（镜像与 `compose.yaml` 相同，为 `postgres:17-alpine`，`--restart unless-stopped`）、命名卷 `workbench-pg-dev-data`，端口只发布到宿主机 `127.0.0.1:5432`，数据库和用户均为 `workbench`。首次创建时生成 32 位字母数字随机密码，不输出到终端。配置文件默认为仓库根目录的 `.env.dev-pg`（权限 600，已被 `.env.*` 忽略），包含：
+
+- 数据库：`WORKBENCH_DB_DRIVER=postgres`、指向 `127.0.0.1` 的 `WORKBENCH_DATABASE_URL`，以及 `WORKBENCH_DATA=.workbench/dev-pg/data.db`，使 OpenD 和图表缓存与 SQLite 开发工作空间分开；
+- 开发运行：`WORKBENCH_AUTH=password`、`WORKBENCH_LISTEN=127.0.0.1:9091`、`WORKBENCH_DEV_WEB_PORT=9090`，以及 `WORKBENCH_PUBLIC_URL`、`WORKBENCH_ALLOWED_HOSTS`（未传 `--public-url` 时为注释行）。
 
 | 参数 | 用途 |
 |---|---|
-| `--name`、`--volume`、`--port`、`--db`、`--user`、`--image` | 覆盖容器、卷、宿主机端口、库名、用户和镜像；也可用 `WORKBENCH_PG_*` 环境变量 |
-| `--env-file PATH`、`--data PATH` | 环境变量文件位置和本地运行文件路径 |
-| `--timeout 60` | 等待数据库就绪的秒数 |
-| `--force` | 改写已有环境变量文件；容器已存在时沿用文件中的密码 |
-| `--destroy --yes` | 删除本脚本创建的容器、卷和生成的环境变量文件；缺少 `--yes` 时只列出将删除的内容 |
+| `--name`、`--volume`、`--port`、`--env-file`、`--timeout` | 容器、卷、宿主机端口、配置文件位置、就绪等待秒数；适用于全部命令，也可用 `WORKBENCH_PG_*` 环境变量 |
+| `--db`、`--user`、`--image`、`--data` | `init` 使用的库名、用户、镜像和本地运行文件路径 |
+| `--public-url`、`--allowed-host`、`--listen`、`--web-port`、`--auth` | 写入配置文件的开发运行参数；`--public-url` 的主机同时写入允许列表 |
+| `--force` | `init` 改写已有配置文件，沿用其中的密码 |
+| `--yes` | `uninit` 免确认 |
 
-重复执行是安全的：容器已存在时直接复用（已停止则启动），沿用环境变量文件中的密码，不改写文件。容器或卷存在而环境变量文件缺失时，脚本报错并提示用 `--env-file` 指定原文件或 `--destroy --yes` 重建；端口被占用时报错，由 `--port` 改用其他端口。脚本只操作带 `io.workbench.dev-db` 标签的容器和卷。新数据库是空的工作空间，首次以密码模式启动时初始密码出现在日志中，原有 SQLite 数据不会迁移。
+容器已存在时 `init` 直接复用，沿用配置文件中的密码，不改写文件。容器或卷存在而配置文件缺失时报错，提示用 `--env-file` 指定原文件或 `uninit` 重建；端口被占用时报错，由 `--port` 改用其他端口。脚本只操作带 `io.workbench.dev-db` 标签的容器和卷。新数据库是空的工作空间，首次以密码模式启动时初始密码出现在日志中，原有 SQLite 数据不会迁移。
 
 `-version` 和 `-healthcheck` 会在编译后仅执行对应后端命令，保留退出码，不启动 Vite；健康检查沿用原始后端参数和 Host 配置。
 

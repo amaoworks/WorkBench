@@ -63,7 +63,7 @@ export WORKBENCH_DATA='./data/data.db'
 ./workbench
 ```
 
-开发时可执行 `./scripts/db-init.sh` 在 Docker 中创建只监听 `127.0.0.1` 的 PostgreSQL，并生成供 `./scripts/dev.sh --config .env.dev-pg` 使用的环境变量文件，见[开发脚本 - PostgreSQL 开发库](../scripts/README.md#postgresql-开发库)。应用不会把现有 SQLite 数据自动迁移到 PostgreSQL。PostgreSQL 部署仍需持久化 `WORKBENCH_DATA` 的父目录，其中保存图表缓存、OpenD 运行内容等本地文件。
+开发时可执行 `./scripts/db-manage.sh init` 在 Docker 中创建只监听 `127.0.0.1` 的 PostgreSQL，并生成可直接用于 `./scripts/dev.sh --config .env.dev-pg` 的完整开发配置；`start`、`stop`、`status`、`uninit` 管理该容器，见[开发脚本 - PostgreSQL 开发库](../scripts/README.md#postgresql-开发库)。应用不会把现有 SQLite 数据自动迁移到 PostgreSQL。PostgreSQL 部署仍需持久化 `WORKBENCH_DATA` 的父目录，其中保存图表缓存、OpenD 运行内容等本地文件。
 
 `local` 仅接受 loopback 监听，适用于本机试用。配置 `public-url` 必须使用 `password`，且外部地址必须是 HTTPS origin。password 模式默认拒绝非 loopback 的纯 HTTP 监听；仅在受控网络中可显式设置 `WORKBENCH_ALLOW_INSECURE_HTTP=true`。二进制服务器部署通常仍监听 loopback，容器内监听 `0.0.0.0:8080`。Compose 默认允许容器内 HTTP，同时只向宿主机 `127.0.0.1` 发布端口。
 
@@ -99,7 +99,7 @@ export WORKBENCH_DATA='./data/data.db'
 ./scripts/dev.sh -auth password -listen 127.0.0.1:9090 -allowed-host w.vm2.de5.net
 ```
 
-脚本支持现有程序参数和环境变量，自动配置 Vite 的后端代理及开发 Host。`--web-port` 设置前端端口（默认 5173），`--web-host` 设置前端监听地址（默认 127.0.0.1），`--dev-url` 指定经反代访问的外部来源，`--config` 加载 Compose `.env` 格式的环境变量文件（命令行 → Shell 环境 → 文件 → 默认值）。未设置 `-data`/`WORKBENCH_DATA` 时，开发脚本使用仓库内 `.workbench/dev/data.db`，与原生默认工作空间分开；程序本身的默认值不变。端口占用时报错退出，不自动更换端口。React/CSS 保存后热更新；开发构建从磁盘读取投资终端 HTML/JS，修改后自动刷新。Go 修改需要退出并重新执行脚本，脚本每次启动会重新编译后端。
+脚本支持现有程序参数和环境变量，自动配置 Vite 的后端代理及开发 Host。`--web-port` 设置前端端口（默认 5173），`--web-host` 设置前端监听地址（默认 127.0.0.1），`--dev-url` 指定经反代访问的外部来源，`--config` 加载 Compose `.env` 格式的环境变量文件（命令行 → Shell 环境 → 文件 → 默认值），开发参数对应 `WORKBENCH_DEV_WEB_PORT`、`WORKBENCH_DEV_WEB_HOST`、`WORKBENCH_DEV_URL`，因此可只用 `./scripts/dev.sh --config FILE` 启动。未设置 `-data`/`WORKBENCH_DATA` 时，开发脚本使用仓库内 `.workbench/dev/data.db`，与原生默认工作空间分开；程序本身的默认值不变。端口占用时报错退出，不自动更换端口。React/CSS 保存后热更新；开发构建从磁盘读取投资终端 HTML/JS，修改后自动刷新。Go 修改需要退出并重新执行脚本，脚本每次启动会重新编译后端。
 
 域名访问时反代上游需改为 Vite 前端端口，并保留 Host、支持 WebSocket 和 SSE。HTTPS 入口同时配置 `-public-url` 以正确设置 Cookie 和来源校验；仅传 `--dev-url` 不会改变后端的安全配置。完整示例、参数与退出行为见[开发脚本](../scripts/README.md#开发模式)。
 
