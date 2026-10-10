@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { ChevronDown, ChevronUp, ExternalLink, Search, Sparkles, Star } from "lucide-react";
+import { ChevronDown, ChevronUp, ExternalLink, Plus, RefreshCw, Search, Sparkles, Star } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "../../components/ui/Button";
 import { Badge } from "../../components/ui/Badge";
@@ -8,19 +8,48 @@ import { Card } from "../../components/ui/Card";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { Notice } from "../../components/ui/Notice";
 import { Skeleton } from "../../components/ui/States";
-import { analyzeArticle, updateArticle, useArticle, useArticles, useRefreshNews, useSources, type ArticleFilters } from "./queries";
+import {
+  analyzeArticle,
+  refreshAllSources,
+  updateArticle,
+  useArticle,
+  useArticles,
+  useRefreshNews,
+  useSources,
+  type ArticleFilters,
+} from "./queries";
 import type { Article } from "./schema";
 import { cn } from "../../shared/cn";
+import { formatDateTime } from "../../shared/format";
+import { Checkbox } from "../../components/ui/Checkbox";
+import { Select } from "../../components/ui/Select";
 
 const emptyFilters: ArticleFilters = { q: "", sourceId: "", topic: "", unread: false, starred: false, matched: false };
 
-export default function ArticlesTab() {
+const filtersActive = (filters: ArticleFilters) =>
+  (Object.keys(emptyFilters) as (keyof ArticleFilters)[]).some((key) => filters[key] !== emptyFilters[key]);
+
+export default function ArticlesTab({ onAddSource }: { onAddSource: () => void }) {
   const [draft, setDraft] = useState(emptyFilters);
   const [filters, setFilters] = useState(emptyFilters);
   const [expanded, setExpanded] = useState<string | null>(null);
   const articles = useArticles(filters);
   const sources = useSources();
   const items = articles.data?.pages.flatMap((page) => page.items) ?? [];
+  const sourceOptions = [{ value: "", label: "全部订阅源" }, ...(sources.data?.items.map((source) => ({ value: source.id, label: source.name })) ?? [])];
+  const refreshNews = useRefreshNews();
+  const refreshAll = useMutation({
+    mutationFn: refreshAllSources,
+    onSuccess: async (result) => {
+      await refreshNews();
+      toast.success(`刷新完成，新增 ${result.added} 条，失败 ${result.failed} 个`);
+    },
+    onError: (error) => toast.error(error.message),
+  });
+  function clearFilters() {
+    setDraft(emptyFilters);
+    setFilters(emptyFilters);
+  }
   function submit(event: FormEvent) {
     event.preventDefault();
     setFilters({ ...draft, q: draft.q.trim(), topic: draft.topic.trim() });
@@ -41,21 +70,12 @@ export default function ArticlesTab() {
                 className="ui-input w-full pl-9!"
               />
             </label>
-            <label>
-              <span className="sr-only">订阅源</span>
-              <select
-                value={draft.sourceId}
-                onChange={(event) => setDraft((current) => ({ ...current, sourceId: event.target.value }))}
-                className="ui-input w-full"
-              >
-                <option value="">全部订阅源</option>
-                {sources.data?.items.map((source) => (
-                  <option key={source.id} value={source.id}>
-                    {source.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <Select
+              aria-label="订阅源"
+              value={draft.sourceId}
+              onValueChange={(sourceId) => setDraft((current) => ({ ...current, sourceId }))}
+              options={sourceOptions}
+            />
             <label>
               <span className="sr-only">主题</span>
               <input
@@ -87,7 +107,16 @@ export default function ArticlesTab() {
             {articles.error.message}
           </Notice>
         )}
-        {articles.data && items.length === 0 && <EmptyState title="暂无资讯" description="刷新订阅源或调整筛选条件。" />}
+        {articles.data && items.length === 0 && (
+          <ArticlesEmpty
+            noSources={sources.data?.items.length === 0}
+            filtered={filtersActive(filters)}
+            refreshing={refreshAll.isPending}
+            onAddSource={onAddSource}
+            onClearFilters={clearFilters}
+            onRefresh={() => refreshAll.mutate()}
+          />
+        )}
         <div className="divide-y divide-[var(--border)]">
           {items.map((article) => (
             <ArticleRow
@@ -110,12 +139,66 @@ export default function ArticlesTab() {
   );
 }
 
+function ArticlesEmpty({
+  noSources,
+  filtered,
+  refreshing,
+  onAddSource,
+  onClearFilters,
+  onRefresh,
+}: {
+  noSources: boolean;
+  filtered: boolean;
+  refreshing: boolean;
+  onAddSource: () => void;
+  onClearFilters: () => void;
+  onRefresh: () => void;
+}) {
+  if (noSources)
+    return (
+      <EmptyState
+        title="暂无订阅源"
+        description="添加 RSS 或新闻搜索订阅源后，资讯会显示在这里。"
+        action={
+          <Button onClick={onAddSource}>
+            <Plus size={15} />
+            添加订阅源
+          </Button>
+        }
+      />
+    );
+  if (filtered)
+    return (
+      <EmptyState
+        icon={<Search size={22} />}
+        title="没有符合条件的资讯"
+        description="调整或清除筛选条件后重试。"
+        action={
+          <Button variant="secondary" onClick={onClearFilters}>
+            清除筛选
+          </Button>
+        }
+      />
+    );
+  return (
+    <EmptyState
+      title="暂无资讯"
+      description="订阅源尚未抓取到资讯，可立即刷新。"
+      action={
+        <Button variant="secondary" disabled={refreshing} onClick={onRefresh}>
+          <RefreshCw size={15} />
+          {refreshing ? "刷新中…" : "刷新"}
+        </Button>
+      }
+    />
+  );
+}
+
 function FilterCheck({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
   return (
-    <label className="flex items-center gap-2">
-      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+    <Checkbox checked={checked} onChange={onChange}>
       {label}
-    </label>
+    </Checkbox>
   );
 }
 
@@ -154,7 +237,7 @@ function ArticleRow({ article, expanded, onToggle }: { article: Article; expande
             <p className="mt-1 truncate text-xs text-[var(--muted)]">{article.title}</p>
           )}
           <p className="mt-2 text-xs text-[var(--muted)]">
-            {article.sourceName} · {article.topic || "未分类"} · {new Date(article.publishedAt).toLocaleString()}
+            {article.sourceName} · {article.topic || "未分类"} · {formatDateTime(article.publishedAt, { seconds: false })}
           </p>
         </button>
         <div className="flex shrink-0 gap-1">

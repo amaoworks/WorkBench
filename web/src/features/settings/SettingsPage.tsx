@@ -358,7 +358,6 @@ function AppearanceForm({ value }: { value: Settings }) {
             key={id}
             className={`theme-option focus-ring ${theme === id ? "selected" : ""}`}
             aria-pressed={theme === id}
-            disabled={save.isPending}
             onClick={() => save.mutate({ theme: id, motion }, { onError: (err) => toast.error(err.message) })}
           >
             <div className={`theme-preview preview-${id}`} aria-hidden="true">
@@ -427,6 +426,11 @@ function DataPanel({ value }: { value: Settings }) {
             )
           }
         />
+        {!deployment.backupSupported && (
+          <p className="p-4 text-sm text-[var(--muted)]">
+            使用数据库服务的备份或 <code>pg_dump</code>；本地数据路径中的运行文件需另行备份。
+          </p>
+        )}
         {file && (
           <Notice title="备份已创建" className="m-4">
             backups/{file}

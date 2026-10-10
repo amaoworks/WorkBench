@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"workbench/internal/contracts"
@@ -32,43 +33,77 @@ func hash(s string) string { v := sha256.Sum256([]byte(s)); return hex.EncodeToS
 func (m *Module) RefreshSource(ctx context.Context, id string) (FetchResult, error) {
 	ctx, cancel := m.operation(ctx)
 	defer cancel()
-	m.fetchMu.Lock()
-	defer m.fetchMu.Unlock()
+	return m.refreshSource(ctx, id, false)
+}
+
+func (m *Module) refreshSource(ctx context.Context, id string, dueOnly bool) (FetchResult, error) {
+	release, err := m.work.acquire(ctx, "source:"+id)
+	if err != nil {
+		return FetchResult{}, err
+	}
+	defer release()
 	src, err := m.q.GetSource(ctx, id)
 	if err != nil {
 		return FetchResult{}, err
 	}
 	if src.Enabled != 1 {
+		if dueOnly {
+			return FetchResult{}, nil
+		}
 		return FetchResult{}, errors.New("来源已停用")
+	}
+	if dueOnly && src.NextFetchAt > m.now().UnixMilli() {
+		return FetchResult{}, nil
 	}
 	return m.fetch(ctx, src)
 }
 func (m *Module) Refresh(ctx context.Context, dueOnly bool) (RefreshResult, error) {
 	ctx, cancel := m.operation(ctx)
 	defer cancel()
-	m.fetchMu.Lock()
-	defer m.fetchMu.Unlock()
+	release, err := m.work.acquire(ctx, "refresh")
+	if err != nil {
+		return RefreshResult{}, err
+	}
+	defer release()
 	rows, err := m.q.ListSources(ctx)
 	if err != nil {
 		return RefreshResult{}, err
 	}
 	result := RefreshResult{}
+	var mu sync.Mutex
+	var workers sync.WaitGroup
+	queue := make(chan string)
+	for range min(4, len(rows)) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for id := range queue {
+				r, e := m.refreshSource(ctx, id, dueOnly)
+				mu.Lock()
+				if e != nil {
+					result.Failed++
+				} else {
+					result.Fetched += r.Fetched
+					result.Added += r.Added
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+enqueue:
 	for _, src := range rows {
-		if err = ctx.Err(); err != nil {
-			return result, err
-		}
-		if src.Enabled != 1 || (dueOnly && src.NextFetchAt > m.now().UnixMilli()) {
+		if src.Enabled != 1 {
 			continue
 		}
-		r, e := m.fetch(ctx, src)
-		if e != nil {
-			result.Failed++
-		} else {
-			result.Fetched += r.Fetched
-			result.Added += r.Added
+		select {
+		case queue <- src.ID:
+		case <-ctx.Done():
+			break enqueue
 		}
 	}
-	return result, nil
+	close(queue)
+	workers.Wait()
+	return result, ctx.Err()
 }
 func (m *Module) fetch(ctx context.Context, src newssqlc.NewsSource) (FetchResult, error) {
 	now := m.now().UTC()
@@ -92,6 +127,11 @@ func (m *Module) fetch(ctx context.Context, src newssqlc.NewsSource) (FetchResul
 	retryAfter := time.Duration(0)
 	if err == nil && response.StatusCode == http.StatusNotModified {
 		response.Body.Close()
+		m.sourceMu.Lock()
+		defer m.sourceMu.Unlock()
+		if err := m.checkSource(ctx, src); err != nil {
+			return result, err
+		}
 		result.NotModified = true
 		err = m.q.RecordFetch(ctx, newssqlc.RecordFetchParams{ID: src.ID, FetchedAt: now.UnixMilli(), NextFetchAt: now.Add(time.Duration(src.IntervalMinutes) * time.Minute).UnixMilli(), Etag: src.Etag, LastModified: src.LastModified, ItemCount: src.ItemCount})
 		return result, err
@@ -119,6 +159,11 @@ func (m *Module) fetch(ctx context.Context, src newssqlc.NewsSource) (FetchResul
 	} else {
 		err = errors.New("无法连接资讯源")
 	}
+	m.sourceMu.Lock()
+	defer m.sourceMu.Unlock()
+	if currentErr := m.checkSource(ctx, src); currentErr != nil {
+		return result, currentErr
+	}
 	if err != nil {
 		delay := time.Duration(src.IntervalMinutes) * time.Minute * time.Duration(1<<min(src.FailureCount+1, 5))
 		delay = min(delay, 24*time.Hour)
@@ -133,7 +178,7 @@ func (m *Module) fetch(ctx context.Context, src newssqlc.NewsSource) (FetchResul
 		return result, err
 	}
 	err = m.mutate(ctx, "news.articles.ingested", src.ID, func(q *newssqlc.Queries) error {
-		// The source lock prevents configuration changes during a network fetch.
+		// Configuration writes share this short lock; network I/O holds no such lock.
 		rulesRows, e := q.ListRules(ctx)
 		if e != nil {
 			return e
@@ -240,6 +285,17 @@ func (m *Module) fetch(ctx context.Context, src newssqlc.NewsSource) (FetchResul
 		return q.RecordFetch(ctx, newssqlc.RecordFetchParams{ID: src.ID, FetchedAt: now.UnixMilli(), NextFetchAt: now.Add(time.Duration(src.IntervalMinutes) * time.Minute).UnixMilli(), Etag: response.Header.Get("ETag"), LastModified: response.Header.Get("Last-Modified"), ItemCount: int64(len(items))})
 	})
 	return result, err
+}
+
+func (m *Module) checkSource(ctx context.Context, snapshot newssqlc.NewsSource) error {
+	current, err := m.q.GetSource(ctx, snapshot.ID)
+	if err != nil {
+		return err
+	}
+	if current.Name != snapshot.Name || current.Kind != snapshot.Kind || current.Url != snapshot.Url || current.Query != snapshot.Query || current.Topic != snapshot.Topic || current.Enabled != snapshot.Enabled || current.IntervalMinutes != snapshot.IntervalMinutes {
+		return errors.New("资讯源已变更，请重新刷新")
+	}
+	return nil
 }
 func (m *Module) fetchJob(ctx context.Context, _ contracts.JobRun) error {
 	_, err := m.Refresh(ctx, true)

@@ -14,13 +14,22 @@ import { Switch } from "../../components/ui/Switch";
 import { useConfirmDelete } from "../../components/ui/useConfirmDelete";
 import { deleteSource, refreshAllSources, refreshSource, saveSource, useRefreshNews, useSources } from "./queries";
 import type { Source, SourceInput } from "./schema";
+import { formatDateTime } from "../../shared/format";
+import { Select } from "../../components/ui/Select";
+
+const SOURCE_KINDS = [
+  { value: "rss", label: "RSS" },
+  { value: "rsshub", label: "RSSHub" },
+  { value: "google", label: "Google 新闻" },
+  { value: "yahoo", label: "Yahoo 财经" },
+];
 
 const blank: SourceInput = { name: "", kind: "rss", url: "", query: "", topic: "", enabled: true, intervalMinutes: 60 };
 
-export default function SourcesTab() {
+export default function SourcesTab({ startAdding = false }: { startAdding?: boolean }) {
   const sources = useSources();
   const refresh = useRefreshNews();
-  const [editing, setEditing] = useState<Source | "new" | null>(null);
+  const [editing, setEditing] = useState<Source | "new" | null>(startAdding ? "new" : null);
   const addButton = useRef<HTMLButtonElement>(null);
   const save = useMutation({
     mutationFn: saveSource,
@@ -120,7 +129,7 @@ export default function SourcesTab() {
               </p>
               {(source.query || source.url) && <p className="mt-1 truncate text-xs text-[var(--muted)]">{source.query || source.url}</p>}
               {source.lastFetchedAt && (
-                <p className="mt-1 text-xs text-[var(--muted)]">最近刷新：{new Date(source.lastFetchedAt).toLocaleString()}</p>
+                <p className="mt-1 text-xs text-[var(--muted)]">最近刷新：{formatDateTime(source.lastFetchedAt)}</p>
               )}
               {source.lastError && (
                 <Notice className="mt-2" tone="danger" title="订阅源刷新失败">
@@ -200,12 +209,7 @@ function SourceForm({
         <input autoFocus required value={form.name} onChange={(event) => change({ name: event.target.value })} placeholder="订阅源名称" />
       </Field>
       <Field label="类型">
-        <select value={form.kind} onChange={(event) => change({ kind: event.target.value as SourceInput["kind"] })}>
-          <option value="rss">RSS</option>
-          <option value="rsshub">RSSHub</option>
-          <option value="google">Google 新闻</option>
-          <option value="yahoo">Yahoo 财经</option>
-        </select>
+        <Select value={form.kind} onValueChange={(kind) => change({ kind: kind as SourceInput["kind"] })} options={SOURCE_KINDS} />
       </Field>
       {needsURL && (
         <Field label="订阅地址" className="sm:col-span-2">

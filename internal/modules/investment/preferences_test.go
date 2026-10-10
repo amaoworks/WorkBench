@@ -38,7 +38,7 @@ func readPreferences(t *testing.T, m *Module) preferencesView {
 
 func TestPreferencesRoundTripAcrossModuleInstances(t *testing.T) {
 	first := openInvestmentModule(t)
-	second, err := New(Dependencies{DB: first.deps.DB})
+	second, err := New(testInvestmentDependencies(t, first.deps.DB))
 	if err != nil {
 		t.Fatal(err)
 	}

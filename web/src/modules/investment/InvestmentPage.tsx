@@ -9,6 +9,7 @@ import { Skeleton } from "../../components/ui/States";
 import { ThemeContext, type Theme } from "../../shared/theme";
 import { refreshSchwabToken, useInvestmentView, useRefreshInvestment, useSchwabSettings } from "./queries";
 import { APIError } from "../../shared/api";
+import { moduleQueryKey } from "../../shared/queryKeys";
 import type { InvestmentView } from "./schema";
 import { InvestmentMonitor } from "./InvestmentMonitor";
 
@@ -241,8 +242,8 @@ function InvestmentTerminal({ theme }: { theme: Theme }) {
         event.data?.type !== "workbench.schwab.status_changed"
       )
         return;
-      void client.invalidateQueries({ queryKey: ["investment", "schwab"] });
-      void client.invalidateQueries({ queryKey: ["widget", "investment.overview"] });
+      void client.invalidateQueries({ queryKey: moduleQueryKey("investment", "schwab") });
+      void client.invalidateQueries({ queryKey: moduleQueryKey("investment", "widget", "investment.overview") });
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);

@@ -24,6 +24,10 @@ const chartWarmWorkers = 4
 
 var bundlePath = regexp.MustCompile(`bundles/([A-Za-z0-9._-]+\.(?:js|css))`)
 
+func (m *Module) OnStarted(ctx context.Context) {
+	m.WarmChartLibrary(ctx)
+}
+
 // WarmChartLibrary loads any bundles saved from an earlier process, then fills
 // gaps from TradingView before the browser walks the same dependency chain.
 func (m *Module) WarmChartLibrary(ctx context.Context) {

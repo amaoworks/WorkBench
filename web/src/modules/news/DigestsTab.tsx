@@ -12,6 +12,16 @@ import { Skeleton } from "../../components/ui/States";
 import { Switch } from "../../components/ui/Switch";
 import { createDigest, pushDigest, useDigests, useRefreshNews } from "./queries";
 import type { Digest } from "./schema";
+import { formatDateTime } from "../../shared/format";
+import { Select } from "../../components/ui/Select";
+
+const PERIODS = [
+  { value: "6", label: "最近 6 小时" },
+  { value: "12", label: "最近 12 小时" },
+  { value: "24", label: "最近 24 小时" },
+  { value: "72", label: "最近 3 天" },
+  { value: "168", label: "最近 7 天" },
+];
 
 export default function DigestsTab() {
   const digests = useDigests();
@@ -42,13 +52,7 @@ export default function DigestsTab() {
             <input value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="全部主题" />
           </Field>
           <Field label="时间范围">
-            <select value={periodHours} onChange={(event) => setPeriodHours(Number(event.target.value))}>
-              <option value={6}>最近 6 小时</option>
-              <option value={12}>最近 12 小时</option>
-              <option value={24}>最近 24 小时</option>
-              <option value={72}>最近 3 天</option>
-              <option value={168}>最近 7 天</option>
-            </select>
+            <Select value={String(periodHours)} onValueChange={(value) => setPeriodHours(Number(value))} options={PERIODS} />
           </Field>
           <Field label="最多条数">
             <input type="number" min={1} max={30} required value={maxItems} onChange={(event) => setMaxItems(event.target.valueAsNumber)} />
@@ -109,7 +113,7 @@ function DigestRow({ digest }: { digest: Digest }) {
         <div className="min-w-0 flex-1">
           <h3 className="break-words font-medium">{digest.title}</h3>
           <p className="mt-1 text-xs text-[var(--muted)]">
-            {digest.topic || "全部主题"} · {new Date(digest.createdAt).toLocaleString()} · {digest.aiUsed ? "AI 简报" : "普通简报"}
+            {digest.topic || "全部主题"} · {formatDateTime(digest.createdAt, { seconds: false })} · {digest.aiUsed ? "AI 简报" : "普通简报"}
           </p>
         </div>
         <div className="flex items-center gap-2">

@@ -63,7 +63,7 @@ func (m *Module) futuManaged() bool {
 // Called while connectMu is held, after settings have committed successfully.
 func (m *Module) syncOpenD(rec futuRecord) {
 	if m.opend != nil {
-		rec.Enabled = rec.Enabled && m.moduleEnabled
+		rec.Enabled = rec.Enabled && m.futu.enabled
 		m.opend.apply(rec)
 	}
 }
@@ -71,7 +71,7 @@ func (m *Module) syncOpenD(rec futuRecord) {
 // Only the companion OpenD process reads this private file. Password digests are
 // login credentials, not safe-to-share hashes; never return them in API views.
 func (m *Module) publishFutuLogin(rec futuRecord) error {
-	rec.Enabled = rec.Enabled && m.moduleEnabled
+	rec.Enabled = rec.Enabled && m.futu.enabled
 	if m.deps.FutuConfigDir == "" {
 		return nil
 	}

@@ -1,5 +1,5 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { Suspense } from "react";
+import { Suspense, useMemo, useRef, useState } from "react";
 import { Settings2, X } from "lucide-react";
 import { Button } from "../../components/ui/Button";
 import { settingsRegistry } from "../../modules/registry";
@@ -9,6 +9,8 @@ import { useSettings } from "./queries";
 import { Notice } from "../../components/ui/Notice";
 import { Skeleton } from "../../components/ui/States";
 import { EmptyState } from "../../components/ui/EmptyState";
+import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
+import { SettingsDialogContext, type SettingsDialogControl } from "../../shared/settingsDialog";
 
 export function ModuleSettingsDialog({ module }: { module: WorkbenchModule }) {
   const Settings = settingsRegistry[module.id];
@@ -18,8 +20,24 @@ export function ModuleSettingsDialog({ module }: { module: WorkbenchModule }) {
     (settings.data?.appearance.theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches)
       ? "dark"
       : "light";
+  const [open, setOpen] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const discard = useRef(false);
+  const dirty = useRef(false);
+  const control = useMemo<SettingsDialogControl>(
+    () => ({
+      setDirty: (next) => {
+        dirty.current = next;
+      },
+      requestClose: () => {
+        if (dirty.current) setConfirmDiscard(true);
+        else setOpen(false);
+      },
+    }),
+    [],
+  );
   return (
-    <Dialog.Root>
+    <Dialog.Root open={open} onOpenChange={(next) => (next ? setOpen(true) : control.requestClose())}>
       <Dialog.Trigger asChild>
         <Button variant="secondary" aria-label={`${module.name}设置`}>
           <Settings2 size={16} aria-hidden="true" />
@@ -63,16 +81,37 @@ export function ModuleSettingsDialog({ module }: { module: WorkbenchModule }) {
                 业务入口已关闭。
               </Notice>
             )}
-            <Suspense fallback={<Skeleton className="h-48" />}>
-              {module.kind === "external" && module.settingsEntry ? (
-                <ExternalSettingsFrame moduleId={module.id} entry={module.settingsEntry} theme={theme} />
-              ) : Settings ? (
-                <Settings enabled={module.enabled} />
-              ) : (
-                <EmptyState title="暂无配置项" />
-              )}
-            </Suspense>
+            <SettingsDialogContext.Provider value={control}>
+              <Suspense fallback={<Skeleton className="h-48" />}>
+                {module.kind === "external" && module.settingsEntry ? (
+                  <ExternalSettingsFrame moduleId={module.id} entry={module.settingsEntry} theme={theme} />
+                ) : Settings ? (
+                  <Settings enabled={module.enabled} />
+                ) : (
+                  <EmptyState title="暂无配置项" />
+                )}
+              </Suspense>
+            </SettingsDialogContext.Provider>
           </div>
+          <ConfirmDialog
+            open={confirmDiscard}
+            title="放弃未保存的修改？"
+            description="关闭后，本次修改不会保存。"
+            busy={false}
+            confirmLabel="放弃修改"
+            cancelLabel="继续编辑"
+            onCancel={() => setConfirmDiscard(false)}
+            onConfirm={() => {
+              discard.current = true;
+              setConfirmDiscard(false);
+            }}
+            onClosed={() => {
+              if (!discard.current) return;
+              discard.current = false;
+              dirty.current = false;
+              setOpen(false);
+            }}
+          />
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

@@ -1,8 +1,8 @@
-import { Component, Suspense, useState, type ReactNode } from "react";
+import { Component, Suspense, useState, type ComponentType, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "../../shared/api";
-import { dashboardSchema, widgetCatalogSchema, type ConfigurableWidget } from "../../shared/schema";
+import { dashboardSchema, widgetCatalogSchema, type ConfigurableWidget, type Widget } from "../../shared/schema";
 import { widgetRegistry } from "../../modules/registry";
 import { Card } from "../../components/ui/Card";
 import { Button, ButtonLink } from "../../components/ui/Button";
@@ -11,6 +11,12 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { Notice } from "../../components/ui/Notice";
 import { Badge } from "../../components/ui/Badge";
 import { PageHeader } from "../../components/ui/PageHeader";
+import { NotificationsSummary } from "../notifications/NotificationsSummary";
+import { Checkbox } from "../../components/ui/Checkbox";
+import { Select } from "../../components/ui/Select";
+
+// Overview cards owned by the platform rather than a business module.
+const platformWidgets: Record<string, ComponentType<{ widget: Widget }>> = { "notifications.summary": NotificationsSummary };
 
 export default function DashboardPage() {
   const [editing, setEditing] = useState(false);
@@ -61,7 +67,7 @@ export default function DashboardPage() {
       )}
       <div className="dashboard-grid">
         {dashboard.data?.widgets.map((widget) => {
-          const Renderer = widgetRegistry[widget.widgetKind];
+          const Renderer = platformWidgets[widget.widgetKind] ?? widgetRegistry[widget.widgetKind];
           return (
             <section key={widget.id} className={`dashboard-widget widget-${widget.size}`} aria-label={widget.title}>
               <h2 className="mb-3 font-medium">{widget.title}</h2>
@@ -83,6 +89,12 @@ export default function DashboardPage() {
     </div>
   );
 }
+
+const SIZE_OPTIONS = [
+  { value: "small", label: "小" },
+  { value: "medium", label: "中" },
+  { value: "large", label: "大" },
+];
 
 function LayoutEditor({ widgets }: { widgets: ConfigurableWidget[] }) {
   const [items, setItems] = useState(widgets);
@@ -124,33 +136,24 @@ function LayoutEditor({ widgets }: { widgets: ConfigurableWidget[] }) {
       <legend className="mb-3 font-medium">总览卡片</legend>
       {items.map((item, index) => (
         <div key={item.id} className="layout-row">
-          <label className="flex flex-1 items-center gap-3">
-            <input
-              type="checkbox"
+          <div className="flex flex-1 items-center gap-2">
+            <Checkbox
               checked={item.visible}
-              onChange={(event) =>
-                setItems(items.map((value) => (value.id === item.id ? { ...value, visible: event.target.checked } : value)))
-              }
-            />
-            <span>
+              onChange={(visible) => setItems(items.map((value) => (value.id === item.id ? { ...value, visible } : value)))}
+            >
               {item.title}
-              {!item.enabled && <Badge className="ml-2">业务已停用</Badge>}
-            </span>
-          </label>
-          <select
-            className="ui-input"
+            </Checkbox>
+            {!item.enabled && <Badge>业务已停用</Badge>}
+          </div>
+          <Select
+            className="layout-size"
             aria-label={`${item.title}尺寸`}
             value={item.size}
-            onChange={(event) =>
-              setItems(
-                items.map((value) => (value.id === item.id ? { ...value, size: event.target.value as ConfigurableWidget["size"] } : value)),
-              )
+            options={SIZE_OPTIONS}
+            onValueChange={(size) =>
+              setItems(items.map((value) => (value.id === item.id ? { ...value, size: size as ConfigurableWidget["size"] } : value)))
             }
-          >
-            <option value="small">小</option>
-            <option value="medium">中</option>
-            <option value="large">大</option>
-          </select>
+          />
           <Button variant="ghost" disabled={index === 0} aria-label={`${item.title}上移`} onClick={() => move(index, -1)}>
             上移
           </Button>

@@ -82,3 +82,12 @@ func (h *HTTPHandler) Archive(w http.ResponseWriter, r *http.Request) {
 func (h *HTTPHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	h.hub.ServeHTTP(w, r)
 }
+
+// PlatformModule marks overview cards owned by the platform rather than a business module; they are always enabled.
+const PlatformModule contracts.ModuleID = "platform"
+
+// SummaryWidget is the overview card for notifications. It shares the dashboard layout preferences with module cards.
+var SummaryWidget = contracts.WidgetDefinition{
+	ID: "notifications.summary", Module: PlatformModule, SchemaVersion: 1, Title: "通知", WidgetKind: "notifications.summary",
+	DataRoute: "/api/notifications/unread-count", Size: contracts.WidgetSmall, Order: 40,
+}

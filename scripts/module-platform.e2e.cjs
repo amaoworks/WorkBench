@@ -2,6 +2,13 @@
 const assert = require("node:assert/strict");
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 const baseURL = process.env.WORKBENCH_TEST_URL || "http://127.0.0.1:18086";
+
+// Shared Select is a Radix listbox: open the trigger, then pick the option by its visible label.
+async function choose(page, trigger, option) {
+  await trigger.click();
+  await page.getByRole("option", { name: option, exact: true }).click();
+  await page.getByRole("listbox").waitFor({ state: "detached" });
+}
 (async () => {
   const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH || undefined, args: ["--no-sandbox"] });
   try {
@@ -14,7 +21,8 @@ const baseURL = process.env.WORKBENCH_TEST_URL || "http://127.0.0.1:18086";
     await page.getByRole("region", { name: "投资" }).waitFor();
     await page.getByRole("button", { name: "配置总览", exact: true }).click();
     await page.getByRole("checkbox", { name: "待办概览", exact: true }).uncheck();
-    await page.getByLabel("投资尺寸").selectOption("large");
+    await page.getByRole("checkbox", { name: "通知", exact: true }).uncheck();
+    await choose(page, page.getByLabel("投资尺寸"), "大");
     await page.getByRole("button", { name: "投资上移", exact: true }).click();
     await page.getByRole("button", { name: "保存", exact: true }).click();
     await page.getByRole("region", { name: "待办概览" }).waitFor({ state: "detached" });
@@ -22,6 +30,7 @@ const baseURL = process.env.WORKBENCH_TEST_URL || "http://127.0.0.1:18086";
     await page.getByRole("region", { name: "投资" }).waitFor();
     assert.match(await page.getByRole("region", { name: "投资" }).getAttribute("class"), /widget-large/);
     assert.equal(await page.getByRole("region", { name: "待办概览" }).count(), 0);
+    assert.equal(await page.getByRole("region", { name: "通知", exact: true }).count(), 0);
     await page.getByRole("link", { name: "待办", exact: true }).click();
     await page.getByRole("heading", { name: "待办", exact: true }).waitFor();
     // More than one page proves the UI consumes the backend cursor instead of silently truncating tasks.
@@ -34,7 +43,7 @@ const baseURL = process.env.WORKBENCH_TEST_URL || "http://127.0.0.1:18086";
     });
     await page.reload();
     await page.getByRole("button", { name: "加载更多", exact: true }).click();
-    await page.getByText("51 项 · 51 项未完成", { exact: true }).waitFor();
+    await page.getByText("51 项未完成", { exact: true }).waitFor();
     await page.goto(`${baseURL}/settings?tab=modules`);
     await page.getByRole("button", { name: "投资设置", exact: true }).click();
     const investmentSettings = page.getByRole("dialog", { name: "投资设置", exact: true });
@@ -64,7 +73,11 @@ const baseURL = process.env.WORKBENCH_TEST_URL || "http://127.0.0.1:18086";
     assert.equal((await rejected).status(), 400);
     await page.getByText("更换 App Key 时请重新填写 App Secret", { exact: true }).waitFor();
     assert(await page.getByRole("button", { name: "登录 Schwab", exact: true }).isDisabled());
+    // The rejected edit is still unsaved, so closing asks before discarding it.
     await page.getByRole("button", { name: "关闭业务设置", exact: true }).click();
+    const discard = page.getByRole("alertdialog", { name: "放弃未保存的修改？", exact: true });
+    await discard.getByRole("button", { name: "放弃修改", exact: true }).click();
+    await investmentSettings.waitFor({ state: "detached" });
     const moduleSwitch = page.getByRole("switch", { name: "投资", exact: true });
     await moduleSwitch.click();
     await page.waitForFunction(() => document.querySelector('[aria-label="投资"]')?.getAttribute("aria-checked") === "false");
@@ -72,7 +85,8 @@ const baseURL = process.env.WORKBENCH_TEST_URL || "http://127.0.0.1:18086";
     assert.equal((await page.request.get(`${baseURL}/api/modules/investment/schwab`)).status(), 503);
     assert.equal((await page.request.get(`${baseURL}/investment/terminal`)).status(), 503);
     await page.goto(baseURL);
-    await page.getByText("总览暂时没有卡片", { exact: true }).waitFor();
+    await page.getByRole("region", { name: "资讯概览" }).waitFor();
+    assert.equal(await page.getByRole("region", { name: "投资" }).count(), 0);
     await page.goto(`${baseURL}/settings?tab=modules`);
     await page.getByRole("switch", { name: "投资", exact: true }).click();
     await page.getByRole("link", { name: "投资", exact: true }).click();
@@ -83,12 +97,13 @@ const baseURL = process.env.WORKBENCH_TEST_URL || "http://127.0.0.1:18086";
     await page.goto(baseURL);
     await page.getByRole("button", { name: "配置总览", exact: true }).click();
     await page.getByRole("checkbox", { name: "待办概览", exact: true }).check();
-    await page.getByLabel("待办概览尺寸").selectOption("small");
-    await page.getByLabel("投资尺寸").selectOption("medium");
+    await page.getByRole("checkbox", { name: "通知", exact: true }).check();
+    await choose(page, page.getByLabel("待办概览尺寸"), "小");
+    await choose(page, page.getByLabel("投资尺寸"), "中");
     await page.getByRole("button", { name: "保存", exact: true }).click();
     await page.getByRole("region", { name: "待办概览" }).waitFor();
     await page.getByRole("button", { name: "关闭配置", exact: true }).click();
-    assert.deepEqual(await page.locator(".dashboard-widget").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-label"))), ["投资", "待办概览"]);
+    assert.deepEqual(await page.locator(".dashboard-widget").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-label"))), ["投资", "待办概览", "资讯概览", "通知"]);
     await page.screenshot({ path: "/tmp/workbench-platform-dashboard.png", fullPage: true, animations: "disabled" });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForFunction(() => document.querySelector(".workspace-sidebar")?.getBoundingClientRect().width <= 65);

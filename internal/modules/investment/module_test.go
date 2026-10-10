@@ -47,7 +47,7 @@ func TestRemovingDemoTablesPreservesExistingSchwabCredentials(t *testing.T) {
 	`); err != nil {
 		t.Fatal(err)
 	}
-	module, err := New(Dependencies{DB: db.SQL()})
+	module, err := New(testInvestmentDependencies(t, db.SQL()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestOvernightMigrationPreservesExistingEnabledChoice(t *testing.T) {
 	if _, err := db.SQL().Exec(`UPDATE investment_futu SET enabled=1,host='existing-opend',allow_non_local=1`); err != nil {
 		t.Fatal(err)
 	}
-	m, err := New(Dependencies{DB: db.SQL()})
+	m, err := New(testInvestmentDependencies(t, db.SQL()))
 	if err != nil {
 		t.Fatal(err)
 	}

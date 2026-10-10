@@ -13,6 +13,7 @@ import { Field } from "../../components/ui/Field";
 import { Notice } from "../../components/ui/Notice";
 import { Switch } from "../../components/ui/Switch";
 import { useConfirmDelete } from "../../components/ui/useConfirmDelete";
+import { clearModuleQueries } from "../../shared/queryKeys";
 
 export function ModulesPanel() {
   const modules = useModules();
@@ -31,9 +32,7 @@ export function ModulesPanel() {
       return { status: response.status, body: moduleSchema.parse(await response.json()) };
     },
     onSuccess: async ({ status, body }, { id, enabled }) => {
-      await client.cancelQueries();
-      client.removeQueries({ queryKey: [id] });
-      client.removeQueries({ queryKey: ["widget"] });
+      await clearModuleQueries(client, id);
       await refresh();
       if (status === 202 || body.pending) {
         toast.message(enabled ? "正在启用" : "业务入口已关闭，等待服务确认停用");
@@ -55,17 +54,15 @@ export function ModulesPanel() {
     );
   return (
     <div className="studio-form">
-      <div className="control-heading">
-        <h3 ref={heading} tabIndex={-1} className="focus-ring">
-          业务
-        </h3>
-      </div>
+      {/* The settings tab already says 业务; keep the heading for structure and as a focus fallback only. */}
+      <h3 ref={heading} tabIndex={-1} className="sr-only">
+        业务
+      </h3>
       {modules.data.items.map((module) => (
         <div key={module.id} className="module-row">
           <div>
             <h3>{module.name}</h3>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-[var(--muted)]">
-              <span>版本 {module.version}</span>
               <Badge tone={module.lastError ? "danger" : module.pending ? "warning" : module.observedEnabled ? "success" : "neutral"}>
                 {moduleStatus(module)}
               </Badge>

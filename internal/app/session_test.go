@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"workbench/internal/modules/investment"
 )
 
 func TestApplySessionSkipsIdleRefreshForHashedChartBundles(t *testing.T) {
@@ -22,6 +24,7 @@ func TestApplySessionSkipsIdleRefreshForHashedChartBundles(t *testing.T) {
 		},
 		func(h http.Handler) http.Handler { return h },
 		next,
+		&investment.Module{},
 	)
 
 	bundle := httptest.NewRecorder()
@@ -44,5 +47,15 @@ func TestApplySessionSkipsIdleRefreshForHashedChartBundles(t *testing.T) {
 	handler.ServeHTTP(entry, httptest.NewRequest(http.MethodGet, "/charting_library/charting_library.esm.js", nil))
 	if !saved {
 		t.Fatal("entry points must still use LoadAndSave")
+	}
+	for _, request := range []struct{ method, path string }{
+		{http.MethodPost, "/charting_library/bundles/library.02a5618b954328b298b8.js"},
+		{http.MethodGet, "/other/bundles/library.02a5618b954328b298b8.js"},
+	} {
+		saved = false
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(request.method, request.path, nil))
+		if !saved {
+			t.Fatalf("%s %s skipped session saving", request.method, request.path)
+		}
 	}
 }

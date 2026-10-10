@@ -15,6 +15,8 @@ import { useConfirmDelete } from "../../components/ui/useConfirmDelete";
 import { useTelegramSettings } from "../../features/settings/queries";
 import { deletePriceRule, savePriceRule, usePriceHistory, usePriceMonitor } from "./queries";
 import type { PriceRule, PriceRuleInput } from "./schema";
+import { formatDateTime } from "../../shared/format";
+import { moduleQueryKey } from "../../shared/queryKeys";
 
 const states = {
   idle: "尚未启用规则",
@@ -24,7 +26,7 @@ const states = {
   error: "监控异常",
   stale: "检查已中断",
 };
-const time = (value: string | null) => (value ? new Date(value).toLocaleString() : "尚未更新");
+const time = (value: string | null) => (value ? formatDateTime(value) : "尚未更新");
 const percent = (value: number | null) => (value === null ? "—" : `${value > 0 ? "+" : ""}${value.toFixed(2)}%`);
 const price = (value: number | null) =>
   value === null ? "—" : value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 });
@@ -36,7 +38,7 @@ export function InvestmentMonitor() {
   const client = useQueryClient();
   const [editing, setEditing] = useState<PriceRule | "new" | null>(null);
   const addButton = useRef<HTMLButtonElement>(null);
-  const refresh = () => client.invalidateQueries({ queryKey: ["investment"] });
+  const refresh = () => client.invalidateQueries({ queryKey: moduleQueryKey("investment") });
   const toggle = useMutation({ mutationFn: savePriceRule, onSuccess: refresh, onError: (error) => toast.error(error.message) });
   const remove = useMutation({
     mutationFn: deletePriceRule,
@@ -103,7 +105,7 @@ export function InvestmentMonitor() {
             <Skeleton className="h-5 w-28" />
           ) : (
             <Badge tone={telegram.data?.enabled ? "success" : "neutral"}>
-              {telegram.data?.enabled ? "TG 推送已启用" : "TG 推送未启用"}
+              {telegram.data?.enabled ? "Telegram 推送已启用" : "Telegram 推送未启用"}
             </Badge>
           )}
           <ButtonLink variant="ghost" size="sm" to="/settings?tab=notifications">
@@ -111,12 +113,12 @@ export function InvestmentMonitor() {
           </ButtonLink>
         </div>
         {telegram.isError && (
-          <Notice className="mt-2" tone="danger" title="TG 状态读取失败">
+          <Notice className="mt-2" tone="danger" title="Telegram 状态读取失败">
             {telegram.error.message}
           </Notice>
         )}
         {telegram.data?.enabled && telegram.data.status.lastError && (
-          <Notice className="mt-2" tone="danger" title="TG 推送异常">
+          <Notice className="mt-2" tone="danger" title="Telegram 推送异常">
             {telegram.data.status.lastError}
           </Notice>
         )}
@@ -140,7 +142,7 @@ export function InvestmentMonitor() {
             <Skeleton className="h-28" />
           </div>
         )}
-        {data?.items.length === 0 && <EmptyState title="尚无监控规则" description="添加股票或 ETF，例如 AAPL、SPY。" />}
+        {data?.items.length === 0 && <EmptyState title="暂无监控规则" description="添加股票或 ETF，例如 AAPL、SPY。" />}
         <div className="divide-y divide-[var(--border)]">
           {data?.items.map((rule) => (
             <div key={rule.id} className="p-5">

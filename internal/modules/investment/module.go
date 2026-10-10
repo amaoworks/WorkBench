@@ -58,18 +58,18 @@ type Module struct {
 	streamer       *streamer
 	futu           *futuGateway
 	opend          *openDService
-	moduleEnabled  bool // guarded by futu.connectMu
 	logger         *slog.Logger
 	monitorMu      sync.Mutex
 	monitorEnabled bool
+	monitorQuotes  monitorQuoteProvider
 	scanMu         sync.Mutex
 	marketLocation *time.Location
 	marketHours    marketHoursCache // guarded by scanMu
 }
 
 func New(deps Dependencies) (*Module, error) {
-	if deps.DB == nil {
-		return nil, errors.New("investment dependencies are required")
+	if deps.DB == nil || deps.Notifications == nil {
+		return nil, errors.New("investment database and notifications are required")
 	}
 	terminalAssets, err := terminalChartAssets()
 	if err != nil {
@@ -100,16 +100,30 @@ func New(deps Dependencies) (*Module, error) {
 	}
 	module.marketLocation = location
 	module.monitorEnabled = true
+	module.monitorQuotes = &schwabMonitorProvider{
+		accessToken: module.ensureAccessToken,
+		session:     module.regularSession,
+		quotes:      module.fetchMonitorQuotes,
+		guard:       module.withCurrentSchwabToken,
+	}
 	if _, _, err := module.futuConnection(); err != nil {
 		return nil, err
 	}
 	module.tvProxy.ErrorLog = slog.NewLogLogger(deps.Logger.Handler(), slog.LevelError)
-	module.streamer = newStreamer(module)
-	module.futu = newFutuGateway(module)
-	module.moduleEnabled = true
 	if deps.FutuConfigDir == "" && deps.FutuRuntimeDir != "" {
 		module.opend = newOpenDService(deps.FutuRuntimeDir, deps.FutuOpenDBinary)
 	}
+	module.streamer = newStreamer(streamerDeps{
+		credentials: module.streamerCredentials,
+		origin:      func() string { return module.schwabAPI },
+		logger:      module.logger,
+	})
+	module.futu = newFutuGateway(futuGatewayDeps{
+		load:    module.loadFutu,
+		queries: module.queries,
+		opend:   module.opend,
+		logger:  module.logger,
+	})
 	return module, nil
 }
 
@@ -205,7 +219,7 @@ func (m *Module) OnEnabledChanged(ctx context.Context, enabled bool) error {
 	m.monitorMu.Unlock()
 	m.futu.connectMu.Lock()
 	defer m.futu.connectMu.Unlock()
-	m.moduleEnabled = enabled
+	m.futu.enabled = enabled
 	if !enabled {
 		// Stopping must not depend on a live request context or a database read.
 		m.syncOpenD(futuRecord{})

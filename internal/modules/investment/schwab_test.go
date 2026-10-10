@@ -2,6 +2,7 @@ package investment
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -14,8 +15,19 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"workbench/internal/capabilities/notifications"
 	workbenchdb "workbench/internal/foundation/database"
+	"workbench/internal/foundation/events"
 )
+
+func testInvestmentDependencies(t *testing.T, db *sql.DB) Dependencies {
+	t.Helper()
+	service, err := notifications.NewService(db, events.NewStore(db))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return Dependencies{DB: db, Notifications: service}
+}
 
 func openInvestmentModule(t *testing.T) *Module {
 	t.Helper()
@@ -28,7 +40,7 @@ func openInvestmentModule(t *testing.T) *Module {
 	if err := db.MigrateCore(ctx); err != nil {
 		t.Fatal(err)
 	}
-	module, err := New(Dependencies{DB: db.SQL()})
+	module, err := New(testInvestmentDependencies(t, db.SQL()))
 	if err != nil {
 		t.Fatal(err)
 	}

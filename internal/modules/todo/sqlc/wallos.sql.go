@@ -95,28 +95,3 @@ func (q *Queries) SetWallosSyncStatus(ctx context.Context, arg SetWallosSyncStat
 	_, err := q.db.ExecContext(ctx, setWallosSyncStatus, arg.LastSync, arg.LastError)
 	return err
 }
-
-const updateWallosTaskContent = `-- name: UpdateWallosTaskContent :execrows
-UPDATE todo_tasks SET title = ?1, description = ?2, updated_at = ?3
-WHERE id = ?4 AND (title != ?1 OR description != ?2)
-`
-
-type UpdateWallosTaskContentParams struct {
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	UpdatedAt   int64  `json:"updated_at"`
-	ID          string `json:"id"`
-}
-
-func (q *Queries) UpdateWallosTaskContent(ctx context.Context, arg UpdateWallosTaskContentParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, updateWallosTaskContent,
-		arg.Title,
-		arg.Description,
-		arg.UpdatedAt,
-		arg.ID,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}

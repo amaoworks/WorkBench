@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import Broker from '../chart/broker.js';
-import { buildOrder, mapOrder, mapPositions } from '../chart/broker-models.js';
+import { assetTypeLabel, buildOrder, mapOrder, mapPositions } from '../chart/broker-models.js';
 
 const order = { symbol: 'AAPL', side: 1, type: 1, qty: 10, limitPrice: 100 };
 const rawOrder = { orderId: 42, orderType: 'LIMIT', orderStrategyType: 'SINGLE', session: 'NORMAL', duration: 'GOOD_TILL_CANCEL', quantity: 10, price: 100, status: 'WORKING', enteredTime: '2026-01-01T15:00:00Z', orderLegCollection: [{ instruction: 'BUY', quantity: 10, instrument: { symbol: 'AAPL', assetType: 'EQUITY' } }] };
@@ -506,4 +506,19 @@ test('account discovery starts after the broker factory installs the adapter', a
     assert.equal(broker.currentAccount(), 'A');
     assert.deepEqual(calls, ['/trader/v1/accounts/accountNumbers']);
     assert.equal(statuses.at(-1), 1);
+});
+
+test('positions show Chinese asset types with a raw fallback and Chinese column titles', async t => {
+    assert.equal(assetTypeLabel('EQUITY'), '股票');
+    assert.equal(assetTypeLabel('COLLECTIVE_INVESTMENT'), '基金/ETF');
+    assert.equal(assetTypeLabel('NEW_KIND'), 'NEW_KIND');
+    assert.equal(assetTypeLabel(undefined), '');
+    const [position] = mapPositions([{ instrument: { symbol: 'SPY', assetType: 'COLLECTIVE_INVESTMENT' }, longQuantity: 2, shortQuantity: 0, averagePrice: 500 }]);
+    assert.equal(position.type, 'COLLECTIVE_INVESTMENT');
+    assert.equal(position.assetTypeLabel, '基金/ETF');
+    const { broker } = await setup(t, () => undefined);
+    const info = broker.accountManagerInfo();
+    const titles = [...info.positionColumns, ...info.orderColumns].map(column => column.label);
+    for (const title of titles) assert.doesNotMatch(title, /[A-Za-z]/, title);
+    assert.deepEqual(info.positionColumns.map(column => column.label), ['标的', '方向', '数量', '均价', '现价', '已实现盈亏', '未实现盈亏', '当日盈亏', '类型']);
 });

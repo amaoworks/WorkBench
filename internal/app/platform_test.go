@@ -21,7 +21,7 @@ import (
 func TestDashboardLayoutIndependentOfModuleAndSurvivesRestart(t *testing.T) {
 	a := newTestApp(t)
 	token, cookies := csrf(t, a.Handler())
-	layout := []byte(`{"items":[{"id":"todo.summary","visible":false,"size":"large","order":1},{"id":"investment.overview","visible":true,"size":"small","order":0}]}`)
+	layout := []byte(`{"items":[{"id":"todo.summary","visible":false,"size":"large","order":1},{"id":"investment.overview","visible":true,"size":"small","order":0},{"id":"news.summary","visible":false,"size":"medium","order":2},{"id":"notifications.summary","visible":false,"size":"small","order":3}]}`)
 	if got := request(t, a.Handler(), "PUT", "/api/dashboard/layout", layout, "", nil); got.Code != 400 {
 		t.Fatalf("missing CSRF: %d", got.Code)
 	}
@@ -72,7 +72,9 @@ func TestDashboardLayoutIndependentOfModuleAndSurvivesRestart(t *testing.T) {
 	if err := json.Unmarshal(catalog.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if len(body.Widgets) != 2 || body.Widgets[0].ID != "investment.overview" || body.Widgets[0].Enabled || body.Widgets[0].Size != "small" || body.Widgets[1].Visible || body.Widgets[1].Size != "large" {
+	if len(body.Widgets) != 4 || body.Widgets[0].ID != "investment.overview" || body.Widgets[0].Enabled || body.Widgets[0].Size != "small" || body.Widgets[1].Visible || body.Widgets[1].Size != "large" ||
+		body.Widgets[2].ID != "news.summary" || body.Widgets[2].Visible || body.Widgets[2].Size != "medium" ||
+		body.Widgets[3].ID != "notifications.summary" || body.Widgets[3].Visible || !body.Widgets[3].Enabled {
 		t.Fatalf("lost preferences: %+v", body)
 	}
 	if got := request(t, restarted.Handler(), "PUT", "/api/modules/investment/enabled", []byte(`{"enabled":true}`), token, cookies); got.Code != 200 {
@@ -86,7 +88,7 @@ func TestDashboardLayoutIndependentOfModuleAndSurvivesRestart(t *testing.T) {
 		t.Fatal(got.Body.String())
 	}
 	defaults := request(t, restarted.Handler(), "GET", "/api/dashboard", nil, "", cookies)
-	if !bytes.Contains(defaults.Body.Bytes(), []byte("todo.summary")) {
+	if !bytes.Contains(defaults.Body.Bytes(), []byte("todo.summary")) || !bytes.Contains(defaults.Body.Bytes(), []byte("notifications.summary")) {
 		t.Fatal("reset did not restore defaults")
 	}
 }
@@ -203,7 +205,9 @@ func TestUpgradeTodoOnlyWorkspacePreservesDataAndAddsDefaultWidget(t *testing.T)
 	if err := json.Unmarshal(catalog.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if len(body.Widgets) != 2 || body.Widgets[0].Visible || body.Widgets[0].Size != "large" || !body.Widgets[1].Visible || body.Widgets[1].ID != "investment.overview" {
+	if len(body.Widgets) != 4 || body.Widgets[0].Visible || body.Widgets[0].Size != "large" || !body.Widgets[1].Visible || body.Widgets[1].ID != "investment.overview" ||
+		!body.Widgets[2].Visible || body.Widgets[2].ID != "news.summary" ||
+		!body.Widgets[3].Visible || !body.Widgets[3].Enabled || body.Widgets[3].ID != "notifications.summary" {
 		t.Fatalf("upgrade layout: %+v", body)
 	}
 	// Online backup must include both the new schema and the original settings.

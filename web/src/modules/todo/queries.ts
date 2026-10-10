@@ -1,11 +1,14 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, apiValidated } from "../../shared/api";
 import { savedSchema, type Widget } from "../../shared/schema";
+import { moduleQueryKey } from "../../shared/queryKeys";
 import { summarySchema, tasksResponseSchema, wallosSettingsSchema, wallosSyncSchema, taskSchema, type WallosSettingsInput } from "./schema";
+
+const todoKey = (...parts: readonly unknown[]) => moduleQueryKey("todo", ...parts);
 
 export function useTasks() {
   return useInfiniteQuery({
-    queryKey: ["todo", "tasks"],
+    queryKey: todoKey("tasks"),
     initialPageParam: "",
     queryFn: async ({ pageParam }) => tasksResponseSchema.parse(await api(`/api/modules/todo/tasks?limit=50${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`)),
     getNextPageParam: (page) => page.nextCursor
@@ -25,11 +28,11 @@ export function deleteTask(id: string) {
 }
 
 export function useTodoSummary(widget: Widget) {
-  return useQuery({ queryKey: ["widget", widget.id], queryFn: async () => summarySchema.parse(await api(widget.dataRoute)) });
+  return useQuery({ queryKey: todoKey("widget", widget.id), queryFn: async () => summarySchema.parse(await api(widget.dataRoute)) });
 }
 
 export function useWallosSettings(enabled: boolean) {
-  return useQuery({ queryKey: ["todo", "wallos"], enabled, queryFn: async () => wallosSettingsSchema.parse(await api("/api/modules/todo/wallos")) });
+  return useQuery({ queryKey: todoKey("wallos"), enabled, queryFn: async () => wallosSettingsSchema.parse(await api("/api/modules/todo/wallos")) });
 }
 
 export function saveWallosSettings(input: WallosSettingsInput) {
@@ -42,5 +45,5 @@ export async function syncWallos() {
 
 export function useRefreshTodo() {
   const client = useQueryClient();
-  return () => Promise.all([["todo"], ["dashboard"], ["widget"]].map((queryKey) => client.invalidateQueries({ queryKey })));
+  return () => client.invalidateQueries({ queryKey: todoKey() });
 }

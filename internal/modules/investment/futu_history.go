@@ -60,7 +60,7 @@ func (g *futuGateway) kline(ctx context.Context, symbol, resolution string, from
 		historyErr = g.maybeHistory(ctx, client, symbol, resolution, klType, fromMs)
 	}
 	if historyErr != nil {
-		g.module.logger.Warn("富途牛牛history fallback skipped", "errorType", fmt.Sprintf("%T", historyErr))
+		g.deps.logger.Warn("富途牛牛history fallback skipped", "errorType", fmt.Sprintf("%T", historyErr))
 		if requireHistory {
 			return nil, fmt.Errorf("富途历史 K 线不完整: %w", historyErr)
 		}
@@ -72,7 +72,7 @@ func (g *futuGateway) maybeHistory(ctx context.Context, client *opendClient, sym
 	if fromMs <= 0 {
 		return nil
 	}
-	oldest, err := g.module.queries.OldestFutuBarTime(ctx, investmentsqlc.OldestFutuBarTimeParams{Symbol: symbol, Resolution: resolution})
+	oldest, err := g.deps.queries.OldestFutuBarTime(ctx, investmentsqlc.OldestFutuBarTimeParams{Symbol: symbol, Resolution: resolution})
 	if err == nil && oldest <= fromMs {
 		return nil
 	}
@@ -112,7 +112,7 @@ func (g *futuGateway) fetchHistoryDates(ctx context.Context, client *opendClient
 
 func (g *futuGateway) storeBars(ctx context.Context, symbol, resolution string, bars []futuBar) error {
 	for _, bar := range bars {
-		if err := g.module.queries.UpsertFutuBar(ctx, investmentsqlc.UpsertFutuBarParams{
+		if err := g.deps.queries.UpsertFutuBar(ctx, investmentsqlc.UpsertFutuBarParams{
 			Symbol: symbol, Resolution: resolution, TimeMs: bar.Time, Open: bar.Open, High: bar.High, Low: bar.Low, Close: bar.Close, Volume: bar.Volume,
 		}); err != nil {
 			return err
@@ -125,7 +125,7 @@ func (g *futuGateway) loadBars(ctx context.Context, symbol, resolution string, f
 	if toMs == 0 {
 		toMs = time.Now().UnixMilli() + int64(time.Hour/time.Millisecond)
 	}
-	rows, err := g.module.queries.ListFutuBars(ctx, investmentsqlc.ListFutuBarsParams{
+	rows, err := g.deps.queries.ListFutuBars(ctx, investmentsqlc.ListFutuBarsParams{
 		Symbol: symbol, Resolution: resolution, TimeMs: fromMs, TimeMs_2: toMs,
 	})
 	if err != nil {

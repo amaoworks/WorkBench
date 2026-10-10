@@ -92,7 +92,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "删除 AAPL", exact: true }).click();
     await page.getByRole("button", { name: "确认删除", exact: true }).click();
-    await page.getByText("尚无监控规则", { exact: true }).waitFor();
+    await page.getByText("暂无监控规则", { exact: true }).waitFor();
     assert.deepEqual(errors, []);
     console.log("PASS: Telegram settings/secret redaction/test UI, draft retention, monitor create/edit/pause/persistence/delete, desktop/mobile layout; no real outbound messages.");
   } finally {

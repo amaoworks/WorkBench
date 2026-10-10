@@ -1,11 +1,13 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useId, useState } from "react";
 import { CalendarClock, ChevronLeft, ChevronRight } from "lucide-react";
-import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Field } from "../../components/ui/Field";
+import { Select } from "../../components/ui/Select";
 
 const pad = (value: number) => String(value).padStart(2, "0");
+const HOURS = Array.from({ length: 24 }, (_, index) => ({ value: pad(index), label: pad(index) }));
+const MINUTES = Array.from({ length: 60 }, (_, index) => ({ value: pad(index), label: pad(index) }));
 const dateKey = (date: Date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 
 export function TodoDeadline({ value, onChange }: { value: string; onChange: (value: string) => void }) {
@@ -59,7 +61,9 @@ export function TodoDeadline({ value, onChange }: { value: string; onChange: (va
           lang="zh-CN"
         >
           <CalendarClock size={17} aria-hidden="true" />
-          <Badge id={valueId}>{label}</Badge>
+          <span id={valueId} className="task-date-value" data-empty={value ? undefined : true}>
+            {label}
+          </span>
         </Button>
       </Dialog.Trigger>
       <Dialog.Portal>
@@ -133,22 +137,10 @@ export function TodoDeadline({ value, onChange }: { value: string; onChange: (va
           </div>
           <div className="mt-4 grid grid-cols-2 gap-3">
             <Field label="小时">
-              <select className="ui-input" value={hour} onChange={(event) => setHour(event.target.value)}>
-                {Array.from({ length: 24 }, (_, index) => (
-                  <option key={index} value={pad(index)}>
-                    {pad(index)}
-                  </option>
-                ))}
-              </select>
+              <Select value={hour} onValueChange={setHour} options={HOURS} />
             </Field>
             <Field label="分钟">
-              <select className="ui-input" value={minute} onChange={(event) => setMinute(event.target.value)}>
-                {Array.from({ length: 60 }, (_, index) => (
-                  <option key={index} value={pad(index)}>
-                    {pad(index)}
-                  </option>
-                ))}
-              </select>
+              <Select value={minute} onValueChange={setMinute} options={MINUTES} />
             </Field>
           </div>
           <div className="mt-4 flex justify-end gap-2">

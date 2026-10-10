@@ -10,6 +10,7 @@ import { Notice } from "../../components/ui/Notice";
 import { cn } from "../../shared/cn";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { toast } from "sonner";
+import { formatDateTime } from "../../shared/format";
 
 export default function NotificationsPage() {
   const queryClient = useQueryClient();
@@ -88,7 +89,7 @@ function NotificationRow({ item, onRead, onArchive }: { item: Notification; onRe
             <p className="font-medium break-words">{item.title}</p>
             <p className="mt-1 text-sm text-[var(--muted)] break-words">{item.content}</p>
           </div>
-          <time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleString()}</time>
+          <time dateTime={item.createdAt}>{formatDateTime(item.createdAt, { seconds: false })}</time>
         </div>
         <div className="notification-actions mt-3 flex flex-wrap gap-2">
           {item.actionRoute && (

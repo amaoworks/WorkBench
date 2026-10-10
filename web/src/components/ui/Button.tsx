@@ -3,7 +3,7 @@ import { Link, type LinkProps } from "react-router-dom";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "../../shared/cn";
 
-const variants = cva("ui-button focus-ring disabled:pointer-events-none disabled:opacity-50", {
+const variants = cva("ui-button focus-ring disabled:pointer-events-none", {
   variants: {
     variant: {
       primary: "bg-[var(--brand)] text-[var(--on-brand)] hover:opacity-85",
@@ -19,7 +19,7 @@ const variants = cva("ui-button focus-ring disabled:pointer-events-none disabled
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof variants> {}
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(({ className, variant, size, ...props }, ref) => (
-  <button ref={ref} data-size={size ?? "md"} className={cn(variants({ variant, size }), className)} {...props} />
+  <button ref={ref} data-size={size ?? "md"} data-variant={variant ?? "primary"} className={cn(variants({ variant, size }), className)} {...props} />
 ));
 Button.displayName = "Button";
 
@@ -27,6 +27,6 @@ Button.displayName = "Button";
 export interface ButtonLinkProps extends LinkProps, VariantProps<typeof variants> {}
 
 export const ButtonLink = forwardRef<HTMLAnchorElement, ButtonLinkProps>(({ className, variant, size, ...props }, ref) => (
-  <Link ref={ref} data-size={size ?? "md"} className={cn(variants({ variant, size }), className)} {...props} />
+  <Link ref={ref} data-size={size ?? "md"} data-variant={variant ?? "primary"} className={cn(variants({ variant, size }), className)} {...props} />
 ));
 ButtonLink.displayName = "ButtonLink";

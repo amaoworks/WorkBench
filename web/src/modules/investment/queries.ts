@@ -2,19 +2,21 @@ import { useRef, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, apiValidated } from "../../shared/api";
 import type { Widget } from "../../shared/schema";
-import { futuSettingsSchema, overnightSettingsSchema, schwabSettingsSchema, priceMonitorSchema, priceHistorySchema, priceRuleSchema, investmentPreferencesSchema, investmentPreferenceSavedSchema, investmentViewSchema, type InvestmentView, type PriceRuleInput, type FutuSettingsInput, type SchwabSettingsInput } from "./schema";
+import { moduleQueryKey } from "../../shared/queryKeys";
+import { futuSettingsSchema, overnightSettingsSchema, schwabSettingsSchema, priceMonitorSchema, priceHistorySchema, priceRuleSchema, investmentViewPreferencesSchema, investmentPreferenceSavedSchema, type InvestmentView, type PriceRuleInput, type FutuSettingsInput, type SchwabSettingsInput } from "./schema";
 
 const PREFERENCES = "/api/modules/investment/preferences";
-const VIEW_KEY = ["investment", "preferences", "view"];
+const investmentKey = (...parts: readonly unknown[]) => moduleQueryKey("investment", ...parts);
+const VIEW_KEY = investmentKey("preferences", "view");
 export function useInvestmentView() {
   const [writer] = useState(() => Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join(""));
   const [draft, setDraft] = useState<InvestmentView | null>(null);
   const base = useRef<number | null>(null);
   const sequence = useRef(0);
   const query = useQuery({ queryKey: VIEW_KEY, gcTime: 0, refetchOnWindowFocus: false, queryFn: async () => {
-    const result = await apiValidated(PREFERENCES, investmentPreferencesSchema);
+    const result = await apiValidated(PREFERENCES, investmentViewPreferencesSchema);
     const entry = result.entries.view;
-    return { revision: entry?.revision ?? 0, value: investmentViewSchema.parse(entry?.value ?? { tab: "terminal", expanded: false }) };
+    return { revision: entry?.revision ?? 0, value: entry?.value ?? { tab: "terminal", expanded: false } };
   } });
   const save = useMutation({
     scope: { id: "investment-view" },
@@ -32,10 +34,10 @@ export function useInvestmentView() {
 
 const MONITOR = "/api/modules/investment/monitor";
 export function usePriceMonitor() {
-  return useQuery({ queryKey: ["investment", "monitor"], queryFn: () => apiValidated(MONITOR, priceMonitorSchema), refetchInterval: 15_000 });
+  return useQuery({ queryKey: investmentKey("monitor"), queryFn: () => apiValidated(MONITOR, priceMonitorSchema), refetchInterval: 15_000 });
 }
 export function usePriceHistory() {
-  return useInfiniteQuery({ queryKey: ["investment", "price-history"], initialPageParam: "",
+  return useInfiniteQuery({ queryKey: investmentKey("price-history"), initialPageParam: "",
     queryFn: ({ pageParam }) => apiValidated(`${MONITOR}/history?cursor=${encodeURIComponent(pageParam)}`, priceHistorySchema),
     getNextPageParam: (page) => page.nextCursor || undefined, refetchInterval: 30_000 });
 }
@@ -47,11 +49,11 @@ export function deletePriceRule(id: string) {
 }
 
 export function useInvestmentWidget(widget: Widget) {
-  return useQuery({ queryKey: ["widget", widget.id], queryFn: async () => schwabSettingsSchema.parse(await api(widget.dataRoute)), refetchInterval: 30_000 });
+  return useQuery({ queryKey: investmentKey("widget", widget.id), queryFn: async () => schwabSettingsSchema.parse(await api(widget.dataRoute)), refetchInterval: 30_000 });
 }
 
 export function useSchwabSettings(enabled: boolean) {
-  return useQuery({ queryKey: ["investment", "schwab"], enabled, queryFn: async () => schwabSettingsSchema.parse(await api("/api/modules/investment/schwab")), refetchInterval: 30_000 });
+  return useQuery({ queryKey: investmentKey("schwab"), enabled, queryFn: async () => schwabSettingsSchema.parse(await api("/api/modules/investment/schwab")), refetchInterval: 30_000 });
 }
 
 export function saveSchwabSettings(input: SchwabSettingsInput) {
@@ -67,7 +69,7 @@ export function refreshSchwabToken() {
 }
 
 export function useFutuSettings(enabled: boolean) {
-  return useQuery({ queryKey: ["investment", "futu"], enabled, queryFn: async () => futuSettingsSchema.parse(await api("/api/modules/investment/futu")), refetchInterval: (query) => query.state.data?.enabled && !query.state.data?.qotLogined ? 2_000 : 30_000 });
+  return useQuery({ queryKey: investmentKey("futu"), enabled, queryFn: async () => futuSettingsSchema.parse(await api("/api/modules/investment/futu")), refetchInterval: (query) => query.state.data?.enabled && !query.state.data?.qotLogined ? 2_000 : 30_000 });
 }
 
 export function saveFutuSettings(input: FutuSettingsInput) {
@@ -79,7 +81,7 @@ export function disconnectFutu() {
 }
 
 export function useOvernightSettings(enabled: boolean) {
-  return useQuery({ queryKey: ["investment", "overnight"], enabled, queryFn: async () => overnightSettingsSchema.parse(await api("/api/modules/investment/overnight")), refetchInterval: 30_000 });
+  return useQuery({ queryKey: investmentKey("overnight"), enabled, queryFn: async () => overnightSettingsSchema.parse(await api("/api/modules/investment/overnight")), refetchInterval: 30_000 });
 }
 
 export function saveOvernightSettings(enabled: boolean) {
@@ -88,5 +90,5 @@ export function saveOvernightSettings(enabled: boolean) {
 
 export function useRefreshInvestment() {
   const client = useQueryClient();
-  return () => Promise.all([["investment"], ["widget", "investment.overview"]].map((queryKey) => client.invalidateQueries({ queryKey })));
+  return () => client.invalidateQueries({ queryKey: investmentKey() });
 }

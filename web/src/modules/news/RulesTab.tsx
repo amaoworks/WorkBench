@@ -14,6 +14,7 @@ import { Switch } from "../../components/ui/Switch";
 import { useConfirmDelete } from "../../components/ui/useConfirmDelete";
 import { deleteRule, saveRule, useRefreshNews, useRules, useSources } from "./queries";
 import type { Rule, RuleInput } from "./schema";
+import { Checkbox } from "../../components/ui/Checkbox";
 
 const blank: RuleInput = { name: "", includeKeywords: [], excludeKeywords: [], sourceIds: [], topic: "", enabled: true };
 
@@ -185,29 +186,24 @@ function RuleForm({
       <fieldset>
         <legend className="text-sm">订阅源</legend>
         <div className="mt-2 flex max-h-36 flex-wrap gap-x-4 gap-y-2 overflow-y-auto rounded-lg border border-[var(--border)] p-3">
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={sourceIds.length === 0}
-              onChange={(event) => {
-                if (event.target.checked) setSourceIds([]);
-              }}
-            />
+          <Checkbox
+            checked={sourceIds.length === 0}
+            onChange={(checked) => {
+              if (checked) setSourceIds([]);
+            }}
+          >
             全部订阅源
-          </label>
+          </Checkbox>
           {sources.map((source) => (
-            <label key={source.id} className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={sourceIds.includes(source.id)}
-                onChange={(event) =>
-                  setSourceIds((current) =>
-                    event.target.checked ? [...current, source.id] : current.filter((sourceId) => sourceId !== source.id),
-                  )
-                }
-              />
+            <Checkbox
+              key={source.id}
+              checked={sourceIds.includes(source.id)}
+              onChange={(checked) =>
+                setSourceIds((current) => (checked ? [...current, source.id] : current.filter((sourceId) => sourceId !== source.id)))
+              }
+            >
               {source.name}
-            </label>
+            </Checkbox>
           ))}
         </div>
       </fieldset>

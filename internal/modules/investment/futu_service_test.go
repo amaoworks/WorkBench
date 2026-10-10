@@ -182,6 +182,7 @@ func TestOpenDModuleDisableWorksWithCancelledRequest(t *testing.T) {
 	m := openInvestmentModule(t)
 	m.deps.FutuOpenDAddress = net.JoinHostPort(rec.Host, strconv.Itoa(rec.Port))
 	m.opend = s
+	m.futu.deps.opend = s
 	if err := m.storeFutu(context.Background(), rec); err != nil {
 		t.Fatal(err)
 	}
@@ -205,6 +206,7 @@ func TestOpenDModuleDisableWorksWithCancelledRequest(t *testing.T) {
 func TestOpenDGatewayDoesNotConnectWhenManagedServiceFailed(t *testing.T) {
 	m := openInvestmentModule(t)
 	m.opend = newOpenDService(t.TempDir(), "unused")
+	m.futu.deps.opend = m.opend
 	m.opend.setStatus("error", "fixture startup failure")
 	if _, err := m.futu.ensureOverlay(context.Background()); !errors.Is(err, errOverlayOff) {
 		t.Fatal("disabled night error contract changed", err)

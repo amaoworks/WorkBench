@@ -50,8 +50,8 @@ func (m *Module) SaveSettings(ctx context.Context, s Settings) (Settings, error)
 	if _, err := time.LoadLocation(s.TimeZone); err != nil {
 		return s, errors.New("时区无效")
 	}
-	m.aiMu.Lock()
-	defer m.aiMu.Unlock()
+	m.settingsMu.Lock()
+	defer m.settingsMu.Unlock()
 	raw, _ := json.Marshal(s)
 	err := m.mutate(ctx, "news.settings.changed", "settings", func(q *newssqlc.Queries) error {
 		old, err := q.GetSettings(ctx)

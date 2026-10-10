@@ -14,6 +14,7 @@ import { TodoDeadline } from "./TodoDeadline";
 import { cn } from "../../shared/cn";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
+import { formatDateTime } from "../../shared/format";
 
 export default function TodoPage() {
   const [title, setTitle] = useState("");
@@ -74,7 +75,7 @@ export default function TodoPage() {
       <Card>
         <CardHeader
           title="任务清单"
-          description={tasks.data ? `${items.length} 项 · ${items.filter((task) => !task.completedAt).length} 项未完成` : undefined}
+          description={tasks.data ? taskCount(items.length, items.filter((task) => !task.completedAt).length) : undefined}
         />
         {tasks.isLoading && (
           <div className="space-y-3 p-4">
@@ -131,7 +132,7 @@ function TaskRow({ task, onToggle, onDelete }: { task: Task; onToggle: () => voi
         {task.dueAt && (
           <p className={cn("mt-1 text-xs text-[var(--muted)]", overdue && "text-warning")}>
             {overdue ? "已逾期 · " : ""}
-            {new Date(task.dueAt).toLocaleString()}
+            {formatDateTime(task.dueAt, { seconds: false })}
           </p>
         )}
       </div>
@@ -146,4 +147,11 @@ function TaskRow({ task, onToggle, onDelete }: { task: Task; onToggle: () => voi
       </Button>
     </div>
   );
+}
+
+function taskCount(total: number, open: number) {
+  if (total === 0) return undefined;
+  if (open === total) return `${total} 项未完成`;
+  if (open === 0) return `${total} 项 · 全部完成`;
+  return `${total} 项 · ${open} 项未完成`;
 }

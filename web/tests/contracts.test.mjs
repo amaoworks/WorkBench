@@ -20,7 +20,7 @@ const schemas = {
   backup: settings.backupSchema, task: todo.taskSchema, tasks: todo.tasksResponseSchema,
   summary: todo.summarySchema, wallos: todo.wallosSettingsSchema, wallosSync: todo.wallosSyncSchema,
   schwab: investment.schwabSettingsSchema, futu: investment.futuSettingsSchema, overnight: investment.overnightSettingsSchema,
-  investmentPreferences: investment.investmentPreferencesSchema, investmentPreferenceSaved: investment.investmentPreferenceSavedSchema,
+  investmentPreferences: investment.investmentViewPreferencesSchema, investmentPreferenceSaved: investment.investmentPreferenceSavedSchema,
   telegram: settings.telegramSettingsSchema, priceMonitor: investment.priceMonitorSchema, priceRule: investment.priceRuleSchema, priceHistory: investment.priceHistorySchema,
   newsSources: news.sourcesResponseSchema, newsSource: news.sourceSchema,
   newsRefreshSource: news.refreshSourceSchema, newsRefreshAll: news.refreshAllSchema,

@@ -8,6 +8,13 @@ const { spawn } = require("node:child_process");
 const { createServer } = require("node:net");
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 
+
+// Shared Select is a Radix listbox: open the trigger, then pick the option by its visible label.
+async function choose(page, trigger, option) {
+  await trigger.click();
+  await page.getByRole("option", { name: option, exact: true }).click();
+  await page.getByRole("listbox").waitFor({ state: "detached" });
+}
 async function unusedPort() {
   const listener = createServer();
   await new Promise((resolve, reject) => { listener.once("error", reject); listener.listen(0, "127.0.0.1", resolve); });
@@ -146,8 +153,8 @@ async function visitWithoutOverflow(page, url, label, ready) {
     await deadlineTrigger.click();
     const dayLabel = `${now.getFullYear()} 年 ${now.getMonth() + 1} 月 15 日`;
     await deadlineDialog.getByRole("button", { name: dayLabel, exact: true }).click();
-    await deadlineDialog.getByLabel("小时", { exact: true }).selectOption("13");
-    await deadlineDialog.getByLabel("分钟", { exact: true }).selectOption("45");
+    await choose(page, deadlineDialog.getByLabel("小时", { exact: true }), "13");
+    await choose(page, deadlineDialog.getByLabel("分钟", { exact: true }), "45");
     await deadlineDialog.getByRole("button", { name: "确定", exact: true }).click();
     await page.getByText(/15日 13:45/).waitFor();
     const deadlineValueId = await deadlineTrigger.getAttribute("aria-describedby");
@@ -158,8 +165,8 @@ async function visitWithoutOverflow(page, url, label, ready) {
     await page.getByText("截止时间", { exact: true }).waitFor();
     await deadlineTrigger.click();
     await deadlineDialog.getByRole("button", { name: dayLabel, exact: true }).click();
-    await deadlineDialog.getByLabel("小时", { exact: true }).selectOption("13");
-    await deadlineDialog.getByLabel("分钟", { exact: true }).selectOption("45");
+    await choose(page, deadlineDialog.getByLabel("小时", { exact: true }), "13");
+    await choose(page, deadlineDialog.getByLabel("分钟", { exact: true }), "45");
     await deadlineDialog.getByRole("button", { name: "确定", exact: true }).click();
     await titleInput.fill("日期持久化验证");
     await titleInput.press("Enter");
@@ -186,7 +193,7 @@ async function visitWithoutOverflow(page, url, label, ready) {
     await expectNoOverflow(page, "Todo at 390px");
 
     await page.goto(`${baseURL}/news`);
-    for (const label of ["资讯", "订阅源", "关注规则", "简报"]) {
+    for (const label of ["文章", "订阅源", "关注规则", "简报"]) {
       await page.getByRole("button", { name: label, exact: true }).waitFor();
     }
     await api(page, "/api/modules/news/sources", "POST", {
@@ -323,11 +330,11 @@ async function visitWithoutOverflow(page, url, label, ready) {
       });
       await visitWithoutOverflow(page, `${baseURL}/investment?tab=monitor`, `Investment monitor at ${prefix}`, async () => {
         await page.getByRole("button", { name: "添加规则", exact: true }).waitFor();
-        await page.getByText("尚无监控规则", { exact: true }).waitFor();
+        await page.getByText("暂无监控规则", { exact: true }).waitFor();
         await page.getByText("暂无触发记录", { exact: true }).waitFor();
       });
       const newsReady = {
-        articles: () => page.getByText("暂无资讯", { exact: true }).waitFor(),
+        articles: () => page.getByText("暂无订阅源", { exact: true }).waitFor(),
         sources: () => page.getByText("暂无订阅源", { exact: true }).waitFor(),
         rules: () => page.getByText("暂无关注规则", { exact: true }).waitFor(),
         digests: () => page.getByText("暂无简报", { exact: true }).waitFor()

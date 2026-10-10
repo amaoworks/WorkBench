@@ -33,8 +33,9 @@ type Module struct {
 	ai            contracts.TextGenerator
 	client        *http.Client
 	now           func() time.Time
-	fetchMu       sync.Mutex
-	aiMu          sync.Mutex
+	sourceMu      sync.Mutex
+	settingsMu    sync.Mutex
+	work          workLocks
 	stateMu       sync.Mutex
 	life          context.Context
 	cancel        context.CancelFunc
@@ -109,6 +110,13 @@ func (m *Module) Register(r contracts.ModuleRegistrar) error {
 		if err := r.Handle(route.method, "/api/modules/news/"+route.path, wrapped); err != nil {
 			return err
 		}
+	}
+	// The overview card reads the existing stats route; the frontend adds the latest headlines itself.
+	if err := r.Widget(contracts.WidgetDefinition{
+		ID: "news.summary", Module: "news", SchemaVersion: 1, Title: "资讯概览", WidgetKind: "news.summary",
+		DataRoute: "/api/modules/news/stats", Size: contracts.WidgetSmall, Order: 30,
+	}); err != nil {
+		return err
 	}
 	for _, job := range []struct {
 		id      string

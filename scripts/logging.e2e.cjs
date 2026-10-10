@@ -2,6 +2,12 @@
 const assert = require("node:assert/strict");
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 const baseURL = process.env.WORKBENCH_TEST_URL || "http://127.0.0.1:18086";
+// Shared Select is a Radix listbox: open the trigger, then pick the option by its visible label.
+async function choose(page, trigger, option) {
+  await trigger.click();
+  await page.getByRole("option", { name: option, exact: true }).click();
+  await page.getByRole("listbox").waitFor({ state: "detached" });
+}
 (async () => {
   const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH || undefined, args: ["--no-sandbox"] });
   try {
@@ -21,7 +27,7 @@ const baseURL = process.env.WORKBENCH_TEST_URL || "http://127.0.0.1:18086";
     });
     await select.waitFor();
     for (const level of ["debug", "warn", "error", "info"]) {
-      await select.selectOption(level);
+      await choose(page, select, { debug: "DEBUG · 调试", info: "INFO · 信息", warn: "WARN · 警告", error: "ERROR · 错误" }[level]);
       const arrived = new Promise((resolve) => { requestArrived = resolve; });
       const response = page.waitForResponse((r) => r.url() === `${baseURL}/api/settings/logging` && r.request().method() === "PUT");
       await save.click();
@@ -35,7 +41,7 @@ const baseURL = process.env.WORKBENCH_TEST_URL || "http://127.0.0.1:18086";
       releaseRequest = undefined;
       await page.reload();
       await select.waitFor();
-      assert.equal(await select.inputValue(), level);
+      assert.equal(await select.innerText(), { debug: "DEBUG · 调试", info: "INFO · 信息", warn: "WARN · 警告", error: "ERROR · 错误" }[level]);
       assert(await save.isDisabled());
     }
     await page.setViewportSize({ width: 390, height: 844 });

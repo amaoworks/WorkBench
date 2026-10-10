@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -65,7 +67,6 @@ type App struct {
 	gateway            *ai.Gateway
 	textAI             *ai.TextService
 	builtins           []builtinBinding
-	investment         *investment.Module
 }
 
 func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
@@ -76,6 +77,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 		origin, _ := url.Parse(cfg.PublicURL) // Validated above.
 		cfg.AllowedHosts = append(append([]string(nil), cfg.AllowedHosts...), origin.Host)
 	}
+	cfg.AllowedHosts = uniqueHosts(cfg.AllowedHosts)
 	if cfg.LogLevel == "" {
 		cfg.LogLevel = "info"
 	}
@@ -162,7 +164,10 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 		_ = scheduled.Shutdown(context.Background())
 		return nil, err
 	}
-	dashboardService := dashboard.New(database.SQL(), registry.Catalog().Widgets, registry.IsEnabled)
+	widgets := append(slices.Clone(registry.Catalog().Widgets), notifications.SummaryWidget)
+	dashboardService := dashboard.New(database.SQL(), widgets, func(module contracts.ModuleID) bool {
+		return module == notifications.PlatformModule || registry.IsEnabled(module)
+	})
 	notificationHTTP := notifications.NewHTTPHandler(notificationService, hub)
 	toolRuntime, err := ai.NewToolRuntime(database.SQL(), registry.Catalog().Tools, registry.IsEnabled)
 	if err != nil {
@@ -185,7 +190,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 		config: cfg, logger: logger, logLevel: logLevel, database: database, registry: registry,
 		dispatcher: dispatcher, scheduler: scheduled, auth: authService,
 		telegram: telegram, telegramDispatcher: telegramDispatcher,
-		builtins: builtins, investment: investmentModule,
+		builtins: builtins,
 	}
 	application.gateway = gateway
 	application.textAI = textAI
@@ -302,16 +307,28 @@ func (a *App) routes(
 }
 
 func (a *App) session(next http.Handler) http.Handler {
-	return applySession(a.auth.LoadAndSave, a.auth.Load, next)
+	var policies []contracts.ModuleSessionPolicyProvider
+	for _, binding := range a.builtins {
+		if policy, ok := binding.module.(contracts.ModuleSessionPolicyProvider); ok {
+			policies = append(policies, policy)
+		}
+	}
+	return applySession(a.auth.LoadAndSave, a.auth.Load, next, policies...)
 }
 
-func applySession(loadAndSave, load func(http.Handler) http.Handler, next http.Handler) http.Handler {
+func applySession(loadAndSave, load func(http.Handler) http.Handler, next http.Handler, policies ...contracts.ModuleSessionPolicyProvider) http.Handler {
 	save := loadAndSave(next)
 	read := load(next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if investment.HashedChartLibraryPath(r.URL.Path) {
-			read.ServeHTTP(investment.WrapHashedChartResponse(w), r)
-			return
+		for _, provider := range policies {
+			policy := provider.SessionPolicy(r)
+			if policy.ReadOnly {
+				if policy.WrapResponse != nil {
+					w = policy.WrapResponse(w)
+				}
+				read.ServeHTTP(w, r)
+				return
+			}
 		}
 		save.ServeHTTP(w, r)
 	})
@@ -515,9 +532,7 @@ func (a *App) Run(ctx context.Context) error {
 		serverDone <- a.server.Serve(listener)
 	}()
 	a.logger.Info("workbench started", "component", "app", "address", listener.Addr().String(), "authMode", a.config.AuthMode, "publicURL", a.config.PublicURL)
-	if a.investment != nil {
-		a.investment.WarmChartLibrary(runCtx)
-	}
+	a.startModules(runCtx)
 
 	select {
 	case <-ctx.Done():
@@ -544,6 +559,14 @@ func (a *App) Run(ctx context.Context) error {
 	return errors.Join(serverErr, schedulerErr)
 }
 
+func (a *App) startModules(ctx context.Context) {
+	for _, binding := range a.builtins {
+		if startup, ok := binding.module.(contracts.ModuleStartup); ok {
+			startup.OnStarted(ctx)
+		}
+	}
+}
+
 func (a *App) shutdownScheduler(ctx context.Context) error {
 	a.schedulerOnce.Do(func() { a.schedulerErr = a.scheduler.Shutdown(ctx) })
 	return a.schedulerErr
@@ -554,5 +577,21 @@ func (a *App) Close() error {
 	a.closeOnce.Do(func() {
 		result = errors.Join(a.registry.Close(), a.shutdownScheduler(context.Background()), a.database.Close())
 	})
+	return result
+}
+
+// uniqueHosts drops empty and repeated host names (case-insensitive), keeping the first spelling and order.
+func uniqueHosts(hosts []string) []string {
+	seen := make(map[string]bool, len(hosts))
+	result := make([]string, 0, len(hosts))
+	for _, host := range hosts {
+		host = strings.TrimSpace(host)
+		key := strings.ToLower(host)
+		if host == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		result = append(result, host)
+	}
 	return result
 }

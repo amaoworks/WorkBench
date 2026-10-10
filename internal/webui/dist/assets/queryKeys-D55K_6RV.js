@@ -1,0 +1,1 @@
+function e(e,...t){return[e,...t]}async function t(t,n){let r=e(n);await t.cancelQueries({queryKey:r}),t.removeQueries({queryKey:r})}export{e as n,t};

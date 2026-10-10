@@ -5,15 +5,15 @@ const ORDER_LIMIT = 3000;
 const YEAR_MS = 365 * 24 * 60 * 60 * 1000;
 const WORKING = 6;
 const ORDER_COLUMNS = [
-    { label: 'symbol', formatter: 'symbol', id: 'symbol', dataFields: ['symbol', 'symbol', 'message'] },
-    { label: 'Status', id: 'status', dataFields: ['status'], formatter: 'status' },
-    { label: 'Side', id: 'side', dataFields: ['side'], formatter: 'side' },
-    { label: 'Type', id: 'type', formatter: 'type', dataFields: ['type'] },
-    { label: 'limitPrice', id: 'limitPrice', dataFields: ['limitPrice', 'currency'], formatter: 'formatPriceInCurrency' },
-    { label: 'stopPrice', id: 'stopPrice', dataFields: ['stopPrice', 'currency'], formatter: 'formatPriceInCurrency' },
-    { label: 'Qty', id: 'qty', dataFields: ['qty'], formatter: 'formatQuantity' },
-    { label: 'Filled', id: 'filledQty', dataFields: ['filledQty'], formatter: 'formatQuantity' },
-    { label: 'avgPrice', id: 'avgPrice', dataFields: ['avgPrice', 'currency'], formatter: 'formatPriceInCurrency' },
+    { label: '标的', formatter: 'symbol', id: 'symbol', dataFields: ['symbol', 'symbol', 'message'] },
+    { label: '状态', id: 'status', dataFields: ['status'], formatter: 'status' },
+    { label: '方向', id: 'side', dataFields: ['side'], formatter: 'side' },
+    { label: '类型', id: 'type', formatter: 'type', dataFields: ['type'] },
+    { label: '限价', id: 'limitPrice', dataFields: ['limitPrice', 'currency'], formatter: 'formatPriceInCurrency' },
+    { label: '止损价', id: 'stopPrice', dataFields: ['stopPrice', 'currency'], formatter: 'formatPriceInCurrency' },
+    { label: '数量', id: 'qty', dataFields: ['qty'], formatter: 'formatQuantity' },
+    { label: '已成交', id: 'filledQty', dataFields: ['filledQty'], formatter: 'formatQuantity' },
+    { label: '成交均价', id: 'avgPrice', dataFields: ['avgPrice', 'currency'], formatter: 'formatPriceInCurrency' },
 ];
 const byRecent = (a, b) => (b.updateTime || 0) - (a.updateTime || 0);
 // A missing broker timestamp falls back to Date.now() in mapOrder. It is not
@@ -400,7 +400,7 @@ export default class Broker {
             historyColumnsSorting: { property: 'updateTime', asc: false },
             positionColumns: [
                 {
-                    label: 'symbol',
+                    label: '标的',
                     formatter: 'symbol',
                     id: 'symbol',
                     dataFields: ['symbol', 'symbol', 'message'],
@@ -411,45 +411,45 @@ export default class Broker {
                     dataFields: ['direction'],
                 },
                 {
-                    label: 'Qty',
+                    label: '数量',
                     id: 'qty',
                     dataFields: ['qty'],
                     formatter: 'formatQuantity',
                 },
                 {
-                    label: 'avgPrice',
+                    label: '均价',
                     id: 'avgPrice',
                     dataFields: ['avgPrice', "currency"],
                     formatter: 'formatPriceInCurrency',
                 },
                 {
-                    label: 'marketPrice',
+                    label: '现价',
                     id: 'marketPrice',
                     dataFields: ['marketPrice', "currency"],
                     formatter: 'formatPriceInCurrency',
                 },
                 {
-                    label: 'realized P&L',
+                    label: '已实现盈亏',
                     id: 'realizedPnl',
                     dataFields: ['realizedPnl', "currency"],
                     formatter: 'profitInInstrumentCurrency',
                 },
                 {
-                    label: 'unrealized P&L',
+                    label: '未实现盈亏',
                     id: 'pl',
                     dataFields: ['pl', "currency"],
                     formatter: 'profitInInstrumentCurrency',
                 },
                 {
-                    label: 'Daily P&L',
+                    label: '当日盈亏',
                     id: 'dailyPnL',
                     dataFields: ['dailyPnL', "currency"],
                     formatter: 'profitInInstrumentCurrency',
                 },
                 {
-                    label: 'type',
+                    label: '类型',
                     id: 'type',
-                    dataFields: ['type'],
+                    dataFields: ['assetTypeLabel'],
                 }
             ],
             pages: [

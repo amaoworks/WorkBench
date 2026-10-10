@@ -14,7 +14,6 @@ import (
 	"time"
 	_ "time/tzdata"
 
-	"workbench/internal/contracts"
 	"workbench/internal/foundation/httpapi"
 	"workbench/internal/foundation/identity"
 	todosqlc "workbench/internal/modules/todo/sqlc"
@@ -258,8 +257,11 @@ func (m *Module) importWallos(ctx context.Context, c wallosConfig, subs []wallos
 		id, idErr := sub.ID.Int64()
 		payment, dateErr := time.ParseInLocation("2006-01-02", sub.NextPayment, loc)
 		title := "Wallos续费提醒 - " + strings.TrimSpace(sub.Name)
-		if idErr != nil || id <= 0 || dateErr != nil || strings.TrimSpace(sub.Name) == "" || len(title) > 300 {
+		if idErr != nil || id <= 0 || dateErr != nil || strings.TrimSpace(sub.Name) == "" {
 			return 0, errors.New("Wallos 订阅包含无效 ID、名称或付款日期，未写入本批待办")
+		}
+		if _, err := validateTaskContent(title, ""); err != nil {
+			return 0, fmt.Errorf("Wallos 订阅名称无效，未写入本批待办: %w", err)
 		}
 		day := payment.AddDate(0, 0, -c.DaysBefore)
 		due := time.Date(day.Year(), day.Month(), day.Day(), c.ReminderHour, 0, 0, 0, loc).UTC()
@@ -279,31 +281,25 @@ func (m *Module) importWallos(ctx context.Context, c wallosConfig, subs []wallos
 			return 0, err
 		}
 		description := wallosDescription(sub, c.TimeZone)
-		if len(description) > 10000 {
-			return 0, errors.New("Wallos 订阅说明超过 10000 字节")
-		}
 		if n == 0 {
 			existingID, err := q.GetWallosOccurrenceTask(ctx, todosqlc.GetWallosOccurrenceTaskParams{Source: source, SubscriptionID: sub.ID.String(), PaymentDate: sub.NextPayment})
 			if err != nil {
 				return 0, err
 			}
-			changed, err := q.UpdateWallosTaskContent(ctx, todosqlc.UpdateWallosTaskContentParams{ID: existingID, Title: title, Description: description, UpdatedAt: now.UnixMilli()})
+			row, err := q.GetTask(ctx, existingID)
 			if err != nil {
 				return 0, err
 			}
-			if changed > 0 {
-				payload, _ := json.Marshal(map[string]string{"taskId": existingID})
-				if _, err := m.events.PublishTx(ctx, tx, contracts.NewEvent{Topic: "todo.task.updated", SchemaVersion: 1, SourceModule: "todo", AggregateID: existingID, Payload: payload}); err != nil {
+			if row.Title != title || row.Description != description {
+				task := taskFromRow(row)
+				task.Title, task.Description, task.UpdatedAt = title, description, now
+				if _, err := m.updateTaskTx(ctx, tx, task, "todo.task.updated"); err != nil {
 					return 0, err
 				}
 			}
 			continue
 		}
-		if err := q.CreateTask(ctx, todosqlc.CreateTaskParams{ID: taskID, Title: title, Description: description, DueAt: toNullTime(&due), CreatedAt: now.UnixMilli(), UpdatedAt: now.UnixMilli()}); err != nil {
-			return 0, err
-		}
-		payload, _ := json.Marshal(map[string]string{"taskId": taskID, "title": title})
-		if _, err := m.events.PublishTx(ctx, tx, contracts.NewEvent{Topic: "todo.task.created", SchemaVersion: 1, SourceModule: "todo", AggregateID: taskID, Payload: payload}); err != nil {
+		if _, err := m.createTaskTx(ctx, tx, taskID, CreateTask{Title: title, Description: description, DueAt: &due}, now); err != nil {
 			return 0, err
 		}
 		created++

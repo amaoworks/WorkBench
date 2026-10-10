@@ -51,18 +51,13 @@ export type FutuSettingsInput = { enabled: boolean; account: string; password: s
 export const overnightSettingsSchema = z.object({ enabled: z.boolean(), provider: z.literal("futu"), providerEnabled: z.boolean() });
 
 export const investmentViewSchema = z.object({ tab: z.enum(["terminal", "monitor"]), expanded: z.boolean() });
-const chartSelectionSchema = z.object({ symbol: z.string().trim().min(1).max(200),
-  resolution: z.enum(["1", "5", "15", "30", "1D", "1W", "1M"]), session: z.enum(["regular", "extended", "night", "equity24h"]),
-});
-export const investmentPreferencesSchema = z.object({ entries: z.record(z.string(), z.object({
-  revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER), value: z.union([z.null(), z.string(), z.record(z.string(), z.unknown())]),
-})) }).superRefine(({ entries }, context) => {
-  for (const [name, entry] of Object.entries(entries)) {
-    if (entry.value === null) continue;
-    const schema = name === "view" ? investmentViewSchema : name === "chart" ? chartSelectionSchema
-      : name === "layout" ? z.object({ charts: z.array(z.unknown()).min(1) }) : z.string();
-    if (!schema.safeParse(entry.value).success) context.addIssue({ code: "custom", path: ["entries", name, "value"], message: "投资设置格式无效" });
-  }
+export const investmentViewPreferencesSchema = z.object({
+  entries: z.object({
+    view: z.object({
+      revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+      value: investmentViewSchema.nullable(),
+    }).optional(),
+  }),
 });
 export const investmentPreferenceSavedSchema = z.object({
   revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),

@@ -27,6 +27,24 @@ type ModuleRouteProvider interface {
 	Routes() []ProvidedRoute
 }
 
+// SessionPolicy controls session handling for a module-owned request. ReadOnly
+// loads the session without refreshing its idle expiry. WrapResponse may adjust
+// response headers without bypassing authentication or module gating.
+type SessionPolicy struct {
+	ReadOnly     bool
+	WrapResponse func(http.ResponseWriter) http.ResponseWriter
+}
+
+type ModuleSessionPolicyProvider interface {
+	SessionPolicy(*http.Request) SessionPolicy
+}
+
+// ModuleStartup runs after HTTP serving has started. Implementations must return
+// promptly and bind any asynchronous work to ctx, which ends when Run stops.
+type ModuleStartup interface {
+	OnStarted(ctx context.Context)
+}
+
 // ModuleLifecycle is optional. Modules without process resources may omit it.
 // The registry restores persisted intent after migrations, serializes changes per
 // module, and closes resources on initialization failure and shutdown. Callbacks

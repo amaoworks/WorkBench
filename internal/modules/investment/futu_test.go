@@ -199,7 +199,7 @@ func TestFutuCommandLeaseGenerationChangesAfterGatewayReset(t *testing.T) {
 	if first == second {
 		t.Fatalf("gateway reset reused the lease generation %q", first)
 	}
-	other := newFutuGateway(module)
+	other := newFutuGateway(module.futu.deps)
 	other.mu.Lock()
 	otherGeneration := other.generationTokenLocked()
 	other.mu.Unlock()

@@ -18,6 +18,33 @@
     #preferences-status { bottom: 70px; }
     #watchlist-retry, #preferences-retry { margin-left: 12px; cursor: pointer; }
   </style>
+  <!-- Fetch the whole module graph and first settings reads in parallel instead of import level by level. -->
+  <link rel="preload" as="script" href="/investment/terminal/loading.js">
+  <link rel="modulepreload" href="/charting_library/charting_library.esm.js">
+  <link rel="modulepreload" href="/investment/terminal/datafeed.js">
+  <link rel="modulepreload" href="/investment/terminal/datafeed-symbols.js">
+  <link rel="modulepreload" href="/investment/terminal/datafeed-realtime.js">
+  <link rel="modulepreload" href="/investment/terminal/datafeed-bars.js">
+  <link rel="modulepreload" href="/investment/terminal/datafeed-quotes.js">
+  <link rel="modulepreload" href="/investment/terminal/broker.js">
+  <link rel="modulepreload" href="/investment/terminal/broker-models.js">
+  <link rel="modulepreload" href="/investment/terminal/schwab.js">
+  <link rel="modulepreload" href="/investment/terminal/stream.js">
+  <link rel="modulepreload" href="/investment/terminal/websocket.js">
+  <link rel="modulepreload" href="/investment/terminal/futu.js">
+  <link rel="modulepreload" href="/investment/terminal/session-menu.js">
+  <link rel="modulepreload" href="/investment/terminal/theme.js">
+  <link rel="modulepreload" href="/investment/terminal/watchlists.js">
+  <link rel="modulepreload" href="/investment/terminal/chart-state.js">
+  <link rel="modulepreload" href="/investment/terminal/preferences.js">
+  <link rel="modulepreload" href="/investment/terminal/chart-layout.js">
+  <script>
+    window.terminalPrefetch = Object.fromEntries(["/api/modules/investment/preferences", "/api/auth/csrf"].map(url => {
+      const response = fetch(url, { credentials: "same-origin", signal: AbortSignal.timeout(10000) });
+      response.catch(() => {});
+      return [url, response];
+    }));
+  </script>
 </head>
 <body>
   <div id="terminal-loading" role="status" aria-live="polite">
@@ -60,7 +87,15 @@
         else void Promise.resolve(layoutSync?.capture()).then(() => preferences.retry());
       };
     };
-    preferences = await loadPreferences({ report: reportPreferences });
+    const prefetched = window.terminalPrefetch || {};
+    delete window.terminalPrefetch;
+    const request = (url, init = {}) => {
+      const early = !init.method && prefetched[url];
+      if (!early) return fetch(url, init);
+      delete prefetched[url];
+      return early.catch(() => fetch(url, init));
+    };
+    preferences = await loadPreferences({ report: reportPreferences, request });
     const initialChartState = loadChartState(preferences);
     const initialSymbol = params.get("symbol") || initialChartState.symbol;
     window.ws = new SchwabStream();
@@ -205,6 +240,7 @@
       }, 200);
     };
 
+    const pad2 = value => String(value).padStart(2, "0");
     widget = new tvWidget({
       datafeed,
       container: "tv_chart_container",
@@ -219,6 +255,8 @@
       theme,
       locale: "zh",
       custom_translate_function: (originalText) => {
+        // Library key for the empty watchlist; match the prefix so the curly apostrophe does not matter.
+        if (typeof originalText === "string" && originalText.startsWith("Hmmm, seems that you didn")) return "自选表为空，点击上方 + 添加标的。";
         switch (originalText) {
           case "Time in force": return "有效期";
           case "Overnight via BOATS": return "夜盘";
@@ -227,6 +265,17 @@
         }
       },
       timezone: "Asia/Shanghai",
+      // Match the workbench format: YYYY-MM-DD and 24-hour HH:mm:ss.
+      custom_formatters: {
+        timeFormatter: {
+          format: date => `${pad2(date.getUTCHours())}:${pad2(date.getUTCMinutes())}:${pad2(date.getUTCSeconds())}`,
+          formatLocal: date => `${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`,
+        },
+        dateFormatter: {
+          format: date => `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())}`,
+          formatLocal: date => `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`,
+        },
+      },
       symbol_search_request_delay: 1000,
       fullscreen: false,
       autosize: true,

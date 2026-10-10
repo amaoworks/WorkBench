@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"strconv"
 	"sync"
@@ -29,8 +30,9 @@ func (c *futuWSClient) writePump() {
 }
 
 type futuGateway struct {
-	module     *Module
+	deps       futuGatewayDeps
 	connectMu  sync.Mutex
+	enabled    bool
 	mu         sync.Mutex
 	client     *opendClient
 	instanceID string
@@ -41,12 +43,19 @@ type futuGateway struct {
 	clients    map[*futuWSClient]struct{}
 }
 
-func newFutuGateway(module *Module) *futuGateway {
+type futuGatewayDeps struct {
+	load    func(context.Context) (futuRecord, error)
+	queries *investmentsqlc.Queries
+	opend   *openDService
+	logger  *slog.Logger
+}
+
+func newFutuGateway(deps futuGatewayDeps) *futuGateway {
 	instanceID, err := randomHex(16)
 	if err != nil {
 		instanceID = strconv.FormatInt(time.Now().UnixNano(), 16)
 	}
-	return &futuGateway{module: module, instanceID: instanceID, refs: make(map[subKey]*subLease), subOps: make(map[subOperationKey]*subOperation), clients: make(map[*futuWSClient]struct{})}
+	return &futuGateway{deps: deps, enabled: true, instanceID: instanceID, refs: make(map[subKey]*subLease), subOps: make(map[subOperationKey]*subOperation), clients: make(map[*futuWSClient]struct{})}
 }
 
 func (g *futuGateway) generationTokenLocked() string {
@@ -111,10 +120,10 @@ func (g *futuGateway) ensureOverlay(ctx context.Context) (*opendClient, error) {
 func (g *futuGateway) ensureConnection(ctx context.Context, requireOvernight bool) (*opendClient, error) {
 	g.connectMu.Lock()
 	defer g.connectMu.Unlock()
-	if !g.module.moduleEnabled {
+	if !g.enabled {
 		return nil, errors.New("投资模块未启用")
 	}
-	rec, err := g.module.loadFutu(ctx)
+	rec, err := g.deps.load(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -127,8 +136,8 @@ func (g *futuGateway) ensureConnection(ctx context.Context, requireOvernight boo
 	if requireOvernight && !rec.OvernightEnabled {
 		return nil, errOverlayOff
 	}
-	if g.module.opend != nil {
-		if state, _ := g.module.opend.status(); state != "running" {
+	if g.deps.opend != nil {
+		if state, _ := g.deps.opend.status(); state != "running" {
 			return nil, errors.New("富途牛牛服务尚未启动")
 		}
 	}
@@ -177,7 +186,7 @@ func (g *futuGateway) ensureConnection(ctx context.Context, requireOvernight boo
 			g.closeLocked()
 		}
 	}()
-	g.module.logger.Info("富途牛牛OpenD connected")
+	g.deps.logger.Info("富途牛牛OpenD connected")
 	return client, nil
 }
 
@@ -224,7 +233,7 @@ func (g *futuGateway) broadcastKL(symbol, resolution string, bar futuBar) {
 		"service": "FUTU_KL", "symbol": symbol, "resolution": resolution, "bar": bar,
 	}}})
 	g.broadcast(payload)
-	_ = g.module.queries.UpsertFutuBar(context.Background(), investmentsqlc.UpsertFutuBarParams{
+	_ = g.deps.queries.UpsertFutuBar(context.Background(), investmentsqlc.UpsertFutuBarParams{
 		Symbol: symbol, Resolution: resolution, TimeMs: bar.Time, Open: bar.Open, High: bar.High, Low: bar.Low, Close: bar.Close, Volume: bar.Volume,
 	})
 }

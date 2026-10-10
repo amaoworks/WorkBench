@@ -467,9 +467,8 @@ func TestScrapedMetadataAndAIInputAreBoundedBeforeQuota(t *testing.T) {
 	if _, err := m.Analyze(ctx, a.ID); err != nil {
 		t.Fatal(err)
 	}
-	s, _ := m.Settings(ctx)
 	before, _ := m.Stats(ctx)
-	if _, err := m.generate(ctx, s, "test", strings.Repeat("x", 64001)); err == nil {
+	if _, err := m.generate(ctx, "test", strings.Repeat("x", 64001)); err == nil {
 		t.Fatal("accepted oversized request")
 	}
 	after, _ := m.Stats(ctx)

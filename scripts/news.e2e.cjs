@@ -11,6 +11,13 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "/tmp/workbench-e2
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
+
+// Shared Select is a Radix listbox: open the trigger, then pick the option by its visible label.
+async function choose(page, trigger, option) {
+  await trigger.click();
+  await page.getByRole("option", { name: option, exact: true }).click();
+  await page.getByRole("listbox").waitFor({ state: "detached" });
+}
 async function unusedPort() {
   const listener = createServer();
   await new Promise((resolve, reject) => { listener.once("error", reject); listener.listen(0, "127.0.0.1", resolve); });
@@ -73,7 +80,7 @@ async function expectFormControlStyles(page, reference, label) {
   await reference.blur();
   await reference.evaluate((node) => Promise.all(node.getAnimations().map((animation) => animation.finished)));
   const form = reference.locator("xpath=ancestor::form[1]");
-  const controls = form.locator(".studio-field > :is(input, select, textarea)");
+  const controls = form.locator(".studio-field > :is(input, select, textarea), .studio-field > .ui-select > .ui-select-trigger");
   const snapshots = await controls.evaluateAll((nodes) => nodes.map((node) => {
     const style = getComputedStyle(node);
     const box = node.getBoundingClientRect();
@@ -257,7 +264,7 @@ async function expectFormControlStyles(page, reference, label) {
     ]) {
       await page.getByRole("button", { name: "添加订阅源", exact: true }).click();
       await page.getByLabel("名称", { exact: true }).fill(source.name);
-      await page.locator("form select").selectOption("rss");
+      await choose(page, page.getByLabel("类型", { exact: true }), "RSS");
       await page.getByLabel("订阅地址", { exact: true }).fill(source.url);
       await page.getByLabel("主题", { exact: true }).fill(source.topic);
       await page.getByLabel("刷新间隔（分钟）", { exact: true }).fill("1440");
@@ -298,7 +305,7 @@ async function expectFormControlStyles(page, reference, label) {
     const stats = await (await page.request.get(`${baseURL}/api/modules/news/stats`)).json();
     assert.equal(stats.articles, 37, "repeat refresh must not duplicate articles");
 
-    await page.getByRole("button", { name: "资讯", exact: true }).click();
+    await page.getByRole("button", { name: "文章", exact: true }).click();
     await page.getByText("Quantum Browser Story", { exact: true }).waitFor();
     await page.getByRole("button", { name: "加载更多", exact: true }).click();
     await page.getByText("Browser Atom Science", { exact: true }).waitFor();
@@ -337,7 +344,7 @@ async function expectFormControlStyles(page, reference, label) {
 
     await page.getByRole("button", { name: "简报", exact: true }).click();
     await page.getByLabel("主题", { exact: true }).fill("重点");
-    await page.locator("form select").selectOption("24");
+    await choose(page, page.getByLabel("时间范围", { exact: true }), "最近 24 小时");
     await page.getByLabel("最多条数", { exact: true }).fill("10");
     await page.getByRole("switch", { name: "提交推送", exact: true }).click();
     const createdDigest = page.waitForResponse((response) => response.url().endsWith("/api/modules/news/digests") && response.request().method() === "POST");
@@ -354,7 +361,7 @@ async function expectFormControlStyles(page, reference, label) {
     assert.equal(telegramAfterPush.enabled, false);
     assert.equal(telegramAfterPush.hasBotToken, false);
 
-    await page.getByRole("button", { name: "资讯", exact: true }).click();
+    await page.getByRole("button", { name: "文章", exact: true }).click();
     await page.getByLabel("已匹配", { exact: true }).uncheck();
     await page.getByRole("button", { name: "筛选", exact: true }).click();
     for (const width of [1440, 390, 360]) {
@@ -376,7 +383,7 @@ async function expectFormControlStyles(page, reference, label) {
         await page.locator("form").screenshot({ path: `/tmp/workbench-news-source-${width}-${dark ? "dark" : "light"}.png` });
         const sourceKind = page.getByLabel("类型", { exact: true });
         for (const kind of ["rss", "rsshub", "google", "yahoo"]) {
-          await sourceKind.selectOption(kind);
+          await choose(page, sourceKind, { rss: "RSS", rsshub: "RSSHub", google: "Google 新闻", yahoo: "Yahoo 财经" }[kind]);
           assert.equal(await page.getByLabel("订阅地址", { exact: true }).count(), kind === "rss" || kind === "rsshub" ? 1 : 0);
           assert.equal(await page.getByLabel("查询词", { exact: true }).count(), kind === "google" ? 1 : 0);
         }
@@ -387,7 +394,7 @@ async function expectFormControlStyles(page, reference, label) {
         await page.getByRole("button", { name: "取消", exact: true }).click();
         await page.getByRole("button", { name: "简报", exact: true }).click();
         await expectFormControlStyles(page, page.getByLabel("主题", { exact: true }), `${label} digest`);
-        await page.getByRole("button", { name: "资讯", exact: true }).click();
+        await page.getByRole("button", { name: "文章", exact: true }).click();
       }
       await search.fill("");
       const overflow = await page.evaluate(() => ({

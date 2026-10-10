@@ -85,7 +85,7 @@ contracts → 标准库
 
 注册目录先在内存收集并校验，失败时不发布可用目录。模块迁移在注册目录构建前执行，不与全部注册操作组成一个可回滚事务。
 
-`App.Run` 绑定 HTTP 监听地址，启动调度器和事件投递。HTTPS 在反向代理处终止，应用以固定外部 URL 配置 Cookie 和来源校验；部署形态与发布流程见[部署与发布](deployment.md)。退出时 Registry 关闭业务入口、外部模块探测与代理 WebSocket，并按构造顺序逆序释放内置模块生命周期资源；随后关闭 HTTP 服务、调度与数据库。宿主退出不会把外部模块改写为用户停用。
+`App.Run` 绑定 HTTP 监听地址，启动调度器、事件投递和 HTTP 服务，再调用模块声明的 `ModuleStartup.OnStarted`；后台初始化随运行 context 结束。模块资源的会话加载与响应包装通过 `ModuleSessionPolicyProvider` 声明。HTTPS 在反向代理处终止，应用以固定外部 URL 配置 Cookie 和来源校验；部署形态与发布流程见[部署与发布](deployment.md)。退出时 Registry 关闭业务入口、外部模块探测与代理 WebSocket，并按构造顺序逆序释放内置模块生命周期资源；随后关闭 HTTP 服务、调度与数据库。宿主退出不会把外部模块改写为用户停用。
 
 新增模块通过 `internal/app/app.go` 的后端清单及前端 `<id>.module.ts` 文件注册，代码随程序构建。历史外部模块从已保存的目录恢复，不再开放网址接入；通用 `/modules/{id}/...` 与 `/api/modules/{id}/proxy/*` 按注册表快照分发。内置启停影响模块 HTTP、Job、事件消费者、AI Tool、导航和总览卡片。外部模块的 `enabled` 是用户期望；业务页面/API/WS 只在当前连接的当前代数确认启用且健康不是 `offline`/`incompatible` 后开放。设置页在停用时仍可访问。停用不会删除表、历史数据或布局偏好。隐藏 Widget 只影响总览展示。
 

@@ -116,6 +116,28 @@ func TestWallosTransactionRollback(t *testing.T) {
 	}
 }
 
+func TestWallosRejectsLongNamesBeforeMonthFiltering(t *testing.T) {
+	for _, date := range []string{"2026-09-10", "2026-11-10"} {
+		t.Run(date, func(t *testing.T) {
+			m, db := openTodoModule(t)
+			m.now = func() time.Time { return time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC) }
+			subs := []wallosSubscription{
+				{ID: "1", Name: "有效订阅", NextPayment: "2026-09-10"},
+				{ID: "2", Name: strings.Repeat("长名称", 40), NextPayment: date},
+			}
+			if _, err := m.importWallos(context.Background(), wallosTestConfig(), subs); err == nil {
+				t.Fatal("oversized name was accepted")
+			}
+			for _, table := range []string{"todo_tasks", "todo_wallos_occurrences", "events_log"} {
+				var count int
+				if err := db.SQL().QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil || count != 0 {
+					t.Fatalf("%s was not rolled back: count=%d %v", table, count, err)
+				}
+			}
+		})
+	}
+}
+
 func TestWallosMonthlyListAndReminderBoundaries(t *testing.T) {
 	for _, tc := range []struct {
 		name, now, payment         string

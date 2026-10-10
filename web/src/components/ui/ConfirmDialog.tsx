@@ -10,6 +10,10 @@ export function ConfirmDialog({
   onCancel,
   onConfirm,
   onClosed,
+  confirmLabel = "确认删除",
+  busyLabel = "删除中…",
+  cancelLabel = "取消",
+  tone = "danger",
 }: {
   open: boolean;
   title: string;
@@ -18,6 +22,10 @@ export function ConfirmDialog({
   onCancel: () => void;
   onConfirm: () => void;
   onClosed: () => void;
+  confirmLabel?: string;
+  busyLabel?: string;
+  cancelLabel?: string;
+  tone?: "danger" | "primary";
 }) {
   const cancel = useRef<HTMLButtonElement>(null);
   return (
@@ -28,9 +36,10 @@ export function ConfirmDialog({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="command-overlay z-40" />
+        {/* Confirmations can open above another dialog, so they always stack over it. */}
+        <Dialog.Overlay className="command-overlay confirm-overlay" />
         <Dialog.Content
-          className="module-settings-dialog z-50"
+          className="module-settings-dialog confirm-dialog"
           role="alertdialog"
           onOpenAutoFocus={(event) => {
             event.preventDefault();
@@ -52,10 +61,10 @@ export function ConfirmDialog({
             </Dialog.Description>
             <div className="mt-5 flex justify-end gap-2">
               <Button ref={cancel} variant="secondary" disabled={busy} onClick={onCancel}>
-                取消
+                {cancelLabel}
               </Button>
-              <Button variant="danger" disabled={busy} onClick={onConfirm}>
-                {busy ? "删除中…" : "确认删除"}
+              <Button variant={tone} disabled={busy} onClick={onConfirm}>
+                {busy ? busyLabel : confirmLabel}
               </Button>
             </div>
           </div>

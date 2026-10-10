@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -28,7 +29,7 @@ type streamerClient struct {
 }
 
 type streamer struct {
-	module     *Module
+	deps       streamerDeps
 	connectMu  sync.Mutex
 	mu         sync.Mutex
 	schwab     *websocket.Conn
@@ -41,8 +42,14 @@ type streamer struct {
 	sequence   uint64
 }
 
-func newStreamer(module *Module) *streamer {
-	return &streamer{module: module, clients: make(map[*streamerClient]struct{}), pending: make(map[string]chan error), services: make(map[string]bool), sequence: 2}
+type streamerDeps struct {
+	credentials func(context.Context) (streamerInfo, string, error)
+	origin      func() string
+	logger      *slog.Logger
+}
+
+func newStreamer(deps streamerDeps) *streamer {
+	return &streamer{deps: deps, clients: make(map[*streamerClient]struct{}), pending: make(map[string]chan error), services: make(map[string]bool), sequence: 2}
 }
 
 func (s *streamer) reset() {
@@ -146,20 +153,36 @@ type streamResponse struct {
 func (s *streamer) ensure(ctx context.Context) error {
 	s.connectMu.Lock()
 	defer s.connectMu.Unlock()
-	s.mu.Lock()
-	connected, closed := s.schwab != nil, s.closed
-	s.mu.Unlock()
-	if closed {
-		return errors.New("投资已关闭")
+	var info streamerInfo
+	var token string
+	var generation uint64
+	for {
+		s.mu.Lock()
+		connected, closed := s.schwab != nil, s.closed
+		generation = s.generation
+		s.mu.Unlock()
+		if closed {
+			return errors.New("投资已关闭")
+		}
+		if connected {
+			return nil
+		}
+		var err error
+		info, token, err = s.deps.credentials(ctx)
+		if err != nil {
+			return err
+		}
+		s.mu.Lock()
+		stable := !s.closed && s.generation == generation
+		s.mu.Unlock()
+		if stable {
+			break
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 	}
-	if connected {
-		return nil
-	}
-	info, token, generation, err := s.module.streamerCredentials(ctx)
-	if err != nil {
-		return err
-	}
-	conn, _, err := websocket.DefaultDialer.DialContext(ctx, info.StreamerSocketURL, http.Header{"Origin": {s.module.schwabAPI}})
+	conn, _, err := websocket.DefaultDialer.DialContext(ctx, info.StreamerSocketURL, http.Header{"Origin": {s.deps.origin()}})
 	if err != nil {
 		return err
 	}
@@ -200,7 +223,7 @@ func (s *streamer) ensure(ctx context.Context) error {
 		return errors.New("Schwab 配置已变更，请重新连接")
 	}
 	s.schwab, s.info = conn, info
-	s.module.logger.Info("Schwab stream connected")
+	s.deps.logger.Info("Schwab stream connected")
 	keep = true
 	go s.readSchwab(conn)
 	return nil
@@ -281,7 +304,7 @@ func (s *streamer) readSchwab(conn *websocket.Conn) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		if s.schwab == conn {
-			s.module.logger.Warn("Schwab stream disconnected; clients must reconnect")
+			s.deps.logger.Warn("Schwab stream disconnected; clients must reconnect")
 			s.closeLocked()
 		}
 		_ = conn.Close()
@@ -313,7 +336,7 @@ func (s *streamer) readSchwab(conn *websocket.Conn) {
 			select {
 			case client.send <- raw:
 			default:
-				s.module.logger.Warn("slow stream client disconnected")
+				s.deps.logger.Warn("slow stream client disconnected")
 				s.removeLocked(client) // Reconnect and reconcile instead of silently losing order events.
 			}
 		}

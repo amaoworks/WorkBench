@@ -8,6 +8,7 @@ import type { LoggingSettings, Settings } from "./queries";
 import { Button } from "../../components/ui/Button";
 import { CardHeader } from "../../components/ui/Card";
 import { Field } from "../../components/ui/Field";
+import { Select } from "../../components/ui/Select";
 
 const levels = [
   { value: "debug", label: "DEBUG · 调试" },
@@ -38,18 +39,12 @@ export function LoggingPanel({ value }: { value: LoggingSettings }) {
       <CardHeader title="运行日志" />
       <div className="p-4">
         <Field label="日志等级">
-          <select
-            className="ui-input"
+          <Select
             value={level}
             disabled={save.isPending}
-            onChange={(event) => setLevel(event.target.value as LoggingSettings["level"])}
-          >
-            {levels.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+            options={levels}
+            onValueChange={(next) => setLevel(next as LoggingSettings["level"])}
+          />
         </Field>
         <div className="form-actions">
           <Button disabled={save.isPending || level === value.level}>

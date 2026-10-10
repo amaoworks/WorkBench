@@ -20,6 +20,8 @@ Manifest 声明 ID、显示名称、业务版本、契约版本、图标和导�
 
 - [ModuleLifecycle](../internal/contracts/lifecycle.go)：`OnEnabledChanged`、`Close`。无后台资源的模块可以不实现。Registry 在迁移后恢复每个模块的持久化意图，串行执行启停，并负责初始化失败及退出时的资源释放。回调应遵守 context，支持部分失败后重试同一意图；`Close` 必须能清理初始化未完成的资源。传入初始化函数后，资源所有权交给 Registry。
 - [ModuleRouteProvider](../internal/contracts/lifecycle.go)：额外声明公共回调或受保护静态入口。公共回调必须显式标注，不会因为普通业务注册而匿名开放。
+- [ModuleSessionPolicyProvider](../internal/contracts/lifecycle.go)：声明模块资源的会话策略。`ReadOnly` 只加载会话，不续期；`WrapResponse` 在该策略下调整响应头。请求仍经过鉴权和模块门控。Investment 用它声明内容哈希图表资源的缓存响应。
+- [ModuleStartup](../internal/contracts/lifecycle.go)：`OnStarted(ctx)` 在 HTTP 服务启动后调用，回调应及时返回，后台工作使用随 `App.Run` 结束的 context。Investment 用它预热图表资源。
 
 外部协议类型在 [external.go](../internal/contracts/external.go)，`protocolVersion` 当前为 1，与内置 `contractVersion` 分开。远端管理路径为 `/_workbench/manifest|status|state|config`。
 

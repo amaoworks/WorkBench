@@ -58,8 +58,8 @@ func (m *Module) SaveSource(ctx context.Context, id string, in SourceInput) (Sou
 	if err != nil {
 		return Source{}, err
 	}
-	m.fetchMu.Lock()
-	defer m.fetchMu.Unlock()
+	m.sourceMu.Lock()
+	defer m.sourceMu.Unlock()
 	if id == "" {
 		count, e := m.q.CountSources(ctx)
 		if e != nil {
@@ -88,8 +88,8 @@ func (m *Module) SaveSource(ctx context.Context, id string, in SourceInput) (Sou
 	return sourceDTO(row), err
 }
 func (m *Module) DeleteSource(ctx context.Context, id string) error {
-	m.fetchMu.Lock()
-	defer m.fetchMu.Unlock()
+	m.sourceMu.Lock()
+	defer m.sourceMu.Unlock()
 	return m.mutate(ctx, "news.source.deleted", id, func(q *newssqlc.Queries) error {
 		n, err := q.DeleteSource(ctx, id)
 		if err != nil {

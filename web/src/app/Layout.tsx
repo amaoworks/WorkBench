@@ -1,5 +1,5 @@
 import { unreadCountSchema } from "../shared/schema";
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import {
   Bell,
   Bot,
@@ -50,8 +50,17 @@ export function Layout() {
     queryKey: ["notifications", "count"],
     queryFn: () => apiValidated("/api/notifications/unread-count", unreadCountSchema),
   });
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark);
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    if (root.classList.contains("dark") === dark) return;
+    // Switch every color in the same frame instead of letting per-element transitions trail behind.
+    root.classList.add("theme-switching");
+    root.classList.toggle("dark", dark);
+    const frame = requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove("theme-switching")));
+    return () => {
+      cancelAnimationFrame(frame);
+      root.classList.remove("theme-switching");
+    };
   }, [dark]);
   useEffect(() => {
     document.documentElement.dataset.motion = motion;
@@ -136,7 +145,7 @@ export function Layout() {
               <Button
                 variant="ghost"
                 size="icon"
-                disabled={appearance.isPending || !settings.data}
+                disabled={!settings.data}
                 onClick={() =>
                   appearance.mutate({ theme: dark ? "light" : "dark", motion }, { onError: (err) => toast.error(err.message) })
                 }
@@ -196,8 +205,7 @@ function SideLink({
     <NavLink
       to={to}
       end={to === "/"}
-      title={label}
-      aria-label={label}
+      aria-label={badge ? `${label}，${badge} 条未读` : label}
       className={({ isActive }) =>
         cn("workspace-nav-link focus-ring flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition", isActive && "is-active")
       }
@@ -205,6 +213,11 @@ function SideLink({
       <Icon size={18} />
       {!collapsed && <span className="sidebar-label flex-1">{label}</span>}
       {!collapsed && badge ? <span className="sidebar-label nav-badge">{badge}</span> : null}
+      {/* Shown only when the sidebar is icon-only (collapsed or narrow screens). */}
+      <span className="workspace-nav-tooltip" aria-hidden="true">
+        {badge ? `${label} · ${badge}` : label}
+      </span>
+      {badge ? <span className="workspace-nav-dot" aria-hidden="true" /> : null}
     </NavLink>
   );
 }

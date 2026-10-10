@@ -139,7 +139,9 @@ Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后
 
 ## 数据、验证与参考
 
-模块只依赖注入的数据库；配置表为 `investment_schwab` 与 `investment_futu`，夜盘 K 线缓存在 `investment_futu_bars`。升级迁移移除历史演示表 `investment_quotes` 和 `investment_summary`，旧迁移文件保留。SQL 和 sqlc 生成代码均在模块目录。
+模块构造时要求数据库和通知服务。价格监控通过行情接口读取交易时段与报价，Schwab 适配器在提交前保护授权版本检查。Streamer 接收凭据读取、上游地址和日志依赖；Futu 网关接收配置读取、查询、OpenD 服务和日志依赖。配置表为 `investment_schwab` 与 `investment_futu`，夜盘 K 线缓存在 `investment_futu_bars`。升级迁移移除历史演示表 `investment_quotes` 和 `investment_summary`，旧迁移文件保留。SQL 和 sqlc 生成代码均在模块目录。
+
+React 投资页只校验并消费偏好的 `view` 项；图表、布局、账户和 TradingView 设置由终端各自校验。删除偏好后的空值保留版本号，后续保存仍参与版本冲突检查。
 
 Go 测试覆盖配置、OAuth、代理、连接确认、断线恢复和配置变更竞态；Node 测试直接导入终端 JS，覆盖交易语义、未确认的交易结果、真实持仓、订单时间分段、跨账户异步响应、订阅重放及历史/实时 K 线衔接。`./scripts/test.sh` 执行 sqlc 漂移检查、Go 测试、React/终端 JS lint、Node 测试与生产构建。模拟服务验证不替代真实券商端到端验收。
 

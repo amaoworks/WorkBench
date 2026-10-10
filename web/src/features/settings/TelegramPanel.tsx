@@ -11,6 +11,7 @@ import { Skeleton } from "../../components/ui/States";
 import { Switch } from "../../components/ui/Switch";
 import { useTelegramSettings } from "./queries";
 import { telegramTestSchema, type TelegramSettings } from "./schema";
+import { formatDateTime } from "../../shared/format";
 
 export function TelegramPanel() {
   const settings = useTelegramSettings();
@@ -29,10 +30,10 @@ export function TelegramPanel() {
         <CardHeader title="最近投递状态" />
         <div className="p-4">
           <p className="mt-2 text-sm">
-            最近尝试：{value.status.lastAttemptAt ? new Date(value.status.lastAttemptAt).toLocaleString() : "尚未发送"}
+            最近尝试：{value.status.lastAttemptAt ? formatDateTime(value.status.lastAttemptAt) : "尚未发送"}
           </p>
           <p className="mt-2 text-sm">
-            最近成功：{value.status.lastSuccessAt ? new Date(value.status.lastSuccessAt).toLocaleString() : "尚无成功记录"}
+            最近成功：{value.status.lastSuccessAt ? formatDateTime(value.status.lastSuccessAt) : "暂无成功记录"}
           </p>
           {value.status.lastError && (
             <Notice tone="danger" title="投递失败" className="mt-3">

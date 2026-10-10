@@ -76,7 +76,7 @@ func TestWallosDetailsFetchAndExistingTaskRefresh(t *testing.T) {
 		t.Fatalf("unexpected content: %#v", before)
 	}
 	// Simulate the previously generated format, including a completed task.
-	if _, err := db.SQL().Exec("UPDATE todo_tasks SET title='续费提醒：Grok', description='来源：Wallos', completed_at=123 WHERE id=?", id); err != nil {
+	if _, err := db.SQL().Exec("UPDATE todo_tasks SET title='续费提醒：Grok', description='来源：Wallos', due_at=456, completed_at=123, created_at=789, updated_at=100 WHERE id=?", id); err != nil {
 		t.Fatal(err)
 	}
 	if n, err := m.importWallos(ctx, c, subs); err != nil || n != 0 {
@@ -86,15 +86,20 @@ func TestWallosDetailsFetchAndExistingTaskRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.Description != want || after.DueAt != before.DueAt || after.CompletedAt.Int64 != 123 {
+	if after.Description != want || after.DueAt.Int64 != 456 || after.CompletedAt.Int64 != 123 || after.CreatedAt != 789 || after.UpdatedAt != m.now().UnixMilli() {
 		t.Fatalf("state not preserved: %#v", after)
 	}
 	var updates int
 	if err := db.SQL().QueryRow("SELECT COUNT(*) FROM events_log WHERE topic='todo.task.updated'").Scan(&updates); err != nil || updates != 1 {
 		t.Fatalf("update events: %d %v", updates, err)
 	}
+	m.now = func() time.Time { return time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC) }
 	if _, err := m.importWallos(ctx, c, subs); err != nil {
 		t.Fatal(err)
+	}
+	unchanged, err := m.queries.GetTask(ctx, id)
+	if err != nil || unchanged != after {
+		t.Fatalf("unchanged sync modified task: %#v %v", unchanged, err)
 	}
 	if err := db.SQL().QueryRow("SELECT COUNT(*) FROM events_log WHERE topic='todo.task.updated'").Scan(&updates); err != nil || updates != 1 {
 		t.Fatalf("unchanged sync events: %d %v", updates, err)
@@ -104,5 +109,37 @@ func TestWallosDetailsFetchAndExistingTaskRefresh(t *testing.T) {
 	}
 	if n, err := m.importWallos(ctx, c, subs); err != nil || n != 1 {
 		t.Fatalf("deleted not recreated: %d %v", n, err)
+	}
+}
+
+func TestWallosContentUpdateRollsBackWhenEventFails(t *testing.T) {
+	m, db := openTodoModule(t)
+	ctx := context.Background()
+	m.now = func() time.Time { return time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC) }
+	subs := []wallosSubscription{{ID: "1", Name: "原订阅", NextPayment: "2026-09-14"}}
+	if _, err := m.importWallos(ctx, wallosTestConfig(), subs); err != nil {
+		t.Fatal(err)
+	}
+	var id string
+	if err := db.SQL().QueryRow("SELECT id FROM todo_tasks").Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	before, err := m.queries.GetTask(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subs[0].Name = "新订阅"
+	m.now = func() time.Time { return time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC) }
+	m.events = failingPublisher{}
+	if _, err := m.importWallos(ctx, wallosTestConfig(), subs); err == nil {
+		t.Fatal("expected event failure")
+	}
+	after, err := m.queries.GetTask(ctx, id)
+	if err != nil || after != before {
+		t.Fatalf("failed event did not roll back task: %#v %v", after, err)
+	}
+	var updates int
+	if err := db.SQL().QueryRow("SELECT COUNT(*) FROM events_log WHERE topic='todo.task.updated'").Scan(&updates); err != nil || updates != 0 {
+		t.Fatalf("failed update events: %d %v", updates, err)
 	}
 }

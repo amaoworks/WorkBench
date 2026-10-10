@@ -9,6 +9,7 @@ import { Skeleton } from "../../components/ui/States";
 import { Switch } from "../../components/ui/Switch";
 import { saveWallosSettings, syncWallos, useRefreshTodo, useWallosSettings } from "./queries";
 import type { WallosSettings as Settings } from "./schema";
+import { formatDateTime } from "../../shared/format";
 
 export default function WallosSettings({ enabled }: { enabled: boolean }) {
   const settings = useWallosSettings(enabled);
@@ -120,7 +121,7 @@ function WallosForm({ initial }: { initial: Settings }) {
           />
         </Field>
       </fieldset>
-      {initial.lastSync && <Badge tone="success">最近同步：{new Date(initial.lastSync).toLocaleString()}</Badge>}
+      {initial.lastSync && <Badge tone="success">最近同步：{formatDateTime(initial.lastSync)}</Badge>}
       {initial.lastError && (
         <Notice tone="danger" title="最近同步失败">
           {initial.lastError}

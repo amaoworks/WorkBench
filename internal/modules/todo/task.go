@@ -39,13 +39,6 @@ type UpdateTask struct {
 }
 
 func (m *Module) Create(ctx context.Context, input CreateTask) (Task, error) {
-	input.Title = strings.TrimSpace(input.Title)
-	if input.Title == "" || len(input.Title) > 300 {
-		return Task{}, errors.New("title must contain 1 to 300 bytes")
-	}
-	if len(input.Description) > 10_000 {
-		return Task{}, errors.New("description exceeds 10000 bytes")
-	}
 	id, err := identity.New()
 	if err != nil {
 		return Task{}, err
@@ -56,23 +49,44 @@ func (m *Module) Create(ctx context.Context, input CreateTask) (Task, error) {
 		return Task{}, err
 	}
 	defer tx.Rollback()
-	err = m.queries.WithTx(tx).CreateTask(ctx, todosqlc.CreateTaskParams{
-		ID: id, Title: input.Title, Description: input.Description,
-		DueAt: toNullTime(input.DueAt), CreatedAt: now.UnixMilli(), UpdatedAt: now.UnixMilli(),
-	})
+	task, err := m.createTaskTx(ctx, tx, id, input, now)
 	if err != nil {
-		return Task{}, fmt.Errorf("insert task: %w", err)
-	}
-	payload, _ := json.Marshal(map[string]string{"taskId": id, "title": input.Title})
-	if _, err := m.events.PublishTx(ctx, tx, contracts.NewEvent{
-		Topic: "todo.task.created", SchemaVersion: 1, SourceModule: "todo", AggregateID: id, Payload: payload,
-	}); err != nil {
 		return Task{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return Task{}, err
 	}
-	return Task{ID: id, Title: input.Title, Description: input.Description, DueAt: input.DueAt, CreatedAt: now, UpdatedAt: now}, nil
+	return task, nil
+}
+
+func validateTaskContent(title, description string) (string, error) {
+	title = strings.TrimSpace(title)
+	if title == "" || len(title) > 300 {
+		return "", errors.New("title must contain 1 to 300 bytes")
+	}
+	if len(description) > 10_000 {
+		return "", errors.New("description exceeds 10000 bytes")
+	}
+	return title, nil
+}
+
+func (m *Module) createTaskTx(ctx context.Context, tx *sql.Tx, id string, input CreateTask, now time.Time) (Task, error) {
+	title, err := validateTaskContent(input.Title, input.Description)
+	if err != nil {
+		return Task{}, err
+	}
+	err = m.queries.WithTx(tx).CreateTask(ctx, todosqlc.CreateTaskParams{
+		ID: id, Title: title, Description: input.Description,
+		DueAt: toNullTime(input.DueAt), CreatedAt: now.UnixMilli(), UpdatedAt: now.UnixMilli(),
+	})
+	if err != nil {
+		return Task{}, fmt.Errorf("insert task: %w", err)
+	}
+	task := Task{ID: id, Title: title, Description: input.Description, DueAt: input.DueAt, CreatedAt: now, UpdatedAt: now}
+	if err := m.publishTaskTx(ctx, tx, task, "todo.task.created"); err != nil {
+		return Task{}, err
+	}
+	return task, nil
 }
 
 func (m *Module) update(ctx context.Context, id string, input UpdateTask) (Task, error) {
@@ -87,16 +101,9 @@ func (m *Module) update(ctx context.Context, id string, input UpdateTask) (Task,
 	}
 	task := taskFromRow(row)
 	if input.Title != nil {
-		title := strings.TrimSpace(*input.Title)
-		if title == "" || len(title) > 300 {
-			return Task{}, errors.New("title must contain 1 to 300 bytes")
-		}
-		task.Title = title
+		task.Title = *input.Title
 	}
 	if input.Description != nil {
-		if len(*input.Description) > 10_000 {
-			return Task{}, errors.New("description exceeds 10000 bytes")
-		}
 		task.Description = *input.Description
 	}
 	if input.ClearDueAt {
@@ -116,23 +123,45 @@ func (m *Module) update(ctx context.Context, id string, input UpdateTask) (Task,
 		}
 	}
 	task.UpdatedAt = m.now().UTC()
-	err = m.queries.WithTx(tx).UpdateTask(ctx, todosqlc.UpdateTaskParams{
-		Title: task.Title, Description: task.Description, DueAt: toNullTime(task.DueAt),
-		CompletedAt: toNullTime(task.CompletedAt), UpdatedAt: task.UpdatedAt.UnixMilli(), ID: id,
-	})
+	task, err = m.updateTaskTx(ctx, tx, task, topic)
 	if err != nil {
-		return Task{}, err
-	}
-	payload, _ := json.Marshal(map[string]string{"taskId": id})
-	if _, err := m.events.PublishTx(ctx, tx, contracts.NewEvent{
-		Topic: topic, SchemaVersion: 1, SourceModule: "todo", AggregateID: id, Payload: payload,
-	}); err != nil {
 		return Task{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return Task{}, err
 	}
 	return task, nil
+}
+
+func (m *Module) updateTaskTx(ctx context.Context, tx *sql.Tx, task Task, topic string) (Task, error) {
+	title, err := validateTaskContent(task.Title, task.Description)
+	if err != nil {
+		return Task{}, err
+	}
+	task.Title = title
+	err = m.queries.WithTx(tx).UpdateTask(ctx, todosqlc.UpdateTaskParams{
+		Title: task.Title, Description: task.Description, DueAt: toNullTime(task.DueAt),
+		CompletedAt: toNullTime(task.CompletedAt), UpdatedAt: task.UpdatedAt.UnixMilli(), ID: task.ID,
+	})
+	if err != nil {
+		return Task{}, err
+	}
+	if err := m.publishTaskTx(ctx, tx, task, topic); err != nil {
+		return Task{}, err
+	}
+	return task, nil
+}
+
+func (m *Module) publishTaskTx(ctx context.Context, tx *sql.Tx, task Task, topic string) error {
+	data := map[string]string{"taskId": task.ID}
+	if topic == "todo.task.created" {
+		data["title"] = task.Title
+	}
+	payload, _ := json.Marshal(data)
+	_, err := m.events.PublishTx(ctx, tx, contracts.NewEvent{
+		Topic: topic, SchemaVersion: 1, SourceModule: "todo", AggregateID: task.ID, Payload: payload,
+	})
+	return err
 }
 
 func taskFromRow(row todosqlc.TodoTask) Task {

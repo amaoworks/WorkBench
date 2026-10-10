@@ -97,10 +97,33 @@ export function mapPositions(positions) {
                 id: `${symbol}:${side}`, symbol, side, qty, avgPrice, currency: 'USD',
                 direction: side === 1 ? '持有' : '卖空',
                 type: position.instrument?.assetType,
+                assetTypeLabel: assetTypeLabel(position.instrument?.assetType),
                 ...(Number.isFinite(pl) ? { pl } : {}),
                 ...(Number.isFinite(marketPrice) ? { marketPrice } : {}),
                 ...(Number.isFinite(dailyPnL) ? { dailyPnL } : {}),
             }];
         });
     });
+}
+
+// Schwab instrument assetType values shown in the positions table.
+const ASSET_TYPE_LABELS = {
+    EQUITY: '股票',
+    ETF: 'ETF',
+    COLLECTIVE_INVESTMENT: '基金/ETF',
+    MUTUAL_FUND: '共同基金',
+    OPTION: '期权',
+    FUTURE: '期货',
+    FUTURE_OPTION: '期货期权',
+    FOREX: '外汇',
+    CURRENCY: '货币',
+    INDEX: '指数',
+    FIXED_INCOME: '固定收益',
+    CASH_EQUIVALENT: '现金等价物',
+    PRODUCT: '产品',
+};
+
+export function assetTypeLabel(assetType) {
+    if (!assetType) return '';
+    return ASSET_TYPE_LABELS[assetType] || String(assetType);
 }

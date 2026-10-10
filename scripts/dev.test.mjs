@@ -36,6 +36,19 @@ test("dev options and Go flags preserve CLI precedence and separated flag values
   ]);
 });
 
+test("allowed hosts are de-duplicated case-insensitively in order", () => {
+  const options = parseDevArgs(["--dev-url=https://w.vm2.de5.net"], {});
+  const plan = makeDevPlan(options, {
+    WORKBENCH_ALLOWED_HOSTS: "W.vm2.de5.net, w.vm2.de5.net,other.example.test,OTHER.example.test",
+    WORKBENCH_PUBLIC_URL: "https://w.vm2.de5.net",
+  }, "/repo");
+  const hosts = plan.env.WORKBENCH_ALLOWED_HOSTS.split(",");
+  assert.deepEqual(hosts.slice(0, 2), ["W.vm2.de5.net", "other.example.test"]);
+  assert.equal(new Set(hosts.map((host) => host.toLowerCase())).size, hosts.length);
+  const devHosts = plan.env.WORKBENCH_DEV_HOSTS.split(",");
+  assert.equal(new Set(devHosts.map((host) => host.toLowerCase())).size, devHosts.length);
+});
+
 test("help is parsed without requiring services", () => {
   assert.equal(parseDevArgs(["--help", "-listen", "127.0.0.1:8080"]).help, true);
 });

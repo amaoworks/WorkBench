@@ -74,6 +74,11 @@ async function fixtureInvestmentAPI(route) {
     if (path === "/api/modules/investment/schwab" && method === "GET") {
       return await route.fulfill({ json: { appKey: "fixture", callbackUrl: "https://example.test/oauth/schwab", hasAppSecret: true, connected: true, reauthorizationRequired: false, lastError: "" } });
     }
+    if (path === "/api/modules/investment/preferences") {
+      if (method === "GET") return await route.fulfill({ json: { entries: {} } });
+      const input = request.postDataJSON();
+      return await route.fulfill({ json: { revision: input.sequence, sequence: input.sequence } });
+    }
     if (path === "/api/modules/investment/watchlists" && method === "GET") {
       return await route.fulfill({ json: { revision: 0, state: { lists: [{ id: "startup-test", title: "自选表", symbols: [] }], activeId: "startup-test" } } });
     }
@@ -110,6 +115,14 @@ async function fixtureInvestmentAPI(route) {
       const candles = dailyCandles(url);
       historyResults.push({ visit, symbol: url.searchParams.get("symbol"), candles: candles.length, path: url.pathname });
       return await route.fulfill({ json: { candles } });
+    }
+    if (path === "/api/modules/investment/schwab/marketdata/v1/quotes" && method === "GET") {
+      const symbols = String(url.searchParams.get("symbols") || "").split(",").filter(Boolean);
+      return await route.fulfill({ json: Object.fromEntries(symbols.map(symbol => [symbol, {
+        assetMainType: "EQUITY",
+        quote: { lastPrice: 102, closePrice: 100, openPrice: 101, highPrice: 105, lowPrice: 98, bidPrice: 101.9, askPrice: 102.1, totalVolume: 10000 },
+        reference: { description: symbol, exchangeName: "NASDAQ" },
+      }])) });
     }
     if (path === "/api/modules/investment/schwab/marketdata/ws/command" && method === "POST") {
       const command = request.postDataJSON();

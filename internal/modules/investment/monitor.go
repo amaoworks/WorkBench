@@ -49,20 +49,12 @@ func (m *Module) scanPrices(ctx context.Context) error {
 	if m.deps.Notifications == nil {
 		return fail(errors.New("通知服务不可用"))
 	}
-	token, err := m.ensureAccessToken(ctx)
-	if err != nil {
-		return fail(err)
-	}
-	session, open, err := m.regularSession(ctx, token, m.now())
+	batch, open, err := m.monitorQuotes.Fetch(ctx, symbols, m.now())
 	if err != nil {
 		return fail(err)
 	}
 	if !open {
 		return m.monitorState(ctx, "closed", "")
-	}
-	quotes, err := m.fetchMonitorQuotes(ctx, token, symbols)
-	if err != nil {
-		return fail(err)
 	}
 
 	// Configuration changes, deletions and disable operations can finish while
@@ -72,35 +64,32 @@ func (m *Module) scanPrices(ctx context.Context) error {
 	if !m.monitorEnabled {
 		return nil
 	}
-	m.tokenMu.Lock()
-	defer m.tokenMu.Unlock()
-	rec, err := m.loadSchwab(ctx)
+	err = m.monitorQuotes.WithCurrent(ctx, batch.authVersion, func() error {
+		now := m.now().UTC()
+		if now.Before(batch.session.Start) || !now.Before(batch.session.End) {
+			return m.monitorState(ctx, "closed", "")
+		}
+		hasInvalid := false
+		for _, rule := range rules {
+			if rule.Enabled != 1 {
+				continue
+			}
+			quote := batch.quotes[rule.Symbol]
+			validation := quote.validate(rule.Symbol, now, batch.session)
+			hasInvalid = hasInvalid || validation != nil
+			if err := m.evaluatePrice(ctx, rule, quote, validation, now); err != nil {
+				return err
+			}
+		}
+		if hasInvalid {
+			return m.monitorState(ctx, "error", "部分标的行情不可用，请查看规则中的原因")
+		}
+		return m.monitorState(ctx, "monitoring", "")
+	})
 	if err != nil {
-		return err
+		return fail(err)
 	}
-	if rec.AccessToken != token || rec.ReauthorizationRequired {
-		return fail(errors.New("Schwab 授权已变更，等待下一次检查"))
-	}
-	now := m.now().UTC()
-	if now.Before(session.Start) || !now.Before(session.End) {
-		return m.monitorState(ctx, "closed", "")
-	}
-	hasInvalid := false
-	for _, rule := range rules {
-		if rule.Enabled != 1 {
-			continue
-		}
-		quote := quotes[rule.Symbol]
-		validation := quote.validate(rule.Symbol, now, session)
-		hasInvalid = hasInvalid || validation != nil
-		if err := m.evaluatePrice(ctx, rule, quote, validation, now); err != nil {
-			return fail(err)
-		}
-	}
-	if hasInvalid {
-		return m.monitorState(ctx, "error", "部分标的行情不可用，请查看规则中的原因")
-	}
-	return m.monitorState(ctx, "monitoring", "")
+	return nil
 }
 
 // Quote state, the daily trigger and the notification event commit together.

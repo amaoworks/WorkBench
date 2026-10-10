@@ -221,8 +221,15 @@ function parseEnvHosts(env) {
     .filter(Boolean);
 }
 
+// Host names compare case-insensitively; the first spelling wins and order is preserved.
 function unique(values) {
-  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+  const seen = new Set();
+  return values.map((value) => value.trim()).filter((value) => {
+    const key = value.toLowerCase();
+    if (!value || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 export function makeDevPlan(options, env = process.env, root = repoRoot) {
@@ -273,9 +280,9 @@ export function makeDevPlan(options, env = process.env, root = repoRoot) {
   const explicitAllowed = flags.allowedHosts.length > 0;
   const explicitInvalid = flags.allowedHosts.some(({ value: host }) => !host?.trim());
   if (explicitAllowed) {
-    baseAllowedHosts = flags.allowedHosts.map(({ value: host }) => host?.trim() || "").filter(Boolean);
+    baseAllowedHosts = unique(flags.allowedHosts.map(({ value: host }) => host?.trim() || ""));
   } else {
-    baseAllowedHosts = parseEnvHosts(env);
+    baseAllowedHosts = unique(parseEnvHosts(env));
   }
 
   const webAddressHosts = [

@@ -1,56 +1,48 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
+import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { Field } from "../../components/ui/Field";
 import { Notice } from "../../components/ui/Notice";
-import { Skeleton } from "../../components/ui/States";
-import { disconnectSchwab, refreshSchwabToken, saveSchwabSettings, useRefreshInvestment, useSchwabSettings } from "./queries";
+import { disconnectSchwab, refreshSchwabToken, useRefreshInvestment } from "./queries";
 import type { SchwabSettings as Settings } from "./schema";
+import { formatDateTime } from "../../shared/format";
+import { MaskedInput } from "./MaskedInput";
 
-export default function SchwabSettings({ enabled }: { enabled: boolean }) {
-  const settings = useSchwabSettings(enabled);
-  if (!enabled) return <Notice title="投资业务已停用">启用后可配置 Charles Schwab。</Notice>;
-  if (settings.isPending) return <Skeleton className="h-64" />;
-  if (settings.isError)
-    return (
-      <Notice tone="danger" title="Schwab 设置读取失败">
-        {settings.error.message}
-      </Notice>
-    );
-  return <SchwabForm initial={settings.data} />;
-}
+export type SchwabDraft = { appKey: string; appSecret: string; callbackUrl: string };
 
-function SchwabForm({ initial }: { initial: Settings }) {
-  const [form, setForm] = useState({
-    appKey: initial.appKey,
-    appSecret: "",
-    callbackUrl: initial.callbackUrl || (window.location.protocol === "https:" ? `${window.location.origin}/oauth/schwab` : ""),
-  });
-  const [dirty, setDirty] = useState(false);
-  const change = (patch: Partial<typeof form>) => {
-    setForm((value) => ({ ...value, ...patch }));
-    setDirty(true);
-  };
+export function SchwabSection({
+  initial,
+  value,
+  onChange,
+  dirty,
+  blockNavigation,
+  error,
+}: {
+  initial: Settings;
+  value: SchwabDraft;
+  onChange: (patch: Partial<SchwabDraft>) => void;
+  dirty: boolean;
+  /** Any unsaved edit in the dialog; OAuth login leaves the page and would lose it. */
+  blockNavigation: boolean;
+  error?: string;
+}) {
   const refresh = useRefreshInvestment();
-  const save = useMutation({
-    mutationFn: () => saveSchwabSettings(form),
-    onSuccess: async () => {
-      setForm((value) => ({ ...value, appSecret: "" }));
-      setDirty(false);
-      await refresh();
-      toast.success("Schwab 设置已保存");
-    },
-    onError: (error) => toast.error(error.message),
-  });
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const disconnectButton = useRef<HTMLButtonElement>(null);
   const disconnect = useMutation({
     mutationFn: disconnectSchwab,
     onSuccess: async () => {
       await refresh();
+      setConfirmDisconnect(false);
       toast.success("已断开 Schwab");
     },
-    onError: (error) => toast.error(error.message),
+    onError: (failure) => {
+      setConfirmDisconnect(false);
+      toast.error(failure.message);
+    },
   });
   const token = useMutation({
     mutationFn: refreshSchwabToken,
@@ -58,45 +50,48 @@ function SchwabForm({ initial }: { initial: Settings }) {
       await refresh();
       toast.success("访问令牌已刷新");
     },
-    onError: async (error) => {
+    onError: async (failure) => {
       await refresh();
-      toast.error(error.message);
+      toast.error(failure.message);
     },
   });
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    save.mutate();
-  }
-  const busy = save.isPending || disconnect.isPending || token.isPending;
+  const busy = disconnect.isPending || token.isPending;
   return (
-    <form onSubmit={submit} className="space-y-4">
-      <h3 className="font-medium">Charles Schwab</h3>
-      <fieldset disabled={busy} className="space-y-4">
+    <section className="space-y-4" aria-labelledby="schwab-settings-title">
+      <h3 id="schwab-settings-title" className="font-medium">
+        Charles Schwab
+      </h3>
+      {error && (
+        <Notice tone="danger" title="Schwab 设置未保存">
+          {error}
+        </Notice>
+      )}
+      <div className="space-y-4">
         <Field label="App Key">
-          <input required value={form.appKey} onChange={(event) => change({ appKey: event.target.value })} autoComplete="off" />
+          <MaskedInput revealLabel="App Key" required={dirty} value={value.appKey} onChange={(event) => onChange({ appKey: event.target.value })} />
         </Field>
         <Field label="App Secret" meta={initial.hasAppSecret ? <Badge tone="success">已保存 · 留空保留</Badge> : undefined}>
           <input
             type="password"
             autoComplete="new-password"
-            value={form.appSecret}
-            onChange={(event) => change({ appSecret: event.target.value })}
+            value={value.appSecret}
+            onChange={(event) => onChange({ appSecret: event.target.value })}
             placeholder={initial.hasAppSecret ? "输入新密钥以替换" : "填写 Schwab App Secret"}
           />
         </Field>
         <Field label="OAuth 回调地址">
           <input
             type="url"
-            required
-            value={form.callbackUrl}
-            onChange={(event) => change({ callbackUrl: event.target.value })}
+            required={dirty}
+            value={value.callbackUrl}
+            onChange={(event) => onChange({ callbackUrl: event.target.value })}
             placeholder="https://workbench.example.com/oauth/schwab"
           />
         </Field>
-      </fieldset>
+      </div>
       {initial.connected && (
         <Badge tone="success">
-          已连接{initial.tokenExpiresAt ? ` · 令牌到期 ${new Date(initial.tokenExpiresAt).toLocaleString()}` : ""}
+          已连接{initial.tokenExpiresAt ? ` · 令牌到期 ${formatDateTime(initial.tokenExpiresAt)}` : ""}
         </Badge>
       )}
       {initial.reauthorizationRequired && (
@@ -117,12 +112,11 @@ function SchwabForm({ initial }: { initial: Settings }) {
           {initial.lastError}
         </Notice>
       )}
-      <div className="flex flex-wrap gap-2">
-        <Button disabled={busy}>{save.isPending ? "保存中…" : "保存"}</Button>
+      <div className="flex flex-wrap items-center gap-2">
         <Button
           type="button"
           variant={initial.reauthorizationRequired ? "primary" : "secondary"}
-          disabled={busy || dirty || !initial.hasAppSecret || !initial.callbackUrl.startsWith("https://")}
+          disabled={busy || blockNavigation || !initial.hasAppSecret || !initial.callbackUrl.startsWith("https://")}
           onClick={() => {
             window.location.href = "/api/modules/investment/schwab/oauth/login";
           }}
@@ -132,11 +126,28 @@ function SchwabForm({ initial }: { initial: Settings }) {
         <Button type="button" variant="secondary" disabled={busy || dirty || !initial.connected} onClick={() => token.mutate()}>
           {token.isPending ? "刷新中…" : "刷新令牌"}
         </Button>
-        <Button type="button" variant="secondary" disabled={busy || !initial.connected} onClick={() => disconnect.mutate()}>
+        <Button
+          ref={disconnectButton}
+          type="button"
+          variant="secondary"
+          disabled={busy || !initial.connected}
+          onClick={() => setConfirmDisconnect(true)}
+        >
           断开
         </Button>
+        {blockNavigation && <span className="text-xs text-[var(--muted)]">保存修改后可登录 Schwab</span>}
       </div>
-      {dirty && <Badge tone="warning">有未保存的修改</Badge>}
-    </form>
+      <ConfirmDialog
+        open={confirmDisconnect}
+        title="断开 Schwab？"
+        description="断开后行情和交易将暂停，需要重新登录 Schwab 授权。"
+        busy={disconnect.isPending}
+        confirmLabel="断开"
+        busyLabel="断开中…"
+        onCancel={() => setConfirmDisconnect(false)}
+        onConfirm={() => disconnect.mutate()}
+        onClosed={() => disconnectButton.current?.focus()}
+      />
+    </section>
   );
 }
