@@ -38,7 +38,7 @@ internal/
     news/                      RSS/Atom、关注规则、翻译摘要、简报
   webui/dist/                  已检入的前端生产资源
 web/src/
-  app/                         登录、应用外壳、导航、主题、命令面板
+  app/                         登录、应用外壳、导航、主题
   features/                    AI 面板、总览、通知、平台设置
   modules/
     registry.ts                编译期业务界面注册表

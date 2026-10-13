@@ -1,4 +1,4 @@
-// Browser coverage for legacy external module deep link, command palette, settings, and pending copy.
+// Browser coverage for legacy external module deep link, sidebar navigation, settings, and pending copy.
 // Required env: WORKBENCH_TEST_URL, PLAYWRIGHT_MODULE or playwright, optional CHROMIUM_PATH,
 // Requires an existing demo_external record from an older workspace; no URL registration.
 const assert = require("node:assert/strict");
@@ -26,9 +26,9 @@ const baseURL = process.env.WORKBENCH_TEST_URL || "http://127.0.0.1:18086";
       await page.locator("iframe.external-module-frame").waitFor();
       await page.reload();
       await page.locator("iframe.external-module-frame").waitFor();
-      await page.getByRole("button", { name: "搜索页面" }).click();
-      await page.getByRole("button", { name: "外部示例", exact: true }).waitFor();
-      await page.keyboard.press("Escape");
+      await page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "总览", exact: true }).click();
+      await page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "外部示例", exact: true }).click();
+      await page.locator("iframe.external-module-frame").waitFor();
       await page.goto(`${baseURL}/settings?tab=modules`);
       const moduleSwitch = page.getByRole("switch", { name: "外部示例", exact: true });
       if (await moduleSwitch.getAttribute("aria-checked") === "true") {

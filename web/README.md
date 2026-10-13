@@ -5,7 +5,7 @@ React + TypeScript 前端，使用 Vite、Tailwind CSS、Radix UI、Lucide、Rea
 ## 目录与归属
 
 ```text
-src/app/                 登录、应用装配、导航外壳、主题、命令面板
+src/app/                 登录、应用装配、导航外壳、主题
 src/features/ai/         平台 AI 对话面板
 src/features/dashboard/ 总览及布局配置
 src/features/notifications/ 通知列表与 SSE

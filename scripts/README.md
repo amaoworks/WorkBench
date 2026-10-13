@@ -242,7 +242,7 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 
 ### 外部模块
 
-`scripts/external-module.e2e.cjs` 仅用于已经保存 `demo_external` 注册记录的旧测试工作空间，覆盖深链接刷新、命令面板、停用后设置和桌面/移动视口；不再尝试网址接入，缺少旧记录时明确失败。旧记录 fixture 与独立进程兼容由 Go 测试中的 `Registry.Attach` 建立。
+`scripts/external-module.e2e.cjs` 仅用于已经保存 `demo_external` 注册记录的旧测试工作空间，覆盖深链接刷新、侧栏导航、停用后设置和桌面/移动视口；不再尝试网址接入，缺少旧记录时明确失败。旧记录 fixture 与独立进程兼容由 Go 测试中的 `Registry.Attach` 建立。
 
 `scripts/external-module-process.sh` 验证公开网址注册返回 404、未创建模块以及宿主文件哈希保持不变。示例启动步骤见 [examples/external-module/README.md](../examples/external-module/README.md)。
 

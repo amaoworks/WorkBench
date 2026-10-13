@@ -4,7 +4,6 @@ import {
   Bell,
   Bot,
   CheckSquare2,
-  Command,
   LayoutDashboard,
   Moon,
   PanelLeftClose,
@@ -21,7 +20,6 @@ import { ThemeContext } from "../shared/theme";
 import { Button } from "../components/ui/Button";
 import { Skeleton } from "../components/ui/States";
 import { useModules } from "./queries";
-import { CommandPalette } from "./CommandPalette";
 import { AIPanel } from "../features/ai/AIPanel";
 import { useNotificationStream } from "../features/notifications/useNotificationStream";
 import { useSettings, useAppearance } from "../features/settings/queries";
@@ -37,7 +35,6 @@ import { ExternalPage } from "./ExternalPage";
 export function Layout() {
   const modules = useModules();
   const [collapsed, setCollapsed] = useState(false);
-  const [commandOpen, setCommandOpen] = useState(false);
   const [aiOpen, setAIOpen] = useState(false);
   const settings = useSettings();
   const appearance = useAppearance();
@@ -70,16 +67,6 @@ export function Layout() {
     const update = () => setSystemDark(query.matches);
     query.addEventListener("change", update);
     return () => query.removeEventListener("change", update);
-  }, []);
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        setCommandOpen(true);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
   }, []);
   const navigation = useMemo(
     () =>
@@ -126,21 +113,10 @@ export function Layout() {
         <div className={cn("workspace-body transition-[margin]", collapsed ? "ml-16" : "ml-56")}>
           <header
             className={cn(
-              "sticky top-0 z-10 flex h-16 items-center justify-between",
+              "sticky top-0 z-10 flex h-16 items-center justify-end",
               "border-b border-[var(--border)] bg-[color:var(--surface)]/90 px-6 backdrop-blur",
             )}
           >
-            <button
-              onClick={() => setCommandOpen(true)}
-              className={cn(
-                "workspace-search focus-ring flex w-72 items-center gap-2 rounded-lg border border-[var(--border)]",
-                "px-3 py-2 text-left text-sm text-[var(--muted)]",
-              )}
-            >
-              <Command size={16} />
-              <span className="flex-1">搜索页面</span>
-              <kbd className="rounded border border-[var(--border)] px-1.5 text-xs">Ctrl / ⌘ K</kbd>
-            </button>
             <div className="flex items-center gap-1">
               <Button
                 variant="ghost"
@@ -181,7 +157,6 @@ export function Layout() {
             </Suspense>
           </main>
         </div>
-        <CommandPalette open={commandOpen} onOpenChange={setCommandOpen} navigation={navigation} />
         <AIPanel open={aiOpen} onClose={() => setAIOpen(false)} />
       </div>
     </ThemeContext.Provider>
