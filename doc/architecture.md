@@ -99,4 +99,3 @@ contracts → 标准库
 - 对话使用 AI Gateway，可调用启用模块注册的 Tool；业务主动生成文本使用 `contracts.TextGenerator`，该接口不执行业务工具。两者共享设置中的 Provider，保存设置后新请求使用新配置。
 - Dashboard 合并模块 Widget 声明和持久化布局，业务 Widget 自己读取数据。平台设置和业务设置分别由 `features/settings` 与模块的设置组件负责。外部模块使用宿主通用 iframe 容器加载远端页面和设置，不注册总览 Widget、Job、事件或 AI Tool。
 
-这些边界描述当前实现。需求变化可以调整架构、契约和模块划分，调整时同时维护代码、迁移、测试和对应文档。

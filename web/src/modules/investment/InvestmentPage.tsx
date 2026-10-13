@@ -77,7 +77,7 @@ function InvestmentContent({ viewSettings }: { viewSettings: ReturnType<typeof u
       if (document.fullscreenElement) await document.exitFullscreen();
       else await terminal.current?.requestFullscreen();
     } catch {
-      setFullscreenError("浏览器未能进入全屏，可以使用页面铺满。");
+      setFullscreenError("浏览器未能进入全屏，可切换为页面铺满。");
     }
   }
 
@@ -125,6 +125,7 @@ function InvestmentContent({ viewSettings }: { viewSettings: ReturnType<typeof u
             <Button
               variant="ghost"
               size="sm"
+              title={expanded ? "恢复侧栏与顶栏" : "隐藏工作台导航并撑满窗口"}
               onClick={() => {
                 void toggleExpanded();
               }}
@@ -136,6 +137,7 @@ function InvestmentContent({ viewSettings }: { viewSettings: ReturnType<typeof u
             <Button
               variant="ghost"
               size="sm"
+              title={fullscreen ? "退出全屏" : "进入浏览器全屏"}
               onClick={() => {
                 void toggleFullscreen();
               }}

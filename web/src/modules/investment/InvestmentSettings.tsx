@@ -105,9 +105,14 @@ function InvestmentSettingsForm({
     if (saved.includes("overnight")) setOvernightDraft(null);
     setErrors(failed);
     setSaving(false);
-    const failedNames = (Object.keys(failed) as Section[]).map((section) => SECTION_NAMES[section]);
-    if (failedNames.length > 0) toast.error(`${failedNames.join("、")} 保存失败`);
-    else if (saved.includes("futu") && futuValue?.enabled) toast.success("已保存，富途牛牛正在启动");
+    const failedSections = Object.keys(failed) as Section[];
+    const failedNames = failedSections.map((section) => SECTION_NAMES[section]);
+    if (failedNames.length > 0) {
+      toast.error(`${failedNames.join("、")} 保存失败`);
+      const firstFailed = failedSections[0];
+      const targetId = firstFailed === "schwab" ? "schwab-settings-title" : firstFailed === "futu" ? "futu-settings-title" : "overnight-settings-title";
+      document.getElementById(targetId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    } else if (saved.includes("futu") && futuValue?.enabled) toast.success("已保存，富途牛牛正在启动");
     else if (saved.length === 1) toast.success(SAVED_MESSAGES[saved[0] as Section]);
     else toast.success("投资设置已保存");
   }

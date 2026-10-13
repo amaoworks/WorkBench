@@ -62,7 +62,7 @@ export default function DashboardPage() {
       )}
       {dashboard.data?.widgets.length === 0 && (
         <Card>
-          <EmptyState title="总览暂时没有卡片" description="在配置总览中选择卡片，或到设置启用业务。" />
+          <EmptyState title="暂无卡片" description="可在配置总览中选择卡片，或前往设置启用业务。" />
         </Card>
       )}
       <div className="dashboard-grid">

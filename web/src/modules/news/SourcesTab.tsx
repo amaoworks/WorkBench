@@ -58,7 +58,7 @@ export default function SourcesTab({ startAdding = false }: { startAdding?: bool
     mutationFn: refreshSource,
     onSuccess: async (result) => {
       await refresh();
-      toast.success(`刷新完成，新增 ${result.added} 条`);
+      toast.success(`刷新完成，新增 ${result.added} 篇`);
     },
     onError: async (error) => {
       await refresh();
@@ -69,7 +69,11 @@ export default function SourcesTab({ startAdding = false }: { startAdding?: bool
     mutationFn: refreshAllSources,
     onSuccess: async (result) => {
       await refresh();
-      toast.success(`刷新完成，新增 ${result.added} 条，失败 ${result.failed} 个`);
+      toast.success(
+        result.failed > 0
+          ? `刷新完成，新增 ${result.added} 篇，失败 ${result.failed} 个订阅源`
+          : `刷新完成，新增 ${result.added} 篇`,
+      );
     },
     onError: (error) => toast.error(error.message),
   });

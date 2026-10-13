@@ -1,8 +1,6 @@
 # 业务模块开发指南
 
-先阅读[架构与目录](architecture.md)，再按本次需求定位模块。现有模块是实现参考，按实际职责选择文件；不要求复制所有文件或预先创建空目录。
-
-**注意：** 通过网址接入外部模块已取消；新业务只以进程内模块加入（见下文与 [`examples/external-module`](../examples/external-module) 兼容说明）。历史设计见 [归档文档](archive/external-modules-phase-1.md)。
+按本次需求定位模块与文件。遵循精简原则（KISS / YAGNI）：按当前具体需求直接编写实现，不预留未使用的抽象层、不编写冗余的包装层或空壳函数，不预先创建空目录。现有内置模块为参考实现，新业务一律以进程内模块加入；通过网址接入外部模块已取消（历史兼容见 [归档文档](archive/external-modules-phase-1.md)）。
 
 ## 代码归属
 
@@ -105,6 +103,6 @@ Registry 通过 `./*/*.module.ts` 收集声明，校验模块和资源标识。�
 ./scripts/test.sh
 ```
 
-该脚本检查 sqlc 生成漂移、Go 测试、前端 lint 和生产构建。浏览器回归方法见 [scripts/README](../scripts/README.md)，使用临时数据库运行。
+该脚本检查 sqlc 生成漂移、Go 测试、前端 lint、前后端契约测试和生产构建，耗时约 15 秒，通过即代表满足仓库合入标准。`scripts/*.e2e.cjs` 浏览器回归依赖外置 Chromium/Playwright 环境，仅在显式排查对应链路时单独运行，不作为日常合入前置。
 
-新增模块后，在 [internal/modules/README](../internal/modules/README.md) 和 [文档入口](README.md) 登记，并在 `doc/modules/` 写当前功能、数据归属和接入点。调整公共能力、配置或数据库结构时同步修改对应设计说明。文档描述实现后的状态；未来需求以当次任务为准。
+新增模块后，在 [internal/modules/README](../internal/modules/README.md) 和 [文档入口](README.md) 登记，并在 `doc/modules/` 记录当前功能、数据归属与接口。调整公共能力、配置或数据库结构时同步更新对应文档。

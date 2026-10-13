@@ -42,7 +42,11 @@ export default function ArticlesTab({ onAddSource }: { onAddSource: () => void }
     mutationFn: refreshAllSources,
     onSuccess: async (result) => {
       await refreshNews();
-      toast.success(`刷新完成，新增 ${result.added} 条，失败 ${result.failed} 个`);
+      toast.success(
+        result.failed > 0
+          ? `刷新完成，新增 ${result.added} 篇，失败 ${result.failed} 个订阅源`
+          : `刷新完成，新增 ${result.added} 篇`,
+      );
     },
     onError: (error) => toast.error(error.message),
   });
