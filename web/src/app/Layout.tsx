@@ -40,6 +40,7 @@ export function Layout() {
   const appearance = useAppearance();
   const theme = settings.data?.appearance.theme ?? "system";
   const motion = settings.data?.appearance.motion ?? "full";
+  const palette = settings.data?.appearance.palette ?? "default";
   const [systemDark, setSystemDark] = useState(() => window.matchMedia("(prefers-color-scheme: dark)").matches);
   const dark = theme === "dark" || (theme === "system" && systemDark);
   useNotificationStream();
@@ -62,6 +63,9 @@ export function Layout() {
   useEffect(() => {
     document.documentElement.dataset.motion = motion;
   }, [motion]);
+  useEffect(() => {
+    document.documentElement.dataset.palette = palette;
+  }, [palette]);
   useEffect(() => {
     const query = window.matchMedia("(prefers-color-scheme: dark)");
     const update = () => setSystemDark(query.matches);
@@ -123,7 +127,7 @@ export function Layout() {
                 size="icon"
                 disabled={!settings.data}
                 onClick={() =>
-                  appearance.mutate({ theme: dark ? "light" : "dark", motion }, { onError: (err) => toast.error(err.message) })
+                  appearance.mutate({ theme: dark ? "light" : "dark", motion, palette }, { onError: (err) => toast.error(err.message) })
                 }
                 aria-label="切换主题"
               >

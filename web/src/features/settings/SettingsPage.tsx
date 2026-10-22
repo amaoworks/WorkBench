@@ -341,7 +341,11 @@ function PasswordForm({ mode }: { mode: string }) {
 
 function AppearanceForm({ value }: { value: Settings }) {
   const save = useAppearance();
-  const { theme, motion } = value.appearance;
+  const { theme, motion, palette = "default" } = value.appearance;
+  const palettes = [
+    { id: "default", title: "草木（默认）", description: "大地橄榄绿与自然米灰", color: "#526b37" },
+    { id: "claude", title: "暖陶（Claude）", description: "暖象牙纸底与焦糖赤陶色", color: "#cc785c" },
+  ] as const;
   const themes = [
     { id: "light", title: "浅色", icon: Sun },
     { id: "dark", title: "深色", icon: Moon },
@@ -350,15 +354,39 @@ function AppearanceForm({ value }: { value: Settings }) {
   return (
     <div className="studio-form">
       <div className="control-heading">
-        <h3>主题</h3>
+        <h3>风格</h3>
+      </div>
+      <div className="palette-options" role="group" aria-label="风格">
+        {palettes.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={`palette-option focus-ring ${palette === item.id ? "selected" : ""}`}
+            aria-pressed={palette === item.id}
+            onClick={() => save.mutate({ theme, motion, palette: item.id }, { onError: (err) => toast.error(err.message) })}
+          >
+            <div className="palette-info">
+              <span className="palette-swatch" style={{ background: item.color }} aria-hidden="true" />
+              <div>
+                <span className="text-sm font-medium">{item.title}</span>
+                <p className="mt-0.5 text-xs text-[var(--muted)]">{item.description}</p>
+              </div>
+            </div>
+            {palette === item.id && <Check size={16} className="shrink-0 text-brand" />}
+          </button>
+        ))}
+      </div>
+      <div className="control-heading">
+        <h3>模式</h3>
       </div>
       <div className="theme-options" role="group" aria-label="主题">
         {themes.map(({ id, title, icon: Icon }) => (
           <button
             key={id}
+            type="button"
             className={`theme-option focus-ring ${theme === id ? "selected" : ""}`}
             aria-pressed={theme === id}
-            onClick={() => save.mutate({ theme: id, motion }, { onError: (err) => toast.error(err.message) })}
+            onClick={() => save.mutate({ theme: id, motion, palette }, { onError: (err) => toast.error(err.message) })}
           >
             <div className={`theme-preview preview-${id}`} aria-hidden="true">
               <div className="preview-rail" />
@@ -391,7 +419,7 @@ function AppearanceForm({ value }: { value: Settings }) {
           checked={motion === "reduced"}
           disabled={save.isPending}
           onChange={(checked) =>
-            save.mutate({ theme, motion: checked ? "reduced" : "full" }, { onError: (err) => toast.error(err.message) })
+            save.mutate({ theme, motion: checked ? "reduced" : "full", palette }, { onError: (err) => toast.error(err.message) })
           }
         />
       </div>

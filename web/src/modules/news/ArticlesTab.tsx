@@ -54,6 +54,10 @@ export default function ArticlesTab({ onAddSource }: { onAddSource: () => void }
     setDraft(emptyFilters);
     setFilters(emptyFilters);
   }
+  function updateImmediate(patch: Partial<ArticleFilters>) {
+    setDraft((current) => ({ ...current, ...patch }));
+    setFilters((current) => ({ ...current, ...patch }));
+  }
   function submit(event: FormEvent) {
     event.preventDefault();
     setFilters({ ...draft, q: draft.q.trim(), topic: draft.topic.trim() });
@@ -77,7 +81,7 @@ export default function ArticlesTab({ onAddSource }: { onAddSource: () => void }
             <Select
               aria-label="订阅源"
               value={draft.sourceId}
-              onValueChange={(sourceId) => setDraft((current) => ({ ...current, sourceId }))}
+              onValueChange={(sourceId) => updateImmediate({ sourceId })}
               options={sourceOptions}
             />
             <label>
@@ -92,9 +96,9 @@ export default function ArticlesTab({ onAddSource }: { onAddSource: () => void }
             <Button>筛选</Button>
           </div>
           <div className="flex flex-wrap gap-4 text-sm">
-            <FilterCheck label="未读" checked={draft.unread} onChange={(unread) => setDraft((current) => ({ ...current, unread }))} />
-            <FilterCheck label="收藏" checked={draft.starred} onChange={(starred) => setDraft((current) => ({ ...current, starred }))} />
-            <FilterCheck label="已匹配" checked={draft.matched} onChange={(matched) => setDraft((current) => ({ ...current, matched }))} />
+            <FilterCheck label="未读" checked={draft.unread} onChange={(unread) => updateImmediate({ unread })} />
+            <FilterCheck label="收藏" checked={draft.starred} onChange={(starred) => updateImmediate({ starred })} />
+            <FilterCheck label="已匹配" checked={draft.matched} onChange={(matched) => updateImmediate({ matched })} />
           </div>
         </form>
       </Card>

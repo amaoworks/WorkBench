@@ -1,7 +1,7 @@
 import { aiStatusSchema } from "../../shared/schema";
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Bot, Send, X } from "lucide-react";
+import { Bot, Send, SquarePen, X } from "lucide-react";
 import { apiValidated, apiResponse } from "../../shared/api";
 import { Button, ButtonLink } from "../../components/ui/Button";
 import { EmptyState } from "../../components/ui/EmptyState";
@@ -95,13 +95,16 @@ export function AIPanel({ open, onClose }: { open: boolean; onClose: () => void 
         }),
       ),
   });
-  function submit(event: FormEvent) {
-    event.preventDefault();
+  function handleSend() {
     const message = input.trim();
-    if (!message || chat.isPending) return;
+    if (!message || chat.isPending || status.data?.available === false) return;
     setMessages((current) => [...current, { role: "user", text: message }, { role: "assistant", text: "正在思考…" }]);
     setInput("");
     chat.mutate(message);
+  }
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    handleSend();
   }
   return (
     <Dialog.Root
@@ -119,11 +122,27 @@ export function AIPanel({ open, onClose }: { open: boolean; onClose: () => void 
               Workbench AI
             </Dialog.Title>
             <Dialog.Description className="sr-only">与 AI 对话，协助安排工作和处理待办。</Dialog.Description>
-            <Dialog.Close asChild>
-              <Button variant="ghost" size="icon" aria-label="关闭 AI 面板">
-                <X size={18} />
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="新建对话"
+                title="新建对话"
+                disabled={chat.isPending || (messages.length === 0 && !conversationId)}
+                onClick={() => {
+                  setMessages([]);
+                  setConversationId("");
+                  localStorage.removeItem("workbench-conversation-id");
+                }}
+              >
+                <SquarePen size={18} />
               </Button>
-            </Dialog.Close>
+              <Dialog.Close asChild>
+                <Button variant="ghost" size="icon" aria-label="关闭 AI 面板">
+                  <X size={18} />
+                </Button>
+              </Dialog.Close>
+            </div>
           </div>
           <div className="flex-1 space-y-4 overflow-y-auto p-4" role="log" aria-live="polite" aria-relevant="additions text">
             {status.isError && (
@@ -156,6 +175,12 @@ export function AIPanel({ open, onClose }: { open: boolean; onClose: () => void 
               rows={2}
               value={input}
               onChange={(event) => setInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  handleSend();
+                }
+              }}
               placeholder="输入消息…"
               className="ui-input min-h-11 flex-1 resize-none"
             />

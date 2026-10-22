@@ -25,8 +25,9 @@ type AISettings struct {
 }
 
 type Appearance struct {
-	Theme  string `json:"theme"`
-	Motion string `json:"motion"`
+	Theme   string `json:"theme"`
+	Motion  string `json:"motion"`
+	Palette string `json:"palette"`
 }
 
 func (a *App) loadSettings(ctx context.Context) error {
@@ -37,7 +38,7 @@ func (a *App) loadSettings(ctx context.Context) error {
 	if a.aiSettings.Model == "" {
 		a.aiSettings.Model = "gpt-5.2"
 	}
-	a.appearance = Appearance{Theme: "system", Motion: "full"}
+	a.appearance = Appearance{Theme: "system", Motion: "full", Palette: "default"}
 	a.logging = LoggingSettings{Level: a.config.LogLevel}
 	for section, target := range map[string]any{"ai": &a.aiSettings, "appearance": &a.appearance, "logging": &a.logging} {
 		var raw string
@@ -51,6 +52,9 @@ func (a *App) loadSettings(ctx context.Context) error {
 		if err := json.Unmarshal([]byte(raw), target); err != nil {
 			return err
 		}
+	}
+	if a.appearance.Palette == "" {
+		a.appearance.Palette = "default"
 	}
 	level, err := logging.ParseLevel(a.logging.Level)
 	if err != nil {
@@ -203,8 +207,13 @@ func (a *App) saveAppearance(w http.ResponseWriter, r *http.Request) {
 		httpapi.Error(w, 400, "invalid_settings", "外观设置格式不正确")
 		return
 	}
-	if (value.Theme != "light" && value.Theme != "dark" && value.Theme != "system") || (value.Motion != "full" && value.Motion != "reduced") {
-		httpapi.Error(w, 400, "invalid_settings", "不支持的主题或动态效果选项")
+	if value.Palette == "" {
+		value.Palette = "default"
+	}
+	if (value.Theme != "light" && value.Theme != "dark" && value.Theme != "system") ||
+		(value.Motion != "full" && value.Motion != "reduced") ||
+		(value.Palette != "default" && value.Palette != "claude") {
+		httpapi.Error(w, 400, "invalid_settings", "不支持的主题、配色风格或动态效果选项")
 		return
 	}
 	a.settingsMu.Lock()

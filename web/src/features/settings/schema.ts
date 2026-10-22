@@ -1,6 +1,10 @@
 import { z } from "zod";
 
-export const appearanceSchema = z.object({ theme: z.enum(["light", "dark", "system"]), motion: z.enum(["full", "reduced"]) });
+export const appearanceSchema = z.object({
+  theme: z.enum(["light", "dark", "system"]),
+  motion: z.enum(["full", "reduced"]),
+  palette: z.enum(["default", "claude"]).default("default"),
+});
 export const aiSettingsSchema = z.object({ enabled: z.boolean(), model: z.string(), baseUrl: z.string(), hasApiKey: z.boolean() });
 export const loggingSettingsSchema = z.object({ level: z.enum(["debug", "info", "warn", "error"]) });
 export const settingsSchema = z.object({

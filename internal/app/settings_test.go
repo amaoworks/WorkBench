@@ -99,6 +99,7 @@ func TestSettingsValidationAndCSRF(t *testing.T) {
 		{"/api/settings/ai", `{"enabled":false,"model":"test","unexpected":1}`},
 		{"/api/settings/appearance", `{"theme":"invalid","motion":"full"}`},
 		{"/api/settings/appearance", `{"theme":"dark","motion":"invalid"}`},
+		{"/api/settings/appearance", `{"theme":"dark","motion":"full","palette":"invalid"}`},
 		{"/api/settings/password", `{"currentPassword":"Oldpass1","newPassword":"Newpass1"}`},
 	}
 	for _, tc := range cases {
