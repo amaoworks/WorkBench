@@ -32,5 +32,7 @@ FROM todo_tasks;
 
 -- name: ListDueTasks :many
 SELECT id, title, due_at FROM todo_tasks
-WHERE completed_at IS NULL AND due_at IS NOT NULL AND due_at <= ?
-ORDER BY due_at LIMIT 100;
+WHERE completed_at IS NULL AND due_at IS NOT NULL AND due_at <= sqlc.arg(scan_before)
+  AND (CAST(sqlc.arg(has_cursor) AS BIGINT) = 0 OR
+    (due_at, id) > (CAST(sqlc.arg(cursor_due) AS BIGINT), CAST(sqlc.arg(cursor_id) AS TEXT)))
+ORDER BY due_at, id LIMIT 100;

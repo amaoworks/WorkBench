@@ -153,13 +153,14 @@ IMAGE=workbench:local VERSION=v0.0.0-dev.1 ARCH=amd64 ./scripts/export-build.sh
 
 `ARCH` 必须与镜像架构一致。镜像文件可用 `docker load --input` 导入；导出的二进制与镜像内程序相同。正式标签发布仍使用 `release.sh` 和 Release 工作流。
 
-`deployment-smoke.py` 仅依赖 Python 3 标准库，使用随机端口、临时密码和独立工作空间，验证首次初始化、登录、健康探针、在线备份、退出，以及重建后的数据和凭据保留。容器模式还检查非 root 用户；测试结束清理自己的 Compose 项目和临时卷。
+`deployment-smoke.py` 仅依赖 Python 3 标准库，使用随机端口、临时密码和独立工作空间，验证首次初始化、登录、健康探针、在线备份、退出，以及重建后的数据和凭据保留。容器模式支持默认 SQLite 与 `--database postgres`（验证默认 PostgreSQL Compose 健康依赖与数据保留），并检查非 root 用户；测试结束清理自己的 Compose 项目和临时卷。
 
 ```bash
 ./scripts/build.sh
 python3 scripts/deployment-smoke.py --binary ./workbench
 docker build -t workbench:smoke .
 python3 scripts/deployment-smoke.py --image workbench:smoke
+python3 scripts/deployment-smoke.py --image workbench:smoke --database postgres
 ```
 
 `internal/app/proxy_test.go` 使用真实的本机 HTTPS 代理转发到 HTTP 后端，检查 Secure Cookie、登录、来源与 Host 拒绝、CSRF、SSE 和代理头伪造。普通 Go 测试会执行此项。浏览器 OAuth 回归见下文；全部服务使用临时数据和模拟凭据。
@@ -424,7 +425,7 @@ export WORKBENCH_TEST_POSTGRES_URL='postgresql://workbench:测试密码@127.0.0.
 go test ./internal/app -run '^TestPostgres' -v
 ```
 
-不设置该变量时，仓库标准检查跳过 PostgreSQL 集成测试；设置后也可运行 `./scripts/test.sh` 完成两种数据库的检查。
+不设置该变量时，本地标准检查跳过 PostgreSQL 集成测试；设置后也可运行 `./scripts/test.sh` 完成两种数据库的检查。GitHub Actions 的 `check` 任务已挂载 PostgreSQL 17 Alpine 服务并自动注入 `WORKBENCH_TEST_POSTGRES_URL`。
 
 分别启动一次性 SQLite 和 PostgreSQL 工作台，再运行设置页浏览器回归。SQLite 场景会创建备份；PostgreSQL 场景检查数据库类型和外部备份提示，两者均检查刷新及移动端布局：
 

@@ -97,25 +97,29 @@ test('Night is a standalone session using only Futu for all supported minute res
     assert.equal(futuCalls.length, 4);
 });
 
-test('Night commands stay off Schwab and disposal carries the bootstrapped generation', async t => {
+test('Night commands stay off Schwab, wait for Futu readiness, and carry generation and owner', async t => {
+    const events = new EventTarget();
     const schwabCalls = [], futuCalls = [];
     const feed = new Datafeed({
-        events: new EventTarget(), stream: { ready: true },
+        events, stream: { ready: true },
         request: async path => { schwabCalls.push(path); return new Response('{}'); },
         overnightRequest: async () => new Response(JSON.stringify({ enabled: true, providerEnabled: true })),
         futuRequest: async (_path, init) => {
             futuCalls.push(JSON.parse(init.body));
-            return new Response(JSON.stringify({ success: true, applied: true, generation: 'gateway:1' }));
+            return new Response(JSON.stringify({ success: true, applied: true, generation: 'gateway:1', owner: 'owner:1' }));
         },
     });
     t.after(() => feed.destroy());
     feed.subscribeBars({ name: 'AAPL', subsession_id: 'night' }, '5', () => {}, 'night');
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.deepEqual(futuCalls, [], 'Night ADD must wait until the Futu websocket supplies generation and owner');
+    events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation: 'gateway:1', owner: 'owner:1' } }));
     for (let i = 0; i < 50 && feed.futuSUB.get('AAPL\0' + '5') !== 'subscribed'; i++) await new Promise(resolve => setTimeout(resolve, 5));
     assert.deepEqual(schwabCalls, []);
-    assert.deepEqual(futuCalls[0], { command: 'ADD', symbol: 'AAPL', resolution: '5' }, 'bootstrap ADD has no known token yet');
+    assert.deepEqual(futuCalls[0], { command: 'ADD', symbol: 'AAPL', resolution: '5', generation: 'gateway:1', owner: 'owner:1' });
     feed.unsubscribeBars('night');
     for (let i = 0; i < 50 && futuCalls.length < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
-    assert.deepEqual(futuCalls[1], { command: 'UNSUB', symbol: 'AAPL', resolution: '5', generation: 'gateway:1' });
+    assert.deepEqual(futuCalls[1], { command: 'UNSUB', symbol: 'AAPL', resolution: '5', generation: 'gateway:1', owner: 'owner:1' });
 });
 
 test('Night discards a stale response after a Schwab reconnect', async t => {
@@ -191,8 +195,10 @@ test('Futu websocket readiness propagates the backend lease generation', async t
     t.after(() => stream.close());
     stream.wanted = true;
     await stream.connect();
-    socket.onmessage({ data: JSON.stringify({ stream: { status: 'ready', generation: 'gateway-a:2' } }) });
-    assert.deepEqual(detail, { generation: 'gateway-a:2' });
+    socket.onmessage({ data: JSON.stringify({ stream: { status: 'ready', generation: 'gateway-a:2', owner: 'client-1' } }) });
+    assert.deepEqual(detail, { generation: 'gateway-a:2', owner: 'client-1' });
+    assert.equal(stream.generation, 'gateway-a:2');
+    assert.equal(stream.owner, 'client-1');
 });
 
 test('overnightFetch reads the lightweight settings endpoint with same-origin credentials', async (t) => {

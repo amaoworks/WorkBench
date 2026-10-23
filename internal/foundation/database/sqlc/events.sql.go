@@ -10,6 +10,34 @@ import (
 	"database/sql"
 )
 
+const backfillEventDeliveries = `-- name: BackfillEventDeliveries :exec
+INSERT INTO event_deliveries(event_id, consumer_id, status, attempts, next_attempt_at, updated_at)
+SELECT e.id, t.consumer_id, 'pending', 0, e.available_at, ?1
+FROM event_consumer_topics t
+JOIN events_log e ON e.topic = t.topic
+WHERE t.consumer_id = ?2
+ON CONFLICT(event_id, consumer_id) DO NOTHING
+`
+
+type BackfillEventDeliveriesParams struct {
+	UpdatedAt  int64  `json:"updated_at"`
+	ConsumerID string `json:"consumer_id"`
+}
+
+func (q *Queries) BackfillEventDeliveries(ctx context.Context, arg BackfillEventDeliveriesParams) error {
+	_, err := q.db.ExecContext(ctx, backfillEventDeliveries, arg.UpdatedAt, arg.ConsumerID)
+	return err
+}
+
+const deleteEventConsumerTopics = `-- name: DeleteEventConsumerTopics :exec
+DELETE FROM event_consumer_topics WHERE consumer_id = ?
+`
+
+func (q *Queries) DeleteEventConsumerTopics(ctx context.Context, consumerID string) error {
+	_, err := q.db.ExecContext(ctx, deleteEventConsumerTopics, consumerID)
+	return err
+}
+
 const getClaimableDelivery = `-- name: GetClaimableDelivery :one
 SELECT e.id AS event_id, e.topic, e.schema_version, e.source_module,
        COALESCE(e.aggregate_id, '') AS aggregate_id, e.occurred_at,
@@ -58,6 +86,30 @@ func (q *Queries) GetClaimableDelivery(ctx context.Context, arg GetClaimableDeli
 	return i, err
 }
 
+const hasClaimableDelivery = `-- name: HasClaimableDelivery :one
+SELECT EXISTS (
+    SELECT 1 FROM event_deliveries
+    WHERE consumer_id = ?
+      AND (
+          (status IN ('pending', 'retry') AND COALESCE(next_attempt_at, 0) <= ?)
+          OR (status = 'running' AND COALESCE(locked_until, 0) <= ?)
+      )
+)
+`
+
+type HasClaimableDeliveryParams struct {
+	ConsumerID    string        `json:"consumer_id"`
+	NextAttemptAt sql.NullInt64 `json:"next_attempt_at"`
+	LockedUntil   sql.NullInt64 `json:"locked_until"`
+}
+
+func (q *Queries) HasClaimableDelivery(ctx context.Context, arg HasClaimableDeliveryParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, hasClaimableDelivery, arg.ConsumerID, arg.NextAttemptAt, arg.LockedUntil)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const insertEvent = `-- name: InsertEvent :exec
 INSERT INTO events_log(
     id, topic, schema_version, source_module, aggregate_id,
@@ -93,6 +145,40 @@ func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) error 
 		arg.AvailableAt,
 		arg.CreatedAt,
 	)
+	return err
+}
+
+const insertEventConsumerTopic = `-- name: InsertEventConsumerTopic :exec
+INSERT INTO event_consumer_topics(consumer_id, topic) VALUES (?, ?)
+ON CONFLICT(consumer_id, topic) DO NOTHING
+`
+
+type InsertEventConsumerTopicParams struct {
+	ConsumerID string `json:"consumer_id"`
+	Topic      string `json:"topic"`
+}
+
+func (q *Queries) InsertEventConsumerTopic(ctx context.Context, arg InsertEventConsumerTopicParams) error {
+	_, err := q.db.ExecContext(ctx, insertEventConsumerTopic, arg.ConsumerID, arg.Topic)
+	return err
+}
+
+const insertEventDeliveries = `-- name: InsertEventDeliveries :exec
+INSERT INTO event_deliveries(event_id, consumer_id, status, attempts, next_attempt_at, updated_at)
+SELECT e.id, t.consumer_id, 'pending', 0, e.available_at, ?1
+FROM events_log e
+JOIN event_consumer_topics t ON t.topic = e.topic
+WHERE e.id = ?2
+ON CONFLICT(event_id, consumer_id) DO NOTHING
+`
+
+type InsertEventDeliveriesParams struct {
+	UpdatedAt int64  `json:"updated_at"`
+	EventID   string `json:"event_id"`
+}
+
+func (q *Queries) InsertEventDeliveries(ctx context.Context, arg InsertEventDeliveriesParams) error {
+	_, err := q.db.ExecContext(ctx, insertEventDeliveries, arg.UpdatedAt, arg.EventID)
 	return err
 }
 
@@ -176,5 +262,14 @@ func (q *Queries) MarkDeliverySucceeded(ctx context.Context, arg MarkDeliverySuc
 		arg.EventID,
 		arg.ConsumerID,
 	)
+	return err
+}
+
+const resetEventConsumers = `-- name: ResetEventConsumers :exec
+DELETE FROM event_consumer_topics
+`
+
+func (q *Queries) ResetEventConsumers(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, resetEventConsumers)
 	return err
 }

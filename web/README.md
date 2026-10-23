@@ -25,7 +25,7 @@ src/styles.css          主题变量和共享样式
 
 模块设置接收 `{ enabled: boolean }`，停用时不发起业务查询。设置弹窗由平台管理，没有设置组件的模块展示暂无配置内容。
 
-业务 queryKey 以模块 ID 开头，Widget 使用 `["widget", widget.id]`。启停模块后平台取消旧查询、清除对应业务和 Widget 缓存，再刷新模块、总览与 AI 状态；业务写入后刷新实际受影响的查询。分页使用后端 nextCursor。接入示例见[业务开发指南](../doc/business-development.md)。
+业务 queryKey 以模块 ID 开头，Widget 使用 `[moduleId, "widget", widget.id]`。启停模块后平台取消旧查询、清除对应业务和 Widget 缓存，再刷新模块、总览与 AI 状态；业务写入后刷新实际受影响的查询。分页使用后端 nextCursor。接入示例见[业务开发指南](../doc/business-development.md)。
 
 ## 界面约定
 
@@ -35,7 +35,7 @@ src/styles.css          主题变量和共享样式
 - 配色读取 `styles.css` 的语义变量，兼容明暗主题，尊重系统及工作空间的减少动态效果设置。
 - 删除确认使用共享 ConfirmDialog 与 useConfirmDelete，支持键盘操作，并按操作结果恢复焦点。
 - 设置页面有六个标签：业务模块、AI 配置、通知推送、账户安全、外观、数据与运行。切换时保留当前页面内的表单草稿；支持方向键、Home/End。`/settings?tab=modules|ai|notifications|security|appearance|data` 可定位标签。
-- 业务设置弹窗最大宽度 480px，支持 Escape、遮罩及关闭按钮，并将焦点还给触发按钮。
+- 业务设置弹窗最大宽度 480px，支持 Escape、遮罩及关闭按钮，接入 `useReportDirty` 拦截未保存草稿关闭，并将焦点还给触发按钮。
 - 通知的查看、已读、归档使用共享 Button/ButtonLink 的 ghost、sm 规格；业务只提供 actionRoute 和 actionLabel。
 - 设置标签栏按需横向滚动，避免纵向溢出；新增页面检查桌面和窄屏宽度。
 

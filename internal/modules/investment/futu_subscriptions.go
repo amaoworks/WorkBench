@@ -14,6 +14,78 @@ type subKey struct {
 	sub    int
 }
 
+type browserSubKey struct {
+	symbol     string
+	resolution string
+}
+
+// browserCommand binds browser references to an online WebSocket. The owner
+// mutex also serializes disconnect cleanup with commands already in flight.
+func (g *futuGateway) browserCommand(ctx context.Context, command, owner, generation, symbol, resolution string) (string, bool, error) {
+	g.mu.Lock()
+	var client *futuWSClient
+	for candidate := range g.clients {
+		if candidate.owner == owner && candidate.generation == generation && generation == g.generationTokenLocked() {
+			client = candidate
+			break
+		}
+	}
+	current := g.generationTokenLocked()
+	g.mu.Unlock()
+	if client == nil {
+		return current, false, nil
+	}
+
+	client.opMu.Lock()
+	defer client.opMu.Unlock()
+	if !g.browserOnline(client) {
+		return g.currentGeneration(), false, nil
+	}
+	if _, _, ok := futuKLTypes(resolution); !ok && resolution != "" {
+		return g.currentGeneration(), true, nil
+	}
+	key := browserSubKey{symbol: symbol, resolution: resolution}
+	_, held := client.subs[key]
+	if (command == "ADD" && held) || (command == "UNSUB" && !held) {
+		return g.currentGeneration(), true, nil
+	}
+	var applied bool
+	var err error
+	if command == "ADD" {
+		current, applied, err = g.addSub(ctx, symbol, resolution, generation)
+		if applied && err == nil {
+			client.subs[key] = struct{}{}
+		}
+	} else {
+		current, applied, err = g.releaseSub(ctx, symbol, resolution, generation)
+		if applied && err == nil {
+			delete(client.subs, key)
+		}
+	}
+	if !g.browserOnline(client) {
+		return g.currentGeneration(), false, nil
+	}
+	return current, applied, err
+}
+
+func (g *futuGateway) browserOnline(client *futuWSClient) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	_, online := g.clients[client]
+	return online && !g.closed && client.opend == g.client && client.generation == g.generationTokenLocked()
+}
+
+func (g *futuGateway) releaseBrowserSub(client *futuWSClient, key browserSubKey) {
+	_, subType, ok := futuKLTypes(key.resolution)
+	if !ok && key.resolution != "" {
+		return
+	}
+	if key.resolution != "" {
+		_ = g.release(context.Background(), client.opend, key.symbol, subType)
+	}
+	_ = g.release(context.Background(), client.opend, key.symbol, subTypeBasic)
+}
+
 type subLease struct {
 	count      int
 	since      time.Time
@@ -63,9 +135,9 @@ func (g *futuGateway) currentGeneration() string {
 	return g.generationTokenLocked()
 }
 
-// commandClient rejects an old browser command before it can mutate the
-// current generation's reference counts. A bootstrap ADD may omit a token;
-// an unversioned UNSUB is always a safe no-op.
+// commandClient gates the underlying lease operations by connection generation.
+// Browser commands additionally require an online owner via browserCommand.
+// Internal bootstrap ADDs may omit a token; unversioned UNSUBs are no-ops.
 func (g *futuGateway) commandClient(ctx context.Context, requestGeneration string, allowBootstrap bool) (*opendClient, string, bool, error) {
 	g.mu.Lock()
 	current := g.generationTokenLocked()

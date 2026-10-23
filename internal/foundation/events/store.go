@@ -35,6 +35,15 @@ func NewStore(db *sql.DB) *Store {
 
 func (s *Store) Wake() <-chan struct{} { return s.wake }
 
+// ResetConsumers clears registration metadata once at workspace startup, before
+// services and modules are created. Existing deliveries retain their state.
+func (s *Store) ResetConsumers(ctx context.Context) error {
+	if err := dbsqlc.New(s.db).ResetEventConsumers(ctx); err != nil {
+		return fmt.Errorf("reset event consumers: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) Publish(ctx context.Context, event contracts.NewEvent) (contracts.EventID, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -79,13 +88,19 @@ func (s *Store) PublishTx(ctx context.Context, tx *sql.Tx, event contracts.NewEv
 		return "", fmt.Errorf("generate event id: %w", err)
 	}
 	now := s.now().UTC().UnixMilli()
-	err = dbsqlc.New(tx).InsertEvent(ctx, dbsqlc.InsertEventParams{
+	queries := dbsqlc.New(tx)
+	err = queries.InsertEvent(ctx, dbsqlc.InsertEventParams{
 		ID: id, Topic: event.Topic, SchemaVersion: int64(event.SchemaVersion),
 		SourceModule: string(event.SourceModule), AggregateID: event.AggregateID,
 		PayloadJson: string(event.Payload), OccurredAt: now, AvailableAt: now, CreatedAt: now,
 	})
 	if err != nil {
 		return "", fmt.Errorf("insert event: %w", err)
+	}
+	if err := queries.InsertEventDeliveries(ctx, dbsqlc.InsertEventDeliveriesParams{
+		EventID: id, UpdatedAt: now,
+	}); err != nil {
+		return "", fmt.Errorf("insert event deliveries: %w", err)
 	}
 	// This is only a low-latency hint. If the outer transaction has not committed
 	// yet, the dispatcher's periodic database poll still guarantees discovery.

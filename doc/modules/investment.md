@@ -130,8 +130,8 @@ Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后
 | POST | `/api/modules/investment/futu/disconnect` | 停用 Futu，同时关闭夜盘 |
 | GET/PUT | `/api/modules/investment/overnight` | 独立夜盘开关，启用前校验 Futu 依赖 |
 | GET | `/api/modules/investment/futu/kline` | 夜盘当前窗口及额度兜底历史；24H 可用 `requireHistory=true` 要求历史回补失败时明确报错 |
-| GET | `/api/modules/investment/futu/quote/ws` | 夜盘推送（覆盖关闭时 409，不升级） |
-| POST | `/api/modules/investment/futu/quote/ws/command` | 夜盘 ADD/UNSUB；`resolution` 为空时只订阅 BASIC 报价，否则订阅指定 K 线及 BASIC；携带连接代次，只有首次 ADD 可省略；过期命令返回 `applied:false` 和当前代次 |
+| GET | `/api/modules/investment/futu/quote/ws` | 夜盘推送（覆盖关闭时 409，不升级；就绪帧 `ready` 含 `owner` 与 `generation`，54 秒 ping / 60 秒读取超时，断开自动回收该连接订阅引用） |
+| POST | `/api/modules/investment/futu/quote/ws/command` | 夜盘 ADD/UNSUB；`resolution` 为空时只订阅 BASIC 报价，否则订阅指定 K 线及 BASIC；浏览器等待 `ready` 后必传 `owner` 与 `generation`，缺 `owner` 返回 409（升级前已打开的终端需刷新页面加载新协议，不再允许匿名引用），缺或旧 `generation`、旧 `owner` 返回 `applied:false` 和当前代次 |
 | GET | `/investment/terminal`、`/investment/terminal/*` | 终端 HTML 与适配器 |
 | GET/HEAD | `/charting_library/*` | 图表库静态文件代理 |
 

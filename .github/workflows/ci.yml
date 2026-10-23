@@ -14,6 +14,22 @@ jobs:
   check:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: workbench
+          POSTGRES_USER: workbench
+          POSTGRES_PASSWORD: workbench-test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U workbench -d workbench"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      WORKBENCH_TEST_POSTGRES_URL: postgresql://workbench:workbench-test-only@127.0.0.1:5432/workbench?sslmode=disable
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -90,6 +106,10 @@ jobs:
         env:
           IMAGE: ${{ steps.info.outputs.image }}
         run: python3 scripts/deployment-smoke.py --image "$IMAGE"
+      - name: Verify default PostgreSQL Compose lifecycle
+        env:
+          IMAGE: ${{ steps.info.outputs.image }}
+        run: python3 scripts/deployment-smoke.py --image "$IMAGE" --database postgres
       - name: Export binary and Docker image
         if: github.event_name != 'pull_request' && github.ref_type != 'tag'
         env:

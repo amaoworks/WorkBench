@@ -35,7 +35,8 @@ export default class Datafeed {
         this.futuOperations = new Map();
         this.futuRetryTimers = new Map();
         this.futuEpoch = 0;
-        this.futuBackendGeneration = undefined;
+        this.futuBackendGeneration = futuStream?.ready === true ? futuStream.generation : undefined;
+        this.futuOwner = futuStream?.ready === true ? futuStream.owner : undefined;
         this.futuRetiredGenerations = new Set();
         this.futuConnected = futuStream?.ready === true;
         this.resetCharts = resetCharts;
@@ -154,18 +155,17 @@ export default class Datafeed {
             const symbols = [...this.futuOvernight.keys()];
             this.futuOvernight.clear();
             symbols.forEach(symbol => this.publishQuote(symbol));
-            // A browser WS disconnect does not release OpenD leases. Preserve
-            // subscription state until the server supplies a new lease generation.
             for (const [key] of this.latestBars) {
                 if (key.endsWith(`\0night`) || key.endsWith(`\0${EQUITY_24H_SESSION}`)) this.latestBars.delete(key);
             }
         };
         this.onFutuReady = (event) => {
             const generation = event?.detail?.generation;
+            const owner = event?.detail?.owner;
             if (this.isStaleFutuGeneration(generation)) return;
             if (this.futuConnected) this.futuEpoch++;
             this.futuConnected = true;
-            this.observeFutuGeneration(generation);
+            this.observeFutuGeneration(generation, owner);
             for (const listener of this.barListeners.values()) {
                 if (listener.subsessionId === 'night' || listener.subsessionId === EQUITY_24H_SESSION) {
                     this.latestBars.delete(seriesKey(listener.symbol, listener.subsessionId));
@@ -449,23 +449,30 @@ export default class Datafeed {
             (this.futuBackendGeneration !== undefined && olderFutuGeneration(generation, this.futuBackendGeneration));
     }
 
-    observeFutuGeneration(rawGeneration) {
-        if (rawGeneration === undefined || rawGeneration === null || rawGeneration === '') return false;
-        const generation = String(rawGeneration);
-        if (this.isStaleFutuGeneration(generation)) return false;
-        if (this.futuBackendGeneration === undefined) {
-            this.futuBackendGeneration = generation;
-            return false;
+    observeFutuGeneration(rawGeneration, rawOwner = this.futuOwner) {
+        const hasGeneration = rawGeneration !== undefined && rawGeneration !== null && rawGeneration !== '';
+        const hasOwner = rawOwner !== undefined && rawOwner !== null && rawOwner !== '';
+        if (!hasGeneration && !hasOwner) return false;
+        const generation = hasGeneration ? String(rawGeneration) : this.futuBackendGeneration;
+        const owner = hasOwner ? String(rawOwner) : this.futuOwner;
+        if (hasGeneration && this.isStaleFutuGeneration(generation)) return false;
+        const generationChanged = hasGeneration && this.futuBackendGeneration !== undefined && this.futuBackendGeneration !== generation;
+        const ownerChanged = hasOwner && this.futuOwner !== undefined && this.futuOwner !== owner;
+        if (generationChanged) {
+            this.futuRetiredGenerations.add(this.futuBackendGeneration);
+            if (this.futuRetiredGenerations.size > 32) this.futuRetiredGenerations.delete(this.futuRetiredGenerations.values().next().value);
         }
-        if (this.futuBackendGeneration === generation) return false;
-        this.futuRetiredGenerations.add(this.futuBackendGeneration);
-        if (this.futuRetiredGenerations.size > 32) this.futuRetiredGenerations.delete(this.futuRetiredGenerations.values().next().value);
-        this.futuBackendGeneration = generation;
+        if (hasGeneration) this.futuBackendGeneration = generation;
+        if (hasOwner) this.futuOwner = owner;
+        if (!generationChanged && !ownerChanged) return false;
         this.resetFutuLeaseState();
         return true;
     }
 
     resetFutuLeaseState() {
+        for (const timer of this.futuRetryTimers.values()) clearTimeout(timer);
+        this.futuRetryTimers.clear();
+        this.futuOperations.clear();
         this.futuSUB.clear();
         this.futuDesired = this.desiredFutuSubscriptions();
         const symbols = [...this.futuOvernight.keys()];
@@ -473,22 +480,46 @@ export default class Datafeed {
         symbols.forEach(symbol => this.publishQuote(symbol));
     }
 
-    acceptFutuCommandGeneration(rawGeneration, requestGeneration) {
-        if (rawGeneration === undefined || rawGeneration === null || rawGeneration === '') {
-            // Generation-less legacy responses are safe only if the backend is
-            // still the one observed when this command was sent.
-            return requestGeneration === this.futuBackendGeneration;
+    hasFutuSession() {
+        return this.futuConnected && Boolean(this.futuBackendGeneration) && Boolean(this.futuOwner);
+    }
+
+    isCurrentFutuIdentity(requestGeneration, requestOwner) {
+        return this.hasFutuSession() &&
+            requestGeneration === this.futuBackendGeneration &&
+            requestOwner === this.futuOwner;
+    }
+
+    acceptFutuCommandResponse(payload, requestGeneration, requestOwner) {
+        if (!this.isCurrentFutuIdentity(requestGeneration, requestOwner)) return false;
+        if (payload?.applied === false) return false;
+        if (payload?.generation !== undefined && payload?.generation !== null && payload?.generation !== '' &&
+            String(payload.generation) !== requestGeneration) {
+            return false;
         }
-        const generation = String(rawGeneration);
-        if (this.futuBackendGeneration === undefined) {
-            this.futuBackendGeneration = generation;
-            return true;
+        if (payload?.owner !== undefined && payload?.owner !== null && payload?.owner !== '' &&
+            String(payload.owner) !== requestOwner) {
+            return false;
         }
-        if (generation === this.futuBackendGeneration) return true;
-        if (this.isStaleFutuGeneration(generation) || requestGeneration !== this.futuBackendGeneration) return false;
-        this.observeFutuGeneration(generation);
-        this.queueFutuSubscriptions();
         return true;
+    }
+
+    invalidateFutuSession(rawGeneration) {
+        if (rawGeneration !== undefined && rawGeneration !== null && rawGeneration !== '') {
+            const generation = String(rawGeneration);
+            if (!this.isStaleFutuGeneration(generation) &&
+                this.futuBackendGeneration !== undefined &&
+                this.futuBackendGeneration !== generation) {
+                this.futuRetiredGenerations.add(this.futuBackendGeneration);
+                if (this.futuRetiredGenerations.size > 32) {
+                    this.futuRetiredGenerations.delete(this.futuRetiredGenerations.values().next().value);
+                }
+                this.futuBackendGeneration = generation;
+            }
+        }
+        this.futuConnected = false;
+        this.futuOwner = undefined;
+        this.resetFutuLeaseState();
     }
 
     hasFutuListener(symbol, resolution) {
@@ -523,16 +554,20 @@ export default class Datafeed {
     queueFutuReconcile(symbol, resolution) {
         const key = symbol + '\0' + resolution;
         if (this.futuOperations.has(key)) return;
-        // BASIC's initial snapshot is delivered over this page's WebSocket.
-        if (resolution === '' && this.futuStream && !this.futuConnected && this.futuDesired.has(key)) return;
+        const subscribed = this.futuSUB.get(key) === 'subscribed';
+        if (this.futuDesired.has(key) && !subscribed && !this.hasFutuSession()) return;
+        if (!this.futuDesired.has(key) && subscribed && !this.hasFutuSession()) {
+            this.futuSUB.delete(key);
+            return;
+        }
         const operation = this.reconcileFutuSubscription(symbol, resolution);
         this.futuOperations.set(key, operation);
         void operation.finally(() => {
             if (this.futuOperations.get(key) !== operation) return;
             this.futuOperations.delete(key);
             const desired = !this.destroyed && this.futuDesired.has(key) && this.hasFutuListener(symbol, resolution);
-            const subscribed = this.futuSUB.get(key) === 'subscribed';
-            if (desired !== subscribed && !this.futuRetryTimers.has(key)) this.queueFutuReconcile(symbol, resolution);
+            const isSubscribed = this.futuSUB.get(key) === 'subscribed';
+            if (desired !== isSubscribed && !this.futuRetryTimers.has(key)) this.queueFutuReconcile(symbol, resolution);
         }).catch(() => {});
     }
 
@@ -545,45 +580,64 @@ export default class Datafeed {
                 if (!desired) this.futuSUB.delete(key);
                 return;
             }
+            const requestGeneration = this.futuBackendGeneration;
+            const requestOwner = this.futuOwner;
             if (desired) {
+                if (!this.hasFutuSession()) return;
                 let overlay;
                 try { overlay = await this.ensureFutuOverlay(); } catch {
+                    if (!this.isCurrentFutuIdentity(requestGeneration, requestOwner)) return;
                     this.futuSUB.delete(key);
                     this.queueFutuRetry(symbol, resolution);
                     return;
                 }
+                if (!this.isCurrentFutuIdentity(requestGeneration, requestOwner)) return;
                 if (!overlay.enabled) {
                     this.futuDesired.delete(key);
                     this.futuSUB.delete(key);
                     return;
                 }
-                if (resolution === '' && this.futuStream && !this.futuConnected) return;
+                if (!this.hasFutuSession()) return;
                 this.futuSUB.set(key, 'pending');
-                const requestGeneration = this.futuBackendGeneration;
                 try {
                     const response = await this.futuRequest('/quote/ws/command', {
-                        method: 'POST', body: JSON.stringify({ command: 'ADD', symbol, resolution, generation: requestGeneration })
+                        method: 'POST',
+                        body: JSON.stringify({
+                            command: 'ADD',
+                            symbol,
+                            resolution,
+                            generation: requestGeneration,
+                            owner: requestOwner,
+                        }),
                     });
                     if (!response.ok) throw new Error('夜盘订阅失败');
                     const payload = await response.clone().json().catch(() => null);
-                    if (!this.acceptFutuCommandGeneration(payload?.generation, requestGeneration) || payload?.applied === false) {
-                        this.futuSUB.delete(key);
-                        continue;
+                    if (!this.isCurrentFutuIdentity(requestGeneration, requestOwner)) return;
+                    if (!this.acceptFutuCommandResponse(payload, requestGeneration, requestOwner)) {
+                        this.invalidateFutuSession(payload?.generation);
+                        return;
                     }
                     // Re-read desired state after the awaited ADD. If the last
                     // listener left while it was pending, the loop sends UNSUB.
                     this.futuSUB.set(key, 'subscribed');
                 } catch {
+                    if (!this.isCurrentFutuIdentity(requestGeneration, requestOwner)) return;
                     this.futuSUB.delete(key);
                     if (!this.destroyed && this.futuDesired.has(key) && this.hasFutuListener(symbol, resolution)) this.queueFutuRetry(symbol, resolution);
                     return;
                 }
             } else {
+                if (!this.hasFutuSession()) {
+                    this.futuSUB.delete(key);
+                    return;
+                }
                 let overlay;
                 try { overlay = await this.ensureFutuOverlay(); } catch {
+                    if (!this.isCurrentFutuIdentity(requestGeneration, requestOwner)) return;
                     this.queueFutuRetry(symbol, resolution);
                     return;
                 }
+                if (!this.isCurrentFutuIdentity(requestGeneration, requestOwner)) return;
                 // Disabling overnight coverage closes the gateway and drops its
                 // leases; no HTTP UNSUB is possible or needed after that.
                 if (!overlay.enabled) {
@@ -591,19 +645,27 @@ export default class Datafeed {
                     return;
                 }
                 this.futuSUB.set(key, 'releasing');
-                const requestGeneration = this.futuBackendGeneration;
                 try {
                     const response = await this.futuRequest('/quote/ws/command', {
-                        method: 'POST', body: JSON.stringify({ command: 'UNSUB', symbol, resolution, generation: requestGeneration })
+                        method: 'POST',
+                        body: JSON.stringify({
+                            command: 'UNSUB',
+                            symbol,
+                            resolution,
+                            generation: requestGeneration,
+                            owner: requestOwner,
+                        }),
                     });
                     if (!response.ok && response.status !== 409) throw new Error('夜盘取消订阅失败');
                     const payload = response.ok ? await response.clone().json().catch(() => null) : null;
-                    if (!this.acceptFutuCommandGeneration(payload?.generation, requestGeneration) || payload?.applied === false) {
-                        this.futuSUB.delete(key);
-                        continue;
+                    if (!this.isCurrentFutuIdentity(requestGeneration, requestOwner)) return;
+                    if (response.ok && !this.acceptFutuCommandResponse(payload, requestGeneration, requestOwner)) {
+                        this.invalidateFutuSession(payload?.generation);
+                        return;
                     }
                     this.futuSUB.delete(key);
                 } catch {
+                    if (!this.isCurrentFutuIdentity(requestGeneration, requestOwner)) return;
                     this.futuSUB.set(key, 'subscribed');
                     this.queueFutuRetry(symbol, resolution);
                     return;

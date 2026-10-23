@@ -535,14 +535,16 @@ test('24H realtime routes only ET daytime to Schwab and night to Futu, isolated 
 });
 
 test('24H realtime subscribes both providers once and releases Futu only after the last night-series user', async t => {
+    const events = new EventTarget();
     const schwabCalls = [], futuCalls = [];
     const feed = new Datafeed({
-        events: new EventTarget(), stream: { ready: true },
+        events, stream: { ready: true },
         overnightRequest: async () => new Response(JSON.stringify({ enabled: true, providerEnabled: true })),
         request: async (_path, init) => { schwabCalls.push(JSON.parse(init.body)); return new Response('{}'); },
         futuRequest: async (_path, init) => { futuCalls.push(JSON.parse(init.body)); return new Response('{}'); },
     });
     t.after(() => feed.destroy());
+    events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation: 'gateway:1', owner: 'owner:1' } }));
     feed.subscribeBars({ name: 'AAPL', subsession_id: EQUITY_24H_SESSION }, '5', () => {}, 'full');
     feed.subscribeBars({ name: 'AAPL', subsession_id: 'night' }, '5', () => {}, 'night');
     await new Promise(resolve => setTimeout(resolve, 20));
@@ -555,47 +557,68 @@ test('24H realtime subscribes both providers once and releases Futu only after t
     assert.deepEqual(futuCalls.map(call => call.command), ['ADD', 'UNSUB']);
 });
 
-test('first Futu READY before or after ADD and same-generation WS reconnect never duplicate leases', async t => {
+test('first Futu READY before or after subscribe and same-generation new-owner reconnect rebuilds leases', async t => {
     for (const order of ['ready-first', 'add-first']) {
         const events = new EventTarget(), commands = [];
-        let generation = 'gateway:1';
+        let generation = 'gateway:1', owner = 'owner:1';
         const feed = new Datafeed({
             events, stream: { ready: false },
             overnightRequest: async () => new Response(JSON.stringify({ enabled: true, providerEnabled: true })),
             futuRequest: async (_path, init) => {
-                const command = JSON.parse(init.body).command;
-                commands.push(command);
-                return new Response(JSON.stringify({ success: true, applied: true, generation }));
+                const body = JSON.parse(init.body);
+                commands.push([body.command, body.generation, body.owner]);
+                return new Response(JSON.stringify({ success: true, applied: true, generation, owner }));
             },
         });
         t.after(() => feed.destroy());
-        const ready = value => events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation: value } }));
-        if (order === 'ready-first') ready(generation);
+        const ready = (gen, own) => events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation: gen, owner: own } }));
+        if (order === 'ready-first') ready(generation, owner);
         feed.subscribeBars({ name: 'AAPL', subsession_id: EQUITY_24H_SESSION }, '5', () => {}, 'lease');
-        for (let i = 0; i < 50 && commands.filter(command => command === 'ADD').length < 1; i++) await new Promise(resolve => setTimeout(resolve, 5));
-        assert.deepEqual(commands, ['ADD'], `${order}: initial subscription should ADD once`);
-        if (order === 'add-first') ready(generation);
-        await new Promise(resolve => setTimeout(resolve, 10));
-        assert.deepEqual(commands, ['ADD'], `${order}: first READY must not replay an existing lease`);
-        events.dispatchEvent(new Event('FUTU_STREAM_CLOSED'));
-        ready(generation);
+        if (order === 'add-first') {
+            await new Promise(resolve => setTimeout(resolve, 15));
+            assert.deepEqual(commands, [], 'ADD must wait until FUTU_STREAM_READY');
+            ready(generation, owner);
+        }
+        for (let i = 0; i < 50 && commands.length < 1; i++) await new Promise(resolve => setTimeout(resolve, 5));
+        assert.deepEqual(commands, [['ADD', 'gateway:1', 'owner:1']], `${order}: initial subscription should ADD once`);
+        ready(generation, owner);
         await new Promise(resolve => setTimeout(resolve, 15));
-        assert.deepEqual(commands, ['ADD'], 'same-generation websocket reconnect must preserve the OpenD lease');
-        generation = 'gateway:2';
+        assert.deepEqual(commands, [['ADD', 'gateway:1', 'owner:1']], 'duplicate READY for the same owner must not replay');
+
         events.dispatchEvent(new Event('FUTU_STREAM_CLOSED'));
-        ready(generation);
-        for (let i = 0; i < 50 && commands.filter(command => command === 'ADD').length < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
-        assert.deepEqual(commands, ['ADD', 'ADD'], 'new backend generation must replay active listeners');
+        owner = 'owner:2';
+        ready(generation, owner);
+        for (let i = 0; i < 50 && commands.length < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
+        assert.deepEqual(commands, [
+            ['ADD', 'gateway:1', 'owner:1'],
+            ['ADD', 'gateway:1', 'owner:2'],
+        ], 'same-generation reconnect with a new owner must clear futuSUB and rebuild');
+
+        generation = 'gateway:2';
+        owner = 'owner:3';
+        events.dispatchEvent(new Event('FUTU_STREAM_CLOSED'));
+        ready(generation, owner);
+        for (let i = 0; i < 50 && commands.length < 3; i++) await new Promise(resolve => setTimeout(resolve, 5));
+        assert.deepEqual(commands, [
+            ['ADD', 'gateway:1', 'owner:1'],
+            ['ADD', 'gateway:1', 'owner:2'],
+            ['ADD', 'gateway:2', 'owner:3'],
+        ], 'new backend generation must replay active listeners');
         feed.unsubscribeBars('lease');
-        for (let i = 0; i < 50 && commands.at(-1) !== 'UNSUB'; i++) await new Promise(resolve => setTimeout(resolve, 5));
-        assert.deepEqual(commands, ['ADD', 'ADD', 'UNSUB']);
+        for (let i = 0; i < 50 && commands.at(-1)?.[0] !== 'UNSUB'; i++) await new Promise(resolve => setTimeout(resolve, 5));
+        assert.deepEqual(commands, [
+            ['ADD', 'gateway:1', 'owner:1'],
+            ['ADD', 'gateway:1', 'owner:2'],
+            ['ADD', 'gateway:2', 'owner:3'],
+            ['UNSUB', 'gateway:2', 'owner:3'],
+        ]);
     }
 });
 
 test('Futu command response from a reset backend invalidates an in-flight old-generation ADD', async t => {
     const events = new EventTarget(), calls = [];
     const firstAdd = Promise.withResolvers(), releaseOldAdd = Promise.withResolvers();
-    let addCount = 0, generation = 'gateway:1';
+    let addCount = 0, generation = 'gateway:1', owner = 'owner:1';
     const feed = new Datafeed({
         events, stream: { ready: false },
         overnightRequest: async () => new Response(JSON.stringify({ enabled: true, providerEnabled: true })),
@@ -605,19 +628,20 @@ test('Futu command response from a reset backend invalidates an in-flight old-ge
             if (command === 'ADD' && ++addCount === 1) {
                 firstAdd.resolve();
                 await releaseOldAdd.promise;
-                return new Response(JSON.stringify({ success: true, applied: true, generation: 'gateway:1' }));
+                return new Response(JSON.stringify({ success: true, applied: true, generation: 'gateway:1', owner: 'owner:1' }));
             }
-            return new Response(JSON.stringify({ success: true, applied: true, generation }));
+            return new Response(JSON.stringify({ success: true, applied: true, generation, owner }));
         },
     });
     t.after(() => feed.destroy());
-    const ready = value => events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation: value } }));
-    ready(generation);
+    const ready = (gen, own) => events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation: gen, owner: own } }));
+    ready(generation, owner);
     feed.subscribeBars({ name: 'AAPL', subsession_id: 'night' }, '5', () => {}, 'night');
     await firstAdd.promise;
     events.dispatchEvent(new Event('FUTU_STREAM_CLOSED'));
     generation = 'gateway:2';
-    ready(generation);
+    owner = 'owner:2';
+    ready(generation, owner);
     releaseOldAdd.resolve();
     for (let i = 0; i < 100 && addCount < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
     assert.equal(addCount, 2, 'an old ADD response must not mark the new backend generation subscribed');
@@ -625,7 +649,7 @@ test('Futu command response from a reset backend invalidates an in-flight old-ge
     feed.unsubscribeBars('night');
 });
 
-test('stale Futu READY cannot roll back an ADD-observed generation or duplicate its lease', async t => {
+test('stale Futu READY cannot roll back an observed generation or duplicate its lease', async t => {
     for (const seedOldReady of [true, false]) {
         const events = new EventTarget(), calls = [];
         let references = 0;
@@ -633,30 +657,32 @@ test('stale Futu READY cannot roll back an ADD-observed generation or duplicate 
             events, stream: { ready: false },
             overnightRequest: async () => new Response(JSON.stringify({ enabled: true, providerEnabled: true })),
             futuRequest: async (_path, init) => {
-                calls.push(JSON.parse(init.body).command);
+                const body = JSON.parse(init.body);
+                calls.push(body.command);
                 references++;
-                return new Response(JSON.stringify({ success: true, applied: true, generation: 'gateway:2' }));
+                return new Response(JSON.stringify({ success: true, applied: true, generation: body.generation, owner: body.owner }));
             },
         });
         t.after(() => feed.destroy());
-        const ready = generation => events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation } }));
-        if (seedOldReady) ready('gateway:1');
+        const ready = (generation, owner) => events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation, owner } }));
+        if (seedOldReady) ready('gateway:1', 'owner:1');
+        ready('gateway:2', 'owner:2');
         feed.subscribeBars({ name: 'AAPL', subsession_id: 'night' }, '5', () => {}, 'night');
         for (let i = 0; i < 50 && feed.futuSUB.get('AAPL\0' + '5') !== 'subscribed'; i++) await new Promise(resolve => setTimeout(resolve, 5));
         assert.equal(feed.futuBackendGeneration, 'gateway:2');
+        assert.equal(feed.futuOwner, 'owner:2');
         assert.equal(references, 1);
 
-        // In one case the old READY was already observed before ADD returned;
-        // in the other it is the first READY seen, queued behind the HTTP reply.
-        ready('gateway:1');
+        ready('gateway:1', 'owner:1');
         await new Promise(resolve => setTimeout(resolve, 30));
         assert.equal(feed.futuBackendGeneration, 'gateway:2', 'retired or numerically older READY cannot roll back the gateway');
+        assert.equal(feed.futuOwner, 'owner:2');
         assert.deepEqual(calls, ['ADD'], 'stale READY must not replay and inflate the backend reference');
         assert.equal(references, 1);
     }
 });
 
-test('Futu commands carry their captured token and retry explicit unapplied responses', async t => {
+test('Futu commands carry their captured token and wait for a new READY after unapplied responses without busy looping', async t => {
     const events = new EventTarget(), commands = [];
     let adds = 0;
     const feed = new Datafeed({
@@ -666,45 +692,54 @@ test('Futu commands carry their captured token and retry explicit unapplied resp
             const command = JSON.parse(init.body);
             commands.push(command);
             if (command.command === 'ADD' && ++adds === 1) {
-                return new Response(JSON.stringify({ success: true, applied: false, generation: 'gateway:2' }));
+                return new Response(JSON.stringify({ success: true, applied: false, generation: 'gateway:2', owner: 'owner:1' }));
             }
-            return new Response(JSON.stringify({ success: true, applied: true, generation: 'gateway:2' }));
+            return new Response(JSON.stringify({ success: true, applied: true, generation: 'gateway:2', owner: 'owner:2' }));
         },
     });
     t.after(() => feed.destroy());
-    events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation: 'gateway:1' } }));
+    events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation: 'gateway:1', owner: 'owner:1' } }));
     feed.subscribeBars({ name: 'AAPL', subsession_id: 'night' }, '5', () => {}, 'night');
+    for (let i = 0; i < 50 && adds < 1; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    await new Promise(resolve => setTimeout(resolve, 25));
+    assert.equal(adds, 1, 'applied:false without a new ready owner must wait instead of spinning');
+    assert.equal(feed.futuRetryTimers.size, 0, 'invalidated owner must not schedule a retry timer');
+
+    events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation: 'gateway:2', owner: 'owner:2' } }));
     for (let i = 0; i < 50 && (adds < 2 || feed.futuSUB.get('AAPL\0' + '5') !== 'subscribed'); i++) await new Promise(resolve => setTimeout(resolve, 5));
-    assert.deepEqual(commands.slice(0, 2).map(command => [command.command, command.generation]), [
-        ['ADD', 'gateway:1'], ['ADD', 'gateway:2'],
+    assert.deepEqual(commands.slice(0, 2).map(command => [command.command, command.generation, command.owner]), [
+        ['ADD', 'gateway:1', 'owner:1'], ['ADD', 'gateway:2', 'owner:2'],
     ]);
     assert.equal(feed.futuSUB.get('AAPL\0' + '5'), 'subscribed');
 
     feed.unsubscribeBars('night');
     for (let i = 0; i < 50 && !commands.some(command => command.command === 'UNSUB'); i++) await new Promise(resolve => setTimeout(resolve, 5));
-    assert.deepEqual(commands.at(-1), { command: 'UNSUB', symbol: 'AAPL', resolution: '5', generation: 'gateway:2' });
+    assert.deepEqual(commands.at(-1), { command: 'UNSUB', symbol: 'AAPL', resolution: '5', generation: 'gateway:2', owner: 'owner:2' });
 });
 
-test('bootstrap Futu ADD may omit an unknown token, but later UNSUB is versioned', async t => {
+test('initial Futu ADD waits for READY and carries versioned generation and owner through UNSUB', async t => {
     const events = new EventTarget(), commands = [];
     const feed = new Datafeed({
         events, stream: { ready: false },
         overnightRequest: async () => new Response(JSON.stringify({ enabled: true, providerEnabled: true })),
         futuRequest: async (_path, init) => {
             commands.push(JSON.parse(init.body));
-            return new Response(JSON.stringify({ success: true, applied: true, generation: 'gateway:2' }));
+            return new Response(JSON.stringify({ success: true, applied: true, generation: 'gateway:2', owner: 'owner:1' }));
         },
     });
     t.after(() => feed.destroy());
     feed.subscribeBars({ name: 'AAPL', subsession_id: 'night' }, '5', () => {}, 'night');
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.deepEqual(commands, [], 'ADD must wait for FUTU_STREAM_READY');
+    events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation: 'gateway:2', owner: 'owner:1' } }));
     for (let i = 0; i < 50 && feed.futuSUB.get('AAPL\0' + '5') !== 'subscribed'; i++) await new Promise(resolve => setTimeout(resolve, 5));
-    assert.deepEqual(commands[0], { command: 'ADD', symbol: 'AAPL', resolution: '5' }, 'the first ADD bootstraps without a generation');
+    assert.deepEqual(commands[0], { command: 'ADD', symbol: 'AAPL', resolution: '5', generation: 'gateway:2', owner: 'owner:1' });
     feed.unsubscribeBars('night');
     for (let i = 0; i < 50 && commands.length < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
-    assert.deepEqual(commands[1], { command: 'UNSUB', symbol: 'AAPL', resolution: '5', generation: 'gateway:2' });
+    assert.deepEqual(commands[1], { command: 'UNSUB', symbol: 'AAPL', resolution: '5', generation: 'gateway:2', owner: 'owner:1' });
 });
 
-test('legacy unknown-token UNSUB cannot release another tab after gateway reset', async t => {
+test('stale-owner UNSUB cannot release another tab after gateway reset', async t => {
     let generation = 'gateway:1', references = 0;
     const commands = [];
     const makeTab = name => {
@@ -717,43 +752,40 @@ test('legacy unknown-token UNSUB cannot release another tab after gateway reset'
                 commands.push([name, command]);
                 if (command.command === 'ADD') {
                     references++;
-                    // Simulate the old ADD response that did not expose its lease generation.
-                    return new Response(JSON.stringify(command.generation
-                        ? { success: true, applied: true, generation }
-                        : { success: true, applied: true }));
+                    return new Response(JSON.stringify({ success: true, applied: true, generation: command.generation, owner: command.owner }));
                 }
-                if (!command.generation || command.generation !== generation) {
-                    return new Response(JSON.stringify({ success: true, applied: false, generation }));
+                if (command.generation !== generation || command.owner !== 'owner:B') {
+                    return new Response(JSON.stringify({ success: true, applied: false, generation, owner: command.owner }));
                 }
                 references--;
-                return new Response(JSON.stringify({ success: true, applied: true, generation }));
+                return new Response(JSON.stringify({ success: true, applied: true, generation, owner: command.owner }));
             },
         });
         t.after(() => feed.destroy());
         return { events, feed };
     };
     const tabA = makeTab('A');
+    tabA.events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation: 'gateway:1', owner: 'owner:A' } }));
     tabA.feed.subscribeBars({ name: 'AAPL', subsession_id: 'night' }, '5', () => {}, 'A');
     for (let i = 0; i < 50 && tabA.feed.futuSUB.get('AAPL\0' + '5') !== 'subscribed'; i++) await new Promise(resolve => setTimeout(resolve, 5));
     assert.equal(references, 1);
-    assert.equal(tabA.feed.futuBackendGeneration, undefined, 'the old ADD response left tab A without a known token');
-    assert.deepEqual(commands[0], ['A', { command: 'ADD', symbol: 'AAPL', resolution: '5' }]);
+    assert.deepEqual(commands[0], ['A', { command: 'ADD', symbol: 'AAPL', resolution: '5', generation: 'gateway:1', owner: 'owner:A' }]);
 
     generation = 'gateway:2';
     references = 0; // Gateway reset clears generation-1 leases.
     const tabB = makeTab('B');
-    tabB.events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation } }));
+    tabB.events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation, owner: 'owner:B' } }));
     tabB.feed.subscribeBars({ name: 'AAPL', subsession_id: 'night' }, '5', () => {}, 'B');
     for (let i = 0; i < 50 && tabB.feed.futuSUB.get('AAPL\0' + '5') !== 'subscribed'; i++) await new Promise(resolve => setTimeout(resolve, 5));
     assert.equal(references, 1);
-    assert.deepEqual(commands[1], ['B', { command: 'ADD', symbol: 'AAPL', resolution: '5', generation }]);
+    assert.deepEqual(commands[1], ['B', { command: 'ADD', symbol: 'AAPL', resolution: '5', generation, owner: 'owner:B' }]);
 
     tabA.feed.unsubscribeBars('A');
     for (let i = 0; i < 50 && commands.length < 3; i++) await new Promise(resolve => setTimeout(resolve, 5));
     await new Promise(resolve => setTimeout(resolve, 20));
-    assert.deepEqual(commands[2], ['A', { command: 'UNSUB', symbol: 'AAPL', resolution: '5' }]);
+    assert.deepEqual(commands[2], ['A', { command: 'UNSUB', symbol: 'AAPL', resolution: '5', generation: 'gateway:1', owner: 'owner:A' }]);
     assert.equal(commands.length, 3, 'tab A must not retry using the generation learned from the unapplied response');
-    assert.equal(references, 1, 'unknown-token UNSUB must not decrement tab B generation-2 reference');
+    assert.equal(references, 1, 'stale-owner UNSUB must not decrement tab B generation-2 reference');
     assert.equal(tabB.feed.futuSUB.get('AAPL\0' + '5'), 'subscribed');
 });
 
@@ -765,31 +797,33 @@ test('generation-less Futu ADD response is retried if its request crossed a back
         overnightRequest: async () => new Response(JSON.stringify({ enabled: true, providerEnabled: true })),
         futuRequest: async (_path, init) => {
             const command = JSON.parse(init.body).command;
-            if (command !== 'ADD') return new Response(JSON.stringify({ success: true, applied: true, generation: 'gateway:2' }));
+            if (command !== 'ADD') return new Response(JSON.stringify({ success: true, applied: true, generation: 'gateway:2', owner: 'owner:2' }));
             if (++adds === 1) {
                 firstAdd.resolve();
                 await releaseOldAdd.promise;
                 return new Response(JSON.stringify({ success: true, applied: true }));
             }
-            return new Response(JSON.stringify({ success: true, applied: true, generation: 'gateway:2' }));
+            return new Response(JSON.stringify({ success: true, applied: true, generation: 'gateway:2', owner: 'owner:2' }));
         },
     });
     t.after(() => feed.destroy());
-    const ready = generation => events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation } }));
-    ready('gateway:1');
+    const ready = (generation, owner) => events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation, owner } }));
+    ready('gateway:1', 'owner:1');
     feed.subscribeBars({ name: 'AAPL', subsession_id: 'night' }, '5', () => {}, 'night');
     await firstAdd.promise;
-    ready('gateway:2');
+    ready('gateway:2', 'owner:2');
     releaseOldAdd.resolve();
     for (let i = 0; i < 50 && adds < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
     assert.equal(adds, 2, 'unknown-generation stale response must not mark the new backend subscribed');
     assert.equal(feed.futuBackendGeneration, 'gateway:2');
+    assert.equal(feed.futuOwner, 'owner:2');
     assert.equal(feed.futuSUB.get('AAPL\0' + '5'), 'subscribed');
     feed.unsubscribeBars('night');
 });
 
 test('separate tabs retain independent Futu leases across same-generation reconnect and replay after reset', async t => {
-    let generation = 'gateway:1', references = 0;
+    let generation = 'gateway:1';
+    const activeOwners = new Set();
     const calls = [];
     const makeTab = name => {
         const events = new EventTarget();
@@ -797,47 +831,50 @@ test('separate tabs retain independent Futu leases across same-generation reconn
             events, stream: { ready: false },
             overnightRequest: async () => new Response(JSON.stringify({ enabled: true, providerEnabled: true })),
             futuRequest: async (_path, init) => {
-                const command = JSON.parse(init.body).command;
-                calls.push([name, command]);
-                references += command === 'ADD' ? 1 : -1;
-                return new Response(JSON.stringify({ success: true, applied: true, generation }));
+                const body = JSON.parse(init.body);
+                calls.push([name, body.command, body.owner]);
+                if (body.command === 'ADD') activeOwners.add(body.owner);
+                else activeOwners.delete(body.owner);
+                return new Response(JSON.stringify({ success: true, applied: true, generation, owner: body.owner }));
             },
         });
         return { events, feed };
     };
     const tabA = makeTab('A'), tabB = makeTab('B');
     t.after(() => { tabA.feed.destroy(); tabB.feed.destroy(); });
-    const ready = (tab, value) => tab.events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation: value } }));
-    ready(tabA, generation); ready(tabB, generation);
+    const ready = (tab, value, owner) => tab.events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation: value, owner } }));
+    ready(tabA, generation, 'owner:A1'); ready(tabB, generation, 'owner:B1');
     tabA.feed.subscribeBars({ name: 'AAPL', subsession_id: EQUITY_24H_SESSION }, '5', () => {}, 'A');
     tabB.feed.subscribeBars({ name: 'AAPL', subsession_id: 'night' }, '5', () => {}, 'B');
-    for (let i = 0; i < 50 && references < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
-    assert.equal(references, 2, 'each tab must hold one independent backend reference');
+    for (let i = 0; i < 50 && activeOwners.size < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(activeOwners.size, 2, 'each tab must hold one independent backend owner lease');
 
+    // Backend drops disconnected owners on WS close; reconnect supplies fresh owners.
     tabA.events.dispatchEvent(new Event('FUTU_STREAM_CLOSED'));
     tabB.events.dispatchEvent(new Event('FUTU_STREAM_CLOSED'));
-    ready(tabA, generation); ready(tabB, generation);
-    await new Promise(resolve => setTimeout(resolve, 15));
-    assert.equal(references, 2, 'same-generation WS reconnect must not increment references');
-    assert.equal(calls.filter(([, command]) => command === 'ADD').length, 2);
+    activeOwners.clear();
+    ready(tabA, generation, 'owner:A2'); ready(tabB, generation, 'owner:B2');
+    for (let i = 0; i < 50 && calls.filter(([, command]) => command === 'ADD').length < 4; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(activeOwners.size, 2, 'same-generation reconnect with new owners must rebuild each tab lease');
 
     generation = 'gateway:2';
-    references = 0; // backend reset clears all gateway leases
+    activeOwners.clear(); // backend reset clears all gateway leases
     tabA.events.dispatchEvent(new Event('FUTU_STREAM_CLOSED'));
     tabB.events.dispatchEvent(new Event('FUTU_STREAM_CLOSED'));
-    ready(tabA, generation); ready(tabB, generation);
-    for (let i = 0; i < 50 && calls.filter(([, command]) => command === 'ADD').length < 4; i++) await new Promise(resolve => setTimeout(resolve, 5));
-    assert.equal(references, 2, 'both tabs must restore only their own lease after backend reset');
+    ready(tabA, generation, 'owner:A3'); ready(tabB, generation, 'owner:B3');
+    for (let i = 0; i < 50 && calls.filter(([, command]) => command === 'ADD').length < 6; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(activeOwners.size, 2, 'both tabs must restore only their own lease after backend reset');
     tabA.feed.unsubscribeBars('A');
-    for (let i = 0; i < 50 && references !== 1; i++) await new Promise(resolve => setTimeout(resolve, 5));
-    assert.equal(references, 1, 'one tab leaving must not release the other tab lease');
+    for (let i = 0; i < 50 && activeOwners.size !== 1; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(activeOwners.size, 1, 'one tab leaving must not release the other tab lease');
     tabB.feed.unsubscribeBars('B');
-    for (let i = 0; i < 50 && references !== 0; i++) await new Promise(resolve => setTimeout(resolve, 5));
-    assert.equal(references, 0);
+    for (let i = 0; i < 50 && activeOwners.size !== 0; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(activeOwners.size, 0);
 });
 
 test('new gateway generation replays every tab lease without clearing another tab reference', async t => {
-    let generation = 'gateway:1', references = 0;
+    let generation = 'gateway:1';
+    const activeOwners = new Set();
     const commands = [];
     const makeTab = name => {
         const events = new EventTarget();
@@ -845,49 +882,50 @@ test('new gateway generation replays every tab lease without clearing another ta
             events, stream: { ready: false },
             overnightRequest: async () => new Response(JSON.stringify({ enabled: true, providerEnabled: true })),
             futuRequest: async (_path, init) => {
-                const command = JSON.parse(init.body).command;
-                commands.push([name, command]);
-                references += command === 'ADD' ? 1 : -1;
-                return new Response(JSON.stringify({ success: true, applied: true, generation }));
+                const body = JSON.parse(init.body);
+                commands.push([name, body.command, body.owner]);
+                if (body.command === 'ADD') activeOwners.add(body.owner);
+                else activeOwners.delete(body.owner);
+                return new Response(JSON.stringify({ success: true, applied: true, generation, owner: body.owner }));
             },
         });
         return { events, feed };
     };
     const a = makeTab('a'), b = makeTab('b');
     t.after(() => { a.feed.destroy(); b.feed.destroy(); });
-    const ready = (tab, value) => tab.events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation: value } }));
-    ready(a, generation); ready(b, generation);
+    const ready = (tab, value, owner) => tab.events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation: value, owner } }));
+    ready(a, generation, 'owner:a1'); ready(b, generation, 'owner:b1');
     a.feed.subscribeBars({ name: 'AAPL', subsession_id: EQUITY_24H_SESSION }, '5', () => {}, 'a');
     b.feed.subscribeBars({ name: 'AAPL', subsession_id: 'night' }, '5', () => {}, 'b');
-    for (let i = 0; i < 50 && references !== 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
-    assert.equal(references, 2);
+    for (let i = 0; i < 50 && activeOwners.size !== 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(activeOwners.size, 2);
 
     a.events.dispatchEvent(new Event('FUTU_STREAM_CLOSED'));
     b.events.dispatchEvent(new Event('FUTU_STREAM_CLOSED'));
-    ready(a, generation); ready(b, generation);
-    await new Promise(resolve => setTimeout(resolve, 15));
-    assert.equal(commands.filter(([, command]) => command === 'ADD').length, 2, 'same-generation reconnect must not inflate refcounts');
-    assert.equal(references, 2);
+    activeOwners.clear();
+    ready(a, generation, 'owner:a2'); ready(b, generation, 'owner:b2');
+    for (let i = 0; i < 50 && commands.filter(([, command]) => command === 'ADD').length < 4; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(activeOwners.size, 2);
 
     generation = 'gateway:2';
-    references = 0; // The backend reset itself clears all gateway leases.
+    activeOwners.clear(); // The backend reset itself clears all gateway leases.
     a.events.dispatchEvent(new Event('FUTU_STREAM_CLOSED'));
     b.events.dispatchEvent(new Event('FUTU_STREAM_CLOSED'));
-    ready(a, generation); ready(b, generation);
-    for (let i = 0; i < 50 && commands.filter(([, command]) => command === 'ADD').length < 4; i++) await new Promise(resolve => setTimeout(resolve, 5));
-    assert.equal(references, 2, 'each tab must restore exactly its own desired lease');
+    ready(a, generation, 'owner:a3'); ready(b, generation, 'owner:b3');
+    for (let i = 0; i < 50 && commands.filter(([, command]) => command === 'ADD').length < 6; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(activeOwners.size, 2, 'each tab must restore exactly its own desired lease');
     a.feed.unsubscribeBars('a');
-    for (let i = 0; i < 50 && references !== 1; i++) await new Promise(resolve => setTimeout(resolve, 5));
-    assert.equal(references, 1, 'one tab cannot release the other tab lease');
+    for (let i = 0; i < 50 && activeOwners.size !== 1; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(activeOwners.size, 1, 'one tab cannot release the other tab lease');
     b.feed.unsubscribeBars('b');
-    for (let i = 0; i < 50 && references !== 0; i++) await new Promise(resolve => setTimeout(resolve, 5));
-    assert.equal(references, 0);
+    for (let i = 0; i < 50 && activeOwners.size !== 0; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(activeOwners.size, 0);
 });
 
 test('pending old-generation ADD is replayed, not mistaken for a current backend lease', async t => {
     const events = new EventTarget(), calls = [];
     const addStarted = Promise.withResolvers(), releaseOldAdd = Promise.withResolvers();
-    let generation = 'gateway:1', adds = 0;
+    let generation = 'gateway:1', owner = 'owner:1', adds = 0;
     const feed = new Datafeed({
         events, stream: { ready: false },
         overnightRequest: async () => new Response(JSON.stringify({ enabled: true, providerEnabled: true })),
@@ -897,19 +935,20 @@ test('pending old-generation ADD is replayed, not mistaken for a current backend
             if (command === 'ADD' && ++adds === 1) {
                 addStarted.resolve();
                 await releaseOldAdd.promise;
-                return new Response(JSON.stringify({ success: true, applied: true, generation: 'gateway:1' }));
+                return new Response(JSON.stringify({ success: true, applied: true, generation: 'gateway:1', owner: 'owner:1' }));
             }
-            return new Response(JSON.stringify({ success: true, applied: true, generation }));
+            return new Response(JSON.stringify({ success: true, applied: true, generation, owner }));
         },
     });
     t.after(() => feed.destroy());
-    const ready = value => events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation: value } }));
-    ready(generation);
+    const ready = (value, own) => events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation: value, owner: own } }));
+    ready(generation, owner);
     feed.subscribeBars({ name: 'AAPL', subsession_id: 'night' }, '5', () => {}, 'night');
     await addStarted.promise;
     events.dispatchEvent(new Event('FUTU_STREAM_CLOSED'));
     generation = 'gateway:2';
-    ready(generation);
+    owner = 'owner:2';
+    ready(generation, owner);
     releaseOldAdd.resolve();
     for (let i = 0; i < 50 && adds < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
     assert.equal(adds, 2, 'old generation ADD response must be discarded and resubscribed on the reset backend');
@@ -919,11 +958,67 @@ test('pending old-generation ADD is replayed, not mistaken for a current backend
     assert.deepEqual(calls, ['ADD', 'ADD', 'UNSUB']);
 });
 
+test('in-flight old-owner ADD and UNSUB responses cannot block or mutate the new owner subscription state', async t => {
+    const events = new EventTarget(), calls = [];
+    const add1Started = Promise.withResolvers(), releaseAdd1 = Promise.withResolvers();
+    const unsub1Started = Promise.withResolvers(), releaseUnsub1 = Promise.withResolvers();
+    const feed = new Datafeed({
+        events, stream: { ready: false },
+        overnightRequest: async () => new Response(JSON.stringify({ enabled: true, providerEnabled: true })),
+        futuRequest: async (_path, init) => {
+            const body = JSON.parse(init.body);
+            calls.push(body);
+            if (body.command === 'ADD' && body.owner === 'owner:1' && body.symbol === 'AAPL') {
+                add1Started.resolve();
+                await releaseAdd1.promise;
+                return new Response(JSON.stringify({ success: true, applied: false, generation: 'gateway:1', owner: 'owner:1' }));
+            }
+            if (body.command === 'UNSUB' && body.owner === 'owner:1' && body.symbol === 'MSFT') {
+                unsub1Started.resolve();
+                await releaseUnsub1.promise;
+                return new Response(JSON.stringify({ success: true, applied: false, generation: 'gateway:1', owner: 'owner:1' }));
+            }
+            return new Response(JSON.stringify({ success: true, applied: true, generation: body.generation, owner: body.owner }));
+        },
+    });
+    t.after(() => feed.destroy());
+    const ready = owner => events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation: 'gateway:1', owner } }));
+
+    ready('owner:1');
+    feed.subscribeBars({ name: 'MSFT', subsession_id: 'night' }, '5', () => {}, 'msft-1');
+    for (let i = 0; i < 50 && feed.futuSUB.get('MSFT\0' + '5') !== 'subscribed'; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    feed.unsubscribeBars('msft-1');
+    await unsub1Started.promise;
+
+    feed.subscribeBars({ name: 'AAPL', subsession_id: 'night' }, '5', () => {}, 'aapl-1');
+    await add1Started.promise;
+
+    // Reconnect under the same generation with a new owner while both old-owner requests are still pending.
+    events.dispatchEvent(new Event('FUTU_STREAM_CLOSED'));
+    ready('owner:2');
+    feed.subscribeBars({ name: 'MSFT', subsession_id: 'night' }, '5', () => {}, 'msft-2');
+    for (let i = 0; i < 50 &&
+        (feed.futuSUB.get('AAPL\0' + '5') !== 'subscribed' || feed.futuSUB.get('MSFT\0' + '5') !== 'subscribed'); i++) {
+        await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    assert.equal(feed.futuSUB.get('AAPL\0' + '5'), 'subscribed', 'new owner ADD must not be blocked by pending old-owner ADD');
+    assert.equal(feed.futuSUB.get('MSFT\0' + '5'), 'subscribed', 'new owner ADD must not be blocked by pending old-owner UNSUB');
+
+    releaseAdd1.resolve();
+    releaseUnsub1.resolve();
+    await new Promise(resolve => setTimeout(resolve, 25));
+    assert.equal(feed.futuOwner, 'owner:2');
+    assert.equal(feed.futuConnected, true);
+    assert.equal(feed.futuSUB.get('AAPL\0' + '5'), 'subscribed', 'late old-owner ADD failure must not clear new-owner subscription');
+    assert.equal(feed.futuSUB.get('MSFT\0' + '5'), 'subscribed', 'late old-owner UNSUB response must not clear new-owner subscription');
+});
+
 test('leaving 24H while Futu ADD is pending sends serialized UNSUB after ADD succeeds', async t => {
+    const events = new EventTarget();
     const started = Promise.withResolvers(), releaseAdd = Promise.withResolvers(), unsubscribed = Promise.withResolvers();
     const calls = [];
     const feed = new Datafeed({
-        events: new EventTarget(), stream: { ready: false },
+        events, stream: { ready: false },
         overnightRequest: async () => new Response(JSON.stringify({ enabled: true, providerEnabled: true })),
         futuRequest: async (_path, init) => {
             const command = JSON.parse(init.body).command;
@@ -936,6 +1031,7 @@ test('leaving 24H while Futu ADD is pending sends serialized UNSUB after ADD suc
         },
     });
     t.after(() => feed.destroy());
+    events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation: 'gateway:1', owner: 'owner:1' } }));
     feed.subscribeBars({ name: 'AAPL', subsession_id: EQUITY_24H_SESSION }, '5', () => {}, 'full');
     await started.promise;
     feed.unsubscribeBars('full');
@@ -947,10 +1043,11 @@ test('leaving 24H while Futu ADD is pending sends serialized UNSUB after ADD suc
 });
 
 test('leaving Night while Futu ADD is pending is also compensated in order', async t => {
+    const events = new EventTarget();
     const started = Promise.withResolvers(), releaseAdd = Promise.withResolvers(), unsubscribed = Promise.withResolvers();
     const calls = [];
     const feed = new Datafeed({
-        events: new EventTarget(), stream: { ready: false },
+        events, stream: { ready: false },
         overnightRequest: async () => new Response(JSON.stringify({ enabled: true, providerEnabled: true })),
         futuRequest: async (_path, init) => {
             const command = JSON.parse(init.body).command;
@@ -961,6 +1058,7 @@ test('leaving Night while Futu ADD is pending is also compensated in order', asy
         },
     });
     t.after(() => feed.destroy());
+    events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation: 'gateway:1', owner: 'owner:1' } }));
     feed.subscribeBars({ name: 'AAPL', subsession_id: 'night' }, '5', () => {}, 'night');
     await started.promise;
     feed.unsubscribeBars('night');
@@ -992,7 +1090,7 @@ test('24H history started before Futu disconnect is discarded and reconnect rese
     assert.equal(feed.latestBars.size, 0);
     feed.seedLatest('AAPL', EQUITY_24H_SESSION, '1', [candle]);
     feed.subscribeBars({ name: 'AAPL', subsession_id: EQUITY_24H_SESSION }, '1', () => {}, 'full', () => resets++);
-    events.dispatchEvent(new Event('FUTU_STREAM_READY'));
+    events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation: 'gateway:1', owner: 'owner:1' } }));
     assert.equal(resets, 1);
     assert.equal(feed.latestBars.has(`AAPL\0${EQUITY_24H_SESSION}`), false);
 });

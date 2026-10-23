@@ -14,7 +14,7 @@ import (
 	workbenchdb "workbench/internal/foundation/database"
 )
 
-func openTestDatabase(t *testing.T) *workbenchdb.Database {
+func openTestDatabase(t testing.TB) *workbenchdb.Database {
 	t.Helper()
 	database, err := workbenchdb.Open(context.Background(), workbenchdb.Config{Path: filepath.Join(t.TempDir(), "data.db")})
 	if err != nil {
@@ -30,6 +30,16 @@ func openTestDatabase(t *testing.T) *workbenchdb.Database {
 func TestPublishTxRollsBackWithBusinessTransaction(t *testing.T) {
 	database := openTestDatabase(t)
 	store := NewStore(database.SQL())
+	dispatcher, err := NewDispatcher(database.SQL(), store, []contracts.EventConsumer{{
+		ID: "todo.rollback", Module: "todo", Topics: []string{"todo.task.created"},
+		Handler: func(context.Context, contracts.Event) error { return nil },
+	}}, func(contracts.ModuleID) bool { return true }, testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dispatcher.Register(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	tx, err := database.SQL().BeginTx(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -40,12 +50,16 @@ func TestPublishTxRollsBackWithBusinessTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PublishTx() error = %v", err)
 	}
+	var pending int
+	if err := tx.QueryRow("SELECT COUNT(*) FROM event_deliveries").Scan(&pending); err != nil || pending != 1 {
+		t.Fatalf("deliveries inside transaction = %d, error = %v", pending, err)
+	}
 	if err := tx.Rollback(); err != nil {
 		t.Fatal(err)
 	}
 
 	var count int
-	if err := database.SQL().QueryRow("SELECT COUNT(*) FROM events_log").Scan(&count); err != nil {
+	if err := database.SQL().QueryRow("SELECT (SELECT COUNT(*) FROM events_log) + (SELECT COUNT(*) FROM event_deliveries)").Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 0 {

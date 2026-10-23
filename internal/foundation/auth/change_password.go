@@ -21,6 +21,11 @@ func (s *Service) ChangePasswordHandler(w http.ResponseWriter, r *http.Request) 
 		httpapi.Error(w, http.StatusBadRequest, "invalid_request", "密码请求格式不正确")
 		return
 	}
+	if retryAfter, err := s.passwordLimit.acquire(false); err != nil {
+		writePasswordLimit(w, retryAfter, err)
+		return
+	}
+	defer s.passwordLimit.release()
 	credential, err := s.queries.GetAuthCredential(r.Context())
 	if err != nil {
 		httpapi.Error(w, 500, "password_failed", "无法读取密码")

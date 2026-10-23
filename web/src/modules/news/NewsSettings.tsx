@@ -9,6 +9,7 @@ import { Skeleton } from "../../components/ui/States";
 import { Switch } from "../../components/ui/Switch";
 import { saveNewsSettings, useNewsSettings, useRefreshNews } from "./queries";
 import type { NewsSettings as Settings } from "./schema";
+import { useReportDirty } from "../../shared/settingsDialog";
 
 export default function NewsSettings({ enabled }: { enabled: boolean }) {
   const settings = useNewsSettings(enabled);
@@ -25,12 +26,18 @@ export default function NewsSettings({ enabled }: { enabled: boolean }) {
 
 function SettingsForm({ initial }: { initial: Settings }) {
   const [form, setForm] = useState(initial);
-  const change = (patch: Partial<Settings>) => setForm((current) => ({ ...current, ...patch }));
+  const [dirty, setDirty] = useState(false);
+  useReportDirty(dirty);
+  const change = (patch: Partial<Settings>) => {
+    setForm((current) => ({ ...current, ...patch }));
+    setDirty(true);
+  };
   const refresh = useRefreshNews();
   const save = useMutation({
     mutationFn: () => saveNewsSettings(form),
     onSuccess: async (saved) => {
       setForm(saved);
+      setDirty(false);
       await refresh();
       toast.success("资讯设置已保存");
     },

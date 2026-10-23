@@ -11,6 +11,7 @@
 - 自动生成或显式提供初始密码后，首次登录只允许 `/api/auth/status`、`/api/auth/login`、`/api/auth/logout`、`/api/auth/csrf` 和 `PUT /api/settings/password`；其他业务接口返回 `403 password_change_required`。新密码必须与初始密码不同。改密在事务中清除强制改密状态并删除全部会话，用户随后重新登录。
 - Session 保存在所选的 SQLite 或 PostgreSQL 数据库中，Cookie 使用 HttpOnly；默认 `SameSite=Strict`，配置 HTTPS 外部地址及 CORS 白名单时使用 `SameSite=None`，配置 HTTPS 外部地址时使用 Secure。会话最长 7 天，空闲期限 24 小时，数据库保存哈希后的会话 token。
 - 登录更新会话 token。密码变更检查当前密码，在事务中更新凭据版本并删除会话；受保护请求再次检查版本，旧登录失效。
+- 密码哈希计算全局上限为 2 并发，由登录、密码修改和 `Authenticate` 共享；登录另设突发 5 次、每 3 秒恢复 1 次的令牌限速（密码修改与 `Authenticate` 不消耗登录令牌）。计算并发或登录令牌超限均返回 HTTP 429 并附带 `Retry-After`。
 - Host 必须匹配允许列表。写请求提供 Origin 时校验同源或 `WORKBENCH_CORS_ALLOW_ORIGIN` 白名单；白名单只接受完整 HTTP/HTTPS origin，不接受 `*`，HTTPS 部署只接受 HTTPS 白名单。CORS 中间件处理预检和凭据响应，允许的 origin 同时加入 nosurf 白名单。纯 HTTP 跨站点访问可能无法携带 Cookie；同站点不同端口不受该限制。写请求另由 CSRF token 保护。
 
 应用以固定的 `WORKBENCH_PUBLIC_URL` 确定浏览器来源；该值必须是 HTTPS origin，Host 自动加入允许列表。CSRF 中间件按该配置判断外部 HTTPS，不依赖后端 TLS 状态或客户端可伪造的 `Forwarded` / `X-Forwarded-*`。应用的 HTTP 端口仅供本机代理或专用容器网络访问：二进制默认监听 loopback，Compose 默认只向宿主机 `127.0.0.1` 发布端口。代理保留原始 Host，并提供实际的 HTTPS 入口。认证使用服务端 Session，没有采用 JWT。
@@ -39,6 +40,6 @@ AI Tool 只从已注册且启用的模块中选择，服务端校验 JSON schema
 
 内置模块随可信应用代码一起编译，共享进程、数据库连接和服务依赖；模块边界不提供第三方代码沙箱。已保存的外部模块是用户管理的独立 HTTP 服务，当前不开放通过网址新增。兼容页面使用同源 iframe 嵌入，与宿主共享浏览器信任边界，不能当作不可信插件隔离。同源代理会去掉浏览器 Cookie 和客户端 Authorization，注入该模块专用服务凭据，屏蔽上游 `Set-Cookie`，并拒绝路径穿越、`/_workbench/*` 业务代理、不安全重定向和未许可的非本机拨号。默认只连接 loopback。模块开关检查后续入口；外部模块停用会立即关闭宿主业务门控并在约 1 秒内关闭本机代理 WebSocket，但不保证远端任务已经停止。
 
-应用当前是单用户工作空间，没有多租户权限模型，也没有内置登录限速。调整访问范围、接入外部代码或增加新的工具能力时，应围绕新的需求修改实现并同步本说明。
+应用当前是单用户工作空间，没有多租户权限模型。
 
 投资更换 Key、Secret、回调或重新完成 OAuth 时，会关闭已有 Streamer 与浏览器连接；连接建立过程校验配置版本，避免旧身份的 LOGIN 在配置变更后生效。停用模块及进程关闭也会清理长连接。浏览器 WebSocket 只接收事件，行情订阅使用 CSRF 保护的 HTTP ADD 命令，无法通过该接口发送 ADMIN/LOGIN。夜盘覆盖开关关闭时，OpenD WebSocket 返回 409 且不升级；OpenD 不可用时在已升级连接上发出 TryAgainLater，避免把失败当成覆盖已关闭。

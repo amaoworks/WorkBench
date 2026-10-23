@@ -8,6 +8,42 @@ INSERT INTO events_log(
     sqlc.arg(available_at), sqlc.arg(created_at)
 );
 
+-- name: ResetEventConsumers :exec
+DELETE FROM event_consumer_topics;
+
+-- name: DeleteEventConsumerTopics :exec
+DELETE FROM event_consumer_topics WHERE consumer_id = ?;
+
+-- name: InsertEventConsumerTopic :exec
+INSERT INTO event_consumer_topics(consumer_id, topic) VALUES (?, ?)
+ON CONFLICT(consumer_id, topic) DO NOTHING;
+
+-- name: BackfillEventDeliveries :exec
+INSERT INTO event_deliveries(event_id, consumer_id, status, attempts, next_attempt_at, updated_at)
+SELECT e.id, t.consumer_id, 'pending', 0, e.available_at, sqlc.arg(updated_at)
+FROM event_consumer_topics t
+JOIN events_log e ON e.topic = t.topic
+WHERE t.consumer_id = sqlc.arg(consumer_id)
+ON CONFLICT(event_id, consumer_id) DO NOTHING;
+
+-- name: InsertEventDeliveries :exec
+INSERT INTO event_deliveries(event_id, consumer_id, status, attempts, next_attempt_at, updated_at)
+SELECT e.id, t.consumer_id, 'pending', 0, e.available_at, sqlc.arg(updated_at)
+FROM events_log e
+JOIN event_consumer_topics t ON t.topic = e.topic
+WHERE e.id = sqlc.arg(event_id)
+ON CONFLICT(event_id, consumer_id) DO NOTHING;
+
+-- name: HasClaimableDelivery :one
+SELECT EXISTS (
+    SELECT 1 FROM event_deliveries
+    WHERE consumer_id = ?
+      AND (
+          (status IN ('pending', 'retry') AND COALESCE(next_attempt_at, 0) <= ?)
+          OR (status = 'running' AND COALESCE(locked_until, 0) <= ?)
+      )
+);
+
 -- name: GetClaimableDelivery :one
 SELECT e.id AS event_id, e.topic, e.schema_version, e.source_module,
        COALESCE(e.aggregate_id, '') AS aggregate_id, e.occurred_at,

@@ -358,13 +358,48 @@ async function visitWithoutOverflow(page, url, label, ready) {
       await page.getByRole("heading", { name: "业务", exact: true }).waitFor();
       for (const dialog of [
         { module: "投资", ready: () => page.getByLabel("App Key", { exact: true }).waitFor() },
-        { module: "待办", ready: () => page.getByLabel("Wallos 地址", { exact: true }).waitFor() },
-        { module: "资讯", ready: () => page.getByRole("switch", { name: "自动分析新资讯", exact: true }).waitFor() }
+        {
+          module: "待办",
+          ready: () => page.getByLabel("Wallos 地址", { exact: true }).waitFor(),
+          field: () => page.getByLabel("Wallos 地址", { exact: true }),
+          draft: "https://discard.example.com",
+          saved: "https://wallos.example.com",
+          savedToast: "Wallos 设置已保存"
+        },
+        {
+          module: "资讯",
+          ready: () => page.getByRole("switch", { name: "自动分析新资讯", exact: true }).waitFor(),
+          field: () => page.getByLabel("主题", { exact: true }),
+          draft: "未保存主题",
+          saved: "科技",
+          savedToast: "资讯设置已保存"
+        }
       ]) {
-        await page.getByRole("button", { name: `${dialog.module}设置`, exact: true }).click();
+        const trigger = page.getByRole("button", { name: `${dialog.module}设置`, exact: true });
+        await trigger.click();
         await dialog.ready();
         await expectNoOverflow(page, `${dialog.module} settings dialog at ${prefix}`);
+        if (dialog.field && scenario.width === 1440 && scenario.theme === "浅色") {
+          const input = dialog.field();
+          const initial = await input.inputValue();
+          await input.fill(dialog.draft);
+          await page.getByRole("button", { name: "关闭业务设置", exact: true }).click();
+          const discard = page.getByRole("alertdialog", { name: "放弃未保存的修改？", exact: true });
+          await discard.getByRole("button", { name: "继续编辑", exact: true }).click();
+          await discard.waitFor({ state: "hidden" });
+          assert.equal(await input.inputValue(), dialog.draft);
+          await page.getByRole("button", { name: "关闭业务设置", exact: true }).click();
+          await discard.getByRole("button", { name: "放弃修改", exact: true }).click();
+          await page.getByRole("dialog", { name: `${dialog.module}设置`, exact: true }).waitFor({ state: "hidden" });
+          await trigger.click();
+          await dialog.ready();
+          assert.equal(await input.inputValue(), initial);
+          await input.fill(dialog.saved);
+          await page.getByRole("button", { name: "保存", exact: true }).click();
+          await page.getByText(dialog.savedToast, { exact: true }).waitFor();
+        }
         await page.getByRole("button", { name: "关闭业务设置", exact: true }).click();
+        await page.getByRole("dialog", { name: `${dialog.module}设置`, exact: true }).waitFor({ state: "hidden" });
       }
       await page.goto(`${baseURL}/settings?tab=appearance`);
       await page.getByRole("group", { name: "主题", exact: true }).waitFor();

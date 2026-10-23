@@ -50,6 +50,11 @@ type AuthCredential struct {
 	MustChangePassword int64  `json:"must_change_password"`
 }
 
+type EventConsumerTopic struct {
+	ConsumerID string `json:"consumer_id"`
+	Topic      string `json:"topic"`
+}
+
 type EventDelivery struct {
 	EventID       string         `json:"event_id"`
 	ConsumerID    string         `json:"consumer_id"`

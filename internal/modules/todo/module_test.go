@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -106,6 +107,43 @@ func TestDueScanCreatesOneIdempotentNotification(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("notification count = %d, want 1", count)
+	}
+}
+
+func TestDueScanVisitsEveryBatchWithEqualDueTimes(t *testing.T) {
+	module, database := openTodoModule(t)
+	ctx := context.Background()
+	now := time.Unix(1_000, 0).UTC()
+	module.now = func() time.Time { return now }
+	due := now.Add(-time.Minute)
+	for i := range 205 {
+		if _, err := module.Create(ctx, CreateTask{Title: fmt.Sprintf("Overdue %03d", i), DueAt: &due}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	future := now.Add(time.Minute)
+	if _, err := module.Create(ctx, CreateTask{Title: "Not due", DueAt: &future}); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := module.Create(ctx, CreateTask{Title: "Completed", DueAt: &due})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := true
+	if _, err := module.update(ctx, completed.ID, UpdateTask{Completed: &done}); err != nil {
+		t.Fatal(err)
+	}
+	for scan := range 2 {
+		if err := module.scanDue(ctx, contracts.JobRun{}); err != nil {
+			t.Fatal(err)
+		}
+		var count int
+		if err := database.SQL().QueryRow("SELECT COUNT(*) FROM notifications WHERE source_module = 'todo'").Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 205 {
+			t.Fatalf("scan %d created %d notifications, want 205", scan, count)
+		}
 	}
 }
 

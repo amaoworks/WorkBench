@@ -102,6 +102,8 @@ export class FutuStream {
         this.retryDelay = retryDelay;
         this.status = status;
         this.ready = false;
+        this.generation = undefined;
+        this.owner = undefined;
         this.wanted = false;
     }
     async start() {
@@ -112,6 +114,8 @@ export class FutuStream {
     stop() {
         this.wanted = false;
         this.ready = false;
+        this.generation = undefined;
+        this.owner = undefined;
         clearTimeout(this.timer);
         this.ws?.close();
     }
@@ -144,8 +148,10 @@ export class FutuStream {
             try { message = JSON.parse(data); } catch { return; }
             if (message.stream?.status === "ready") {
                 this.ready = true;
+                this.generation = message.stream.generation;
+                this.owner = message.stream.owner;
                 this.events.dispatchEvent(new CustomEvent("FUTU_STREAM_READY", {
-                    detail: { generation: message.stream.generation },
+                    detail: { generation: message.stream.generation, owner: message.stream.owner },
                 }));
             }
             for (const item of (message.data || [])) {
@@ -158,6 +164,8 @@ export class FutuStream {
             if (this.ws !== ws) return;
             this.ws = undefined;
             this.ready = false;
+            this.generation = undefined;
+            this.owner = undefined;
             this.events.dispatchEvent(new Event("FUTU_STREAM_CLOSED"));
             if (!this.closed && this.wanted) this.timer = setTimeout(() => this.connect(), this.retryDelay);
             if (event?.code === 1008) this.wanted = false;
@@ -168,6 +176,8 @@ export class FutuStream {
         this.closed = true;
         this.wanted = false;
         this.ready = false;
+        this.generation = undefined;
+        this.owner = undefined;
         clearTimeout(this.timer);
         this.ws?.close();
     }

@@ -31,6 +31,7 @@ PostgreSQL 另外保留一个连接会话，以 advisory lock 限制同一数据
 | 外部模块连接 | `external_modules` | 服务 origin、非本机许可、服务凭据、最后有效 manifest、控制代数、观察状态和脱敏错误 |
 | 可靠事件 | `events_log` | 领域事件、JSON 载荷、可投递时间 |
 | 可靠事件 | `event_deliveries` | 事件/消费者唯一记录、租约、尝试次数和结果 |
+| 可靠事件 | `event_consumer_topics` | 已注册消费者的订阅主题映射，供事务内扇出投递 |
 | 鉴权 | `auth_credentials`、`sessions` | 单用户密码哈希、凭据版本、首次改密状态、会话数据与到期时间 |
 | 调度 | `scheduled_jobs`、`scheduled_job_runs` | 代码定义的持久化状态、执行次数、结果和错误 |
 | 通知 | `notifications` | 提醒内容、幂等键、读取/归档/过期状态、来源和显式外发标志 |
@@ -65,7 +66,7 @@ PostgreSQL 另外保留一个连接会话，以 advisory lock 限制同一数据
 ## 事务和幂等
 
 - Todo 写入、Wallos 待办映射与对应领域事件使用同一 `*sql.Tx`。投资触发快照、站内通知与通知创建事件也原子提交。外部请求在写事务外完成。PostgreSQL 显式事务默认使用 Serializable，冲突时整体回滚。
-- 事件投递以 `(event_id, consumer_id)` 唯一，领取后写入租约；失败重试，次数耗尽为 `dead`。处理中断可能再次投递，消费者须幂等。
+- 事件投递以 `(event_id, consumer_id)` 唯一。启动时 `ResetConsumers` 清空 `event_consumer_topics`，`Dispatcher.Register` 登记当前消费者主题并一次性补齐历史投递；运行期 `PublishTx` 在写入 `events_log` 的同一事务内按 `event_consumer_topics` 扇出 `event_deliveries`。Dispatcher 领取后写入租约，失败重试，次数耗尽为 `dead`；处理中断可能再次投递，消费者须幂等。
 - 通知的 `idempotency_key` 全局唯一；通过通知服务创建时连同通知变更事件一起提交。
 - Job 执行记录以 `(job_id, scheduled_at, attempt)` 唯一，定义由代码装配；数据库保存恢复和审计状态。
 - AI 写工具以工具名和幂等键查重。运行时审计与业务 Handler 不共用一个原子事务，不能视为任意副作用的严格一次执行保证。

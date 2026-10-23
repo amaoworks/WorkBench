@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"strings"
+	"sync"
 	"time"
 
 	"workbench/internal/contracts"
@@ -18,13 +18,15 @@ import (
 type EnabledFunc func(contracts.ModuleID) bool
 
 type Dispatcher struct {
-	db        *sql.DB
-	store     *Store
-	consumers []contracts.EventConsumer
-	enabled   EnabledFunc
-	logger    *slog.Logger
-	pollEvery time.Duration
-	now       func() time.Time
+	db         *sql.DB
+	store      *Store
+	consumers  []contracts.EventConsumer
+	enabled    EnabledFunc
+	logger     *slog.Logger
+	pollEvery  time.Duration
+	now        func() time.Time
+	registerMu sync.Mutex
+	registered bool
 }
 
 func NewDispatcher(
@@ -85,7 +87,7 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 }
 
 func (d *Dispatcher) DispatchOnce(ctx context.Context) error {
-	if err := d.materializeDeliveries(ctx); err != nil {
+	if err := d.Register(ctx); err != nil {
 		return err
 	}
 	var errs []error
@@ -108,27 +110,42 @@ func (d *Dispatcher) DispatchOnce(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-func (d *Dispatcher) materializeDeliveries(ctx context.Context) error {
+// Register replaces this dispatcher's topic registrations and backfills history
+// atomically. Other dispatchers' registrations and delivery states are retained.
+func (d *Dispatcher) Register(ctx context.Context) error {
+	d.registerMu.Lock()
+	defer d.registerMu.Unlock()
+	if d.registered {
+		return nil
+	}
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin event consumer registration: %w", err)
+	}
+	defer tx.Rollback()
+	queries := dbsqlc.New(tx)
 	now := d.now().UTC().UnixMilli()
 	for _, consumer := range d.consumers {
-		placeholders := strings.TrimRight(strings.Repeat("?,", len(consumer.Topics)), ",")
-		query := `
-			INSERT INTO event_deliveries(
-				event_id, consumer_id, status, attempts, next_attempt_at, updated_at
-			)
-			SELECT id, ?, 'pending', 0, available_at, ?
-			FROM events_log
-			WHERE topic IN (` + placeholders + `)
-			ON CONFLICT(event_id, consumer_id) DO NOTHING`
-		args := make([]any, 0, 2+len(consumer.Topics))
-		args = append(args, consumer.ID, now)
-		for _, topic := range consumer.Topics {
-			args = append(args, topic)
+		if err := queries.DeleteEventConsumerTopics(ctx, string(consumer.ID)); err != nil {
+			return fmt.Errorf("replace consumer %q topics: %w", consumer.ID, err)
 		}
-		if _, err := d.db.ExecContext(ctx, query, args...); err != nil {
-			return fmt.Errorf("materialize consumer %q deliveries: %w", consumer.ID, err)
+		for _, topic := range consumer.Topics {
+			if err := queries.InsertEventConsumerTopic(ctx, dbsqlc.InsertEventConsumerTopicParams{
+				ConsumerID: string(consumer.ID), Topic: topic,
+			}); err != nil {
+				return fmt.Errorf("register consumer %q topic: %w", consumer.ID, err)
+			}
+		}
+		if err := queries.BackfillEventDeliveries(ctx, dbsqlc.BackfillEventDeliveriesParams{
+			ConsumerID: string(consumer.ID), UpdatedAt: now,
+		}); err != nil {
+			return fmt.Errorf("backfill consumer %q deliveries: %w", consumer.ID, err)
 		}
 	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit event consumer registration: %w", err)
+	}
+	d.registered = true
 	return nil
 }
 
@@ -140,6 +157,14 @@ type claimedDelivery struct {
 func (d *Dispatcher) claim(ctx context.Context, consumer contracts.EventConsumer) (claimedDelivery, bool, error) {
 	now := d.now().UTC()
 	leaseUntil := now.Add(consumer.Timeout + 5*time.Second).UnixMilli()
+	found, err := dbsqlc.New(d.db).HasClaimableDelivery(ctx, dbsqlc.HasClaimableDeliveryParams{
+		ConsumerID:    string(consumer.ID),
+		NextAttemptAt: sql.NullInt64{Int64: now.UnixMilli(), Valid: true},
+		LockedUntil:   sql.NullInt64{Int64: now.UnixMilli(), Valid: true},
+	})
+	if err != nil || !found {
+		return claimedDelivery{}, false, err
+	}
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return claimedDelivery{}, false, err

@@ -179,7 +179,9 @@ func TestFutuCommandLeaseGenerationChangesAfterGatewayReset(t *testing.T) {
 	command := func() string {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		module.futuCommand(rec, httptest.NewRequest(http.MethodPost, "/api/modules/investment/futu/quote/ws/command", strings.NewReader(`{"command":"ADD","symbol":"AAPL","resolution":"5"}`)))
+		browser := openFutuBrowser(t, module)
+		body, _ := json.Marshal(map[string]string{"command": "ADD", "symbol": "AAPL", "resolution": "5", "owner": browser.owner, "generation": browser.generation})
+		module.futuCommand(rec, httptest.NewRequest(http.MethodPost, "/api/modules/investment/futu/quote/ws/command", strings.NewReader(string(body))))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("ADD: %d %s", rec.Code, rec.Body.String())
 		}
@@ -189,7 +191,7 @@ func TestFutuCommandLeaseGenerationChangesAfterGatewayReset(t *testing.T) {
 			Generation string `json:"generation"`
 		}
 		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil || !response.Success || !response.Applied || response.Generation == "" {
-			t.Fatalf("bootstrap ADD must be applied and report its lease generation: %s (%v)", rec.Body.String(), err)
+			t.Fatalf("online owner ADD must be applied and report its lease generation: %s (%v)", rec.Body.String(), err)
 		}
 		return response.Generation
 	}
@@ -228,9 +230,9 @@ func TestFutuHTTPRejectsDelayedOldGenerationUnsubWithoutChangingReferences(t *te
 		Applied    bool   `json:"applied"`
 		Generation string `json:"generation"`
 	}
-	command := func(name, generation string) commandResult {
+	command := func(name, generation, owner string) commandResult {
 		t.Helper()
-		body := map[string]any{"command": name, "symbol": "AAPL", "resolution": "5"}
+		body := map[string]any{"command": name, "symbol": "AAPL", "resolution": "5", "owner": owner}
 		if generation != "" {
 			body["generation"] = generation
 		}
@@ -253,23 +255,26 @@ func TestFutuHTTPRejectsDelayedOldGenerationUnsubWithoutChangingReferences(t *te
 	// Tab A's lease belongs to generation 1. Reset, then let tabs B and C
 	// establish independent references in generation 2 before A's delayed
 	// UNSUB reaches the HTTP handler.
-	tabA := command("ADD", "") // first ADD may bootstrap without a token
+	browserA := openFutuBrowser(t, module)
+	tabA := command("ADD", browserA.generation, browserA.owner)
 	if !tabA.Applied {
-		t.Fatal("bootstrap ADD was not applied")
+		t.Fatal("online owner ADD was not applied")
 	}
 	module.futu.reset()
-	tabB := command("ADD", "") // a new tab also learns the current token from its response
+	browserB := openFutuBrowser(t, module)
+	tabB := command("ADD", browserB.generation, browserB.owner)
 	if !tabB.Applied || tabB.Generation == tabA.Generation {
 		t.Fatalf("tab B did not establish a new generation: A=%+v B=%+v", tabA, tabB)
 	}
-	if tabC := command("ADD", tabB.Generation); !tabC.Applied || tabC.Generation != tabB.Generation {
+	browserC := openFutuBrowser(t, module)
+	if tabC := command("ADD", tabB.Generation, browserC.owner); !tabC.Applied || tabC.Generation != tabB.Generation {
 		t.Fatalf("tab C ADD: %+v", tabC)
 	}
 
-	if stale := command("UNSUB", tabA.Generation); stale.Applied || stale.Generation != tabB.Generation {
+	if stale := command("UNSUB", tabA.Generation, browserA.owner); stale.Applied || stale.Generation != tabB.Generation {
 		t.Fatalf("delayed old UNSUB must be reported unapplied with the current token: %+v", stale)
 	}
-	if unversioned := command("UNSUB", ""); unversioned.Applied || unversioned.Generation != tabB.Generation {
+	if unversioned := command("UNSUB", "", browserB.owner); unversioned.Applied || unversioned.Generation != tabB.Generation {
 		t.Fatalf("unversioned UNSUB must not release a current lease: %+v", unversioned)
 	}
 

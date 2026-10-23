@@ -160,7 +160,7 @@ docker compose -f compose.yaml -f deploy/compose.proxy.yaml up -d --build
 发布镜像部署改用：
 
 ```bash
-docker compose -f deploy/compose.image.yaml -f deploy/compose.proxy.yaml up -d
+docker compose -f compose.image.yaml -f deploy/compose.proxy.yaml up -d
 ```
 
 先确认网络已存在且代理已加入。覆盖文件在保留默认网络的同时加入代理网络，因此 Workbench 仍可访问 `postgres`。此后更新、停止和查看日志均使用相同的两个 `-f` 参数。网络应允许 Workbench 访问外部服务，仅连接受信任的容器。覆盖文件的 `!reset` 语法需要 Docker Compose 2.24.4 或更新版本。
@@ -199,14 +199,14 @@ docker compose exec -T workbench /workbench -healthcheck
 docker compose exec -T workbench /workbench -version
 ```
 
-发布镜像部署在上述命令的 `compose` 后加 `-f deploy/compose.image.yaml`。
+发布镜像部署在上述命令的 `compose` 后加 `-f compose.image.yaml`。
 
 二进制也支持 `-healthcheck`，需使用与服务一致的监听地址、外部 URL 或允许 Host。成功退出码为 0，失败为非 0。此探针验证应用及数据库；外部证书、DNS、代理可用性需从实际 HTTPS 入口检查。
 
 ## 升级、备份与恢复
 
 1. SQLite 在设置的「数据与运行」创建在线备份，并把备份保存到工作空间以外的位置。PostgreSQL 使用数据库服务备份或 `pg_dump`，应用不内置该工具。备份包含业务数据和凭据，应限制读取权限。
-2. 停止服务。二进制部署更换可执行文件；源码 Compose 更新源码后执行 `docker compose up -d --build`；发布镜像 Compose 修改 `.env` 的版本后使用 `deploy/compose.image.yaml` 执行 `pull` 和 `up -d`。保留原数据卷及 Compose 项目名。
+2. 停止服务。二进制部署更换可执行文件；源码 Compose 更新源码后执行 `docker compose up -d --build`；发布镜像 Compose 修改 `.env` 的版本后使用 `compose.image.yaml` 执行 `pull` 和 `up -d`。保留原数据卷及 Compose 项目名。
 3. 检查版本、健康状态和日志，登录确认数据。首次启动会执行所需数据库迁移。
 
 SQLite 命名卷中的备份可复制到宿主机，例如将返回的文件名代入：
@@ -215,7 +215,7 @@ SQLite 命名卷中的备份可复制到宿主机，例如将返回的文件名�
 docker compose cp workbench:/data/backups/备份文件名.db ./workbench-backup.db
 ```
 
-发布镜像部署同样在 `compose` 后加 `-f deploy/compose.image.yaml`。
+发布镜像部署同样在 `compose` 后加 `-f compose.image.yaml`。
 
 回退前先停止服务并保留当前完整工作空间。旧版本未必兼容升级后的数据库。SQLite 必要时将升级前备份复制到新的数据目录，使用该目录和原版本启动；不要把旧 WAL 与恢复的数据库混用，也不要向运行中的数据库覆盖文件。PostgreSQL 使用数据库服务的恢复流程。详细恢复语义见[配置与运行](configuration.md#备份和恢复)。
 
@@ -239,17 +239,17 @@ Dockerfile 从源码多阶段构建，忽略本地 `internal/webui/dist` 并重�
 VERSION=v0.1.1 ./scripts/release.sh
 ```
 
-产物位于 `dist/release/v0.1.1/`，包括两个 Linux 压缩包、发布镜像部署文件包和 `SHA256SUMS`。部署文件包使用 `deploy/compose.image.yaml`，不包含需要源码构建的根 `compose.yaml`。本地打包需要 Go、Node.js/npm、tar 及 sha256sum；Go、前端依赖和 sqlc 要求见[配置与运行](configuration.md)。
+产物位于 `dist/release/v0.1.1/`，包括两个 Linux 压缩包、发布镜像部署文件包和 `SHA256SUMS`。部署文件包使用 `compose.image.yaml`，不包含需要源码构建的根 `compose.yaml`。本地打包需要 Go、Node.js/npm、tar 及 sha256sum；Go、前端依赖和 sqlc 要求见[配置与运行](configuration.md)。
 
 ## GitHub Actions 编译与发布
 
 `.github/workflows/ci.yml`（界面名称 **CI and Build**）支持 PR、主分支推送和 `workflow_dispatch`。手动编译时，在 Actions 中选择 **CI and Build → Run workflow** 并选择目标分支。
 
-流程先通过 `scripts/check-workflows.sh` 执行 actionlint 和 ShellCheck，缺少 ShellCheck 会明确失败，避免本地悄悄跳过而 CI 报错。随后检查 SQL 生成漂移、Go 测试、前端 lint、投资 JS 测试和生产构建，以及部署相关并发行为，最后在 Linux amd64/arm64 runner 上分别构建镜像并验证 Compose 生命周期、登录、备份和数据保留。
+流程先通过 `scripts/check-workflows.sh` 执行 actionlint 和 ShellCheck，缺少 ShellCheck 会明确失败，避免本地悄悄跳过而 CI 报错。`check` 任务挂载 PostgreSQL 17 Alpine 服务并注入 `WORKBENCH_TEST_POSTGRES_URL`，检查 SQL 生成漂移、Go 测试（含 PostgreSQL 集成测试）、前端 lint、前后端契约测试、投资 JS 测试和生产构建，以及部署相关并发行为；最后在 Linux amd64/arm64 runner 上分别构建镜像，对 SQLite 与默认 PostgreSQL（`--database postgres`）两套 Compose 栈验证生命周期、登录、备份和数据保留。
 
 主分支推送及手动分支构建还通过 `scripts/export-build.sh` 从已经验证的镜像中提取相同的静态二进制，导出 Docker 镜像和部署文件包，并验证导出的二进制。构建版本为 `v0.0.0-dev.<运行序号>-<短提交号>`，产物上传到该次运行的 **Artifacts**，按架构分为 `workbench-linux-amd64-<提交号>`、`workbench-linux-arm64-<提交号>`，保留 14 天。PR 执行检查和镜像验证，正式标签的产物由 Release 工作流发布。
 
-下载 artifact ZIP 并解压后，先运行 `sha256sum --check SHA256SUMS`。二进制包解压即可运行；`*_docker.tar.gz` 使用 `docker load --input 文件名` 导入，镜像名为 `workbench:sha-<完整提交号>`。在 `.env` 设置 `WORKBENCH_IMAGE=workbench`、`WORKBENCH_VERSION=sha-<完整提交号>`，使用 `deploy/compose.image.yaml` 启动。普通构建不推送 GHCR，也不创建正式 Release。
+下载 artifact ZIP 并解压后，先运行 `sha256sum --check SHA256SUMS`。二进制包解压即可运行；`*_docker.tar.gz` 使用 `docker load --input 文件名` 导入，镜像名为 `workbench:sha-<完整提交号>`。在 `.env` 设置 `WORKBENCH_IMAGE=workbench`、`WORKBENCH_VERSION=sha-<完整提交号>`，使用 `compose.image.yaml` 启动。普通构建不推送 GHCR，也不创建正式 Release。
 
 
 `.github/workflows/release.yml` 在推送 `v*` 标签时触发。接受 `vMAJOR.MINOR.PATCH` 及预发布后缀，例如 `v0.1.1-rc.1`，不使用带 `+` 的构建元数据。正式包只能从 `main` 产出：标签指向的提交必须已经包含在 `origin/main` 中。先推送 `main`，再在该提交上打标签。

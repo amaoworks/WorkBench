@@ -58,8 +58,6 @@ type App struct {
 	handler            http.Handler
 	server             *http.Server
 	closeOnce          sync.Once
-	schedulerOnce      sync.Once
-	schedulerErr       error
 	settingsMu         sync.Mutex
 	aiSettings         AISettings
 	appearance         Appearance
@@ -103,6 +101,9 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	}
 
 	eventStore := events.NewStore(database.SQL())
+	if err := eventStore.ResetConsumers(ctx); err != nil {
+		return nil, err
+	}
 	notificationService, err := notifications.NewService(database.SQL(), eventStore)
 	if err != nil {
 		return nil, err
@@ -143,6 +144,11 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	telegramDispatcher, err := events.NewDispatcher(database.SQL(), eventStore, []contracts.EventConsumer{telegram.Consumer()}, enabled, logger.With("component", "telegram"))
 	if err != nil {
 		return nil, err
+	}
+	for _, dispatcher := range []*events.Dispatcher{dispatcher, telegramDispatcher} {
+		if err := dispatcher.Register(ctx); err != nil {
+			return nil, err
+		}
 	}
 	jobs := append(registry.Catalog().Jobs, maintenanceJob(database.SQL()))
 	scheduled, err := scheduler.New(ctx, database.SQL(), jobs, enabled, logger.With("component", "scheduler"))
@@ -550,9 +556,12 @@ func (a *App) Run(ctx context.Context) error {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), a.config.ShutdownGrace)
 	defer cancel()
+	schedulerErr := a.shutdownScheduler(shutdownCtx)
+	if schedulerErr != nil {
+		return schedulerErr
+	}
 	_ = a.registry.Close()
 	serverErr := a.server.Shutdown(shutdownCtx)
-	schedulerErr := a.shutdownScheduler(shutdownCtx)
 	if serverErr == nil && schedulerErr == nil {
 		a.logger.Info("workbench stopped", "component", "app")
 	}
@@ -568,14 +577,17 @@ func (a *App) startModules(ctx context.Context) {
 }
 
 func (a *App) shutdownScheduler(ctx context.Context) error {
-	a.schedulerOnce.Do(func() { a.schedulerErr = a.scheduler.Shutdown(ctx) })
-	return a.schedulerErr
+	return a.scheduler.Shutdown(ctx)
 }
 
 func (a *App) Close() error {
 	var result error
 	a.closeOnce.Do(func() {
-		result = errors.Join(a.registry.Close(), a.shutdownScheduler(context.Background()), a.database.Close())
+		if err := a.shutdownScheduler(context.Background()); err != nil {
+			result = err
+			return
+		}
+		result = errors.Join(a.registry.Close(), a.database.Close())
 	})
 	return result
 }

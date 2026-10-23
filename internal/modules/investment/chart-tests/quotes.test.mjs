@@ -107,9 +107,10 @@ test('missing, null and non-finite inputs stay absent and cannot form a successf
 });
 
 test('quote listeners hold a separate Futu BASIC lease without releasing a bar lease', async t => {
+    const events = new EventTarget();
     const commands = [];
     const feed = new Datafeed({
-        events: new EventTarget(), stream: { ready: false }, overnightRequest: enabledOvernight,
+        events, stream: { ready: false }, overnightRequest: enabledOvernight,
         futuRequest: async (_path, init) => {
             commands.push(JSON.parse(init.body));
             return new Response(JSON.stringify({ success: true, applied: true }));
@@ -117,6 +118,7 @@ test('quote listeners hold a separate Futu BASIC lease without releasing a bar l
     });
     t.after(() => feed.destroy());
     await feed.ensureFutuOverlay();
+    events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation: 'gateway:1', owner: 'owner:1' } }));
 
     feed.subscribeBars({ name: 'AAPL', subsession_id: 'night' }, '5', () => {}, 'bars');
     feed.subscribeQuotes(['AAPL'], [], () => {}, 'first-quote');
@@ -135,7 +137,7 @@ test('quote listeners hold a separate Futu BASIC lease without releasing a bar l
     feed.unsubscribeBars('bars');
 });
 
-test('Futu BASIC waits for stream readiness while K-line subscriptions still reconcile', async t => {
+test('all Futu ADD commands including K-line and BASIC wait for stream readiness', async t => {
     const events = new EventTarget();
     const commands = [];
     const futuStream = { ready: false, start() {}, stop() {} };
@@ -143,7 +145,7 @@ test('Futu BASIC waits for stream readiness while K-line subscriptions still rec
         events, stream: { ready: false }, futuStream, overnightRequest: enabledOvernight,
         futuRequest: async (_path, init) => {
             commands.push(JSON.parse(init.body));
-            return new Response(JSON.stringify({ success: true, applied: true }));
+            return new Response(JSON.stringify({ success: true, applied: true, generation: 'gateway:1', owner: 'owner:1' }));
         },
     });
     t.after(() => feed.destroy());
@@ -151,12 +153,16 @@ test('Futu BASIC waits for stream readiness while K-line subscriptions still rec
 
     feed.subscribeBars({ name: 'AAPL', subsession_id: 'night' }, '5', () => {}, 'bars');
     feed.subscribeQuotes(['AAPL'], [], () => {}, 'details');
-    await waitFor(() => commands.some(command => command.command === 'ADD' && command.resolution === '5'));
     await new Promise(resolve => setTimeout(resolve, 20));
-    assert.equal(commands.some(command => command.command === 'ADD' && command.resolution === ''), false);
+    assert.deepEqual(commands, []);
 
-    events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation: 'gateway:1' } }));
-    await waitFor(() => commands.some(command => command.command === 'ADD' && command.resolution === ''));
+    events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation: 'gateway:1', owner: 'owner:1' } }));
+    await waitFor(() => commands.some(command => command.command === 'ADD' && command.resolution === '5') &&
+        commands.some(command => command.command === 'ADD' && command.resolution === ''));
+    for (const command of commands) {
+        assert.equal(command.generation, 'gateway:1');
+        assert.equal(command.owner, 'owner:1');
+    }
 });
 
 test('Futu quotes are ignored without a matching live quote listener', async t => {

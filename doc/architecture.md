@@ -81,11 +81,11 @@ contracts → 标准库
 
 ## 装配与启停
 
-[App.New](../internal/app/app.go) 打开并锁定所选数据库、执行对应方言的平台迁移，创建通用服务与业务模块。SQLite 使用工作空间文件锁；PostgreSQL 使用独立连接持有同一数据库和 schema 范围的 advisory lock。Registry 校验模块声明、执行对应方言的模块迁移、收集注册资源、同步模块元数据并加载启停状态，对所有实现 `ModuleLifecycle` 的模块恢复持久化意图；随后装配通知 SSE、事件投递、调度、鉴权、AI、对话和 HTTP 路由，加载持久化设置。
+[App.New](../internal/app/app.go) 打开并锁定所选数据库、执行对应方言的平台迁移，创建事件存储并调用 `ResetConsumers` 清理一次旧消费者注册元数据，再创建通用服务与业务模块。SQLite 使用工作空间文件锁；PostgreSQL 使用独立连接持有同一数据库和 schema 范围的 advisory lock。Registry 校验模块声明、执行对应方言的模块迁移、收集注册资源、同步模块元数据并加载启停状态，对所有实现 `ModuleLifecycle` 的模块恢复持久化意图；随后装配通知 SSE、事件投递（启动时调用一次 `Dispatcher.Register` 写入消费者主题并补齐历史投递）、调度、鉴权、AI、对话和 HTTP 路由，加载持久化设置。
 
 注册目录先在内存收集并校验，失败时不发布可用目录。模块迁移在注册目录构建前执行，不与全部注册操作组成一个可回滚事务。
 
-`App.Run` 绑定 HTTP 监听地址，启动调度器、事件投递和 HTTP 服务，再调用模块声明的 `ModuleStartup.OnStarted`；后台初始化随运行 context 结束。模块资源的会话加载与响应包装通过 `ModuleSessionPolicyProvider` 声明。HTTPS 在反向代理处终止，应用以固定外部 URL 配置 Cookie 和来源校验；部署形态与发布流程见[部署与发布](deployment.md)。退出时 Registry 关闭业务入口、外部模块探测与代理 WebSocket，并按构造顺序逆序释放内置模块生命周期资源；随后关闭 HTTP 服务、调度与数据库。宿主退出不会把外部模块改写为用户停用。
+`App.Run` 绑定 HTTP 监听地址，启动调度器、事件投递和 HTTP 服务，再调用模块声明的 `ModuleStartup.OnStarted`；后台初始化随运行 context 结束。模块资源的会话加载与响应包装通过 `ModuleSessionPolicyProvider` 声明。HTTPS 在反向代理处终止，应用以固定外部 URL 配置 Cookie 和来源校验；部署形态与发布流程见[部署与发布](deployment.md)。退出时先调用 `scheduler.Shutdown` 取消并等待在途定时与补跑任务结束，再由 Registry 关闭业务入口、外部模块探测与代理 WebSocket，并按构造顺序逆序释放内置模块生命周期资源；随后关闭 HTTP 服务与数据库。宿主退出不会把外部模块改写为用户停用。
 
 新增模块通过 `internal/app/app.go` 的后端清单及前端 `<id>.module.ts` 文件注册，代码随程序构建。历史外部模块从已保存的目录恢复，不再开放网址接入；通用 `/modules/{id}/...` 与 `/api/modules/{id}/proxy/*` 按注册表快照分发。内置启停影响模块 HTTP、Job、事件消费者、AI Tool、导航和总览卡片。外部模块的 `enabled` 是用户期望；业务页面/API/WS 只在当前连接的当前代数确认启用且健康不是 `offline`/`incompatible` 后开放。设置页在停用时仍可访问。停用不会删除表、历史数据或布局偏好。隐藏 Widget 只影响总览展示。
 
@@ -93,8 +93,8 @@ contracts → 标准库
 
 ## 关键协作流程
 
-- 业务写入与领域事件使用同一 `*sql.Tx`。PostgreSQL 默认以 Serializable 开启显式事务，序列化冲突会回滚并返回错误。Dispatcher 为消费者生成投递记录、领取租约并执行，失败按策略重试，超过次数记为 `dead`；业务消费者承担幂等处理。
-- Job 的定义来自代码，数据库保存调度状态和运行记录。支持 cron、interval、once，运行前检查模块状态；恢复时依据 misfire 配置跳过或补跑一次。
+- 业务写入与领域事件使用同一 `*sql.Tx`，`Store.PublishTx` 按 `event_consumer_topics` 在同一事务内扇出投递记录；PostgreSQL 默认以 Serializable 开启显式事务，序列化冲突会回滚并返回错误。启动时 `ResetConsumers` 清空旧消费者元数据，`Dispatcher.Register` 写入当前消费者主题并一次性补齐历史投递；运行期 Dispatcher 只按租约领取和执行投递，不重复扫描全部历史，失败按策略重试，超过次数记为 `dead`，业务消费者承担幂等处理。
+- Job 的定义来自代码，数据库保存调度状态和运行记录。支持 cron、interval、once，运行前检查模块状态；恢复时依据 misfire 配置跳过或补跑一次，启动补跑与正常调度共享单实例执行门控，并在 `Shutdown` 时统一取消和等待。
 - 通知服务统一保存通知及变更事件。SSE 将变更告知浏览器，浏览器再查询通知数据；它不提供完整事件历史回放。
 - 对话使用 AI Gateway，可调用启用模块注册的 Tool；业务主动生成文本使用 `contracts.TextGenerator`，该接口不执行业务工具。两者共享设置中的 Provider，保存设置后新请求使用新配置。
 - Dashboard 合并模块 Widget 声明和持久化布局，业务 Widget 自己读取数据。平台设置和业务设置分别由 `features/settings` 与模块的设置组件负责。外部模块使用宿主通用 iframe 容器加载远端页面和设置，不注册总览 Widget、Job、事件或 AI Tool。

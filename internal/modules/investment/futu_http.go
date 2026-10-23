@@ -85,6 +85,10 @@ func (m *Module) serveFutuStream(w http.ResponseWriter, r *http.Request) {
 	go client.writePump()
 	defer m.futu.removeWS(client)
 	conn.SetReadLimit(4096)
+	_ = conn.SetReadDeadline(time.Now().Add(futuPongWait))
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(futuPongWait))
+	})
 	for {
 		if _, _, err := conn.ReadMessage(); err != nil {
 			return
@@ -98,6 +102,7 @@ func (m *Module) futuCommand(w http.ResponseWriter, r *http.Request) {
 		Symbol     string `json:"symbol"`
 		Resolution string `json:"resolution"`
 		Generation string `json:"generation"`
+		Owner      string `json:"owner"`
 	}
 	if httpapi.Decode(w, r, &input, 16<<10) != nil {
 		httpapi.Error(w, http.StatusBadRequest, "invalid_request", "无效的订阅命令")
@@ -109,16 +114,13 @@ func (m *Module) futuCommand(w http.ResponseWriter, r *http.Request) {
 		httpapi.Error(w, http.StatusBadRequest, "invalid_request", "请使用 ADD 或 UNSUB 并提供标的")
 		return
 	}
+	if input.Owner == "" {
+		httpapi.Error(w, http.StatusConflict, "futu_client_required", "请重新连接富途行情")
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	var generation string
-	var applied bool
-	var err error
-	if command == "ADD" {
-		generation, applied, err = m.futu.addSub(ctx, symbol, input.Resolution, input.Generation)
-	} else {
-		generation, applied, err = m.futu.releaseSub(ctx, symbol, input.Resolution, input.Generation)
-	}
+	generation, applied, err := m.futu.browserCommand(ctx, command, input.Owner, input.Generation, symbol, input.Resolution)
 	if err != nil {
 		if errors.Is(err, errOverlayOff) {
 			httpapi.Error(w, http.StatusConflict, "futu_disabled", err.Error())
@@ -127,5 +129,5 @@ func (m *Module) futuCommand(w http.ResponseWriter, r *http.Request) {
 		httpapi.Error(w, http.StatusServiceUnavailable, "futu_unavailable", err.Error())
 		return
 	}
-	httpapi.Write(w, http.StatusOK, map[string]any{"success": true, "applied": applied, "generation": generation})
+	httpapi.Write(w, http.StatusOK, map[string]any{"success": true, "applied": applied, "generation": generation, "owner": input.Owner})
 }

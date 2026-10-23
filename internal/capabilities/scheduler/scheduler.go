@@ -33,7 +33,16 @@ type Scheduler struct {
 	now         func() time.Time
 	mu          sync.Mutex
 	started     bool
+	stopping    bool
 	misfires    []misfire
+	pending     map[contracts.JobID]time.Time
+	running     map[contracts.JobID]struct{}
+	runCtx      context.Context
+	cancel      context.CancelFunc
+	stopParent  func() bool
+	runs        sync.WaitGroup
+	stopped     chan struct{}
+	shutdownErr error
 }
 
 type misfire struct {
@@ -89,6 +98,10 @@ func New(ctx context.Context, db *sql.DB, definitions []contracts.JobDefinition,
 			return nil, err
 		}
 	}
+	s.runCtx, s.cancel = context.WithCancel(context.Background())
+	s.pending = make(map[contracts.JobID]time.Time)
+	s.running = make(map[contracts.JobID]struct{})
+	s.stopped = make(chan struct{})
 	return s, nil
 }
 
@@ -203,7 +216,6 @@ func (s *Scheduler) register(definition contracts.JobDefinition) error {
 		}),
 		gocron.WithIdentifier(identifier),
 		gocron.WithName(string(definition.ID)),
-		gocron.WithSingletonMode(gocron.LimitModeReschedule),
 	)
 	if err != nil {
 		return fmt.Errorf("register job %q: %w", definition.ID, err)
@@ -214,35 +226,103 @@ func (s *Scheduler) register(definition contracts.JobDefinition) error {
 
 func (s *Scheduler) Start(ctx context.Context) error {
 	s.mu.Lock()
+	if s.stopping {
+		s.mu.Unlock()
+		return errors.New("scheduler is shut down")
+	}
 	if s.started {
 		s.mu.Unlock()
 		return errors.New("scheduler already started")
 	}
-	s.started = true
-	s.mu.Unlock()
-	s.engine.Start()
-	if err := s.updateNextRuns(ctx); err != nil {
+	err := ctx.Err()
+	if err == nil {
+		err = s.updateNextRuns(ctx)
+	}
+	if err != nil {
+		s.beginShutdownLocked()
+		s.mu.Unlock()
+		_ = s.Shutdown(context.Background())
 		return err
 	}
+	s.started = true
+	s.stopParent = context.AfterFunc(ctx, s.cancel)
 	for _, missed := range s.misfires {
-		missed := missed
+		// Reserve overdue jobs before starting the engine, even if its first tick is immediate.
+		s.pending[missed.definition.ID] = missed.scheduledAt
+		s.runs.Add(1)
 		go func() {
-			if !s.enabled(missed.definition.Module) {
-				return
-			}
+			defer s.runs.Done()
 			if err := s.execute(ctx, missed.definition, missed.scheduledAt); err != nil {
 				s.logger.Error("misfired job failed", "jobId", missed.definition.ID, "errorType", fmt.Sprintf("%T", err))
 			}
 		}()
 	}
+	s.engine.Start()
+	s.mu.Unlock()
 	return nil
 }
 
+func (s *Scheduler) beginShutdownLocked() {
+	if s.stopping {
+		return
+	}
+	s.stopping = true
+	s.cancel()
+	if s.stopParent != nil {
+		s.stopParent()
+	}
+	// One waiter survives a caller's deadline so a later Shutdown can finish cleanup.
+	go func() {
+		s.shutdownErr = s.engine.ShutdownWithContext(context.Background())
+		s.runs.Wait()
+		close(s.stopped)
+	}()
+}
+
 func (s *Scheduler) Shutdown(ctx context.Context) error {
-	return s.engine.ShutdownWithContext(ctx)
+	s.mu.Lock()
+	s.beginShutdownLocked()
+	s.mu.Unlock()
+	select {
+	case <-s.stopped:
+		return s.shutdownErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (s *Scheduler) execute(parent context.Context, definition contracts.JobDefinition, scheduledAt time.Time) error {
+	s.mu.Lock()
+	if s.stopping || s.runCtx.Err() != nil || parent.Err() != nil {
+		s.mu.Unlock()
+		return nil
+	}
+	if reserved, exists := s.pending[definition.ID]; exists {
+		if !reserved.Equal(scheduledAt) {
+			s.mu.Unlock()
+			return nil
+		}
+		delete(s.pending, definition.ID)
+	}
+	if _, exists := s.running[definition.ID]; exists {
+		s.mu.Unlock()
+		return nil
+	}
+	s.running[definition.ID] = struct{}{}
+	s.runs.Add(1)
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.running, definition.ID)
+		s.mu.Unlock()
+		s.runs.Done()
+	}()
+	parent, cancel := context.WithCancel(parent)
+	stop := context.AfterFunc(s.runCtx, cancel)
+	defer func() { stop(); cancel() }()
+	if s.runCtx.Err() != nil {
+		cancel()
+	}
 	if !s.enabled(definition.Module) {
 		return nil
 	}
@@ -255,6 +335,9 @@ func (s *Scheduler) execute(parent context.Context, definition contracts.JobDefi
 	}
 	var lastErr error
 	for attempt := startAttempt; attempt <= definition.Retry.MaxAttempts; attempt++ {
+		if err := parent.Err(); err != nil {
+			return err
+		}
 		runID, err := identity.New()
 		if err != nil {
 			return err
@@ -270,9 +353,12 @@ func (s *Scheduler) execute(parent context.Context, definition contracts.JobDefi
 
 		runCtx, cancel := context.WithTimeout(parent, definition.Timeout)
 		s.logger.Debug("job attempt started", "jobId", definition.ID, "runId", runID, "attempt", attempt)
-		lastErr = definition.Handler(runCtx, contracts.JobRun{
-			ID: runID, JobID: definition.ID, ScheduledAt: scheduledAt.UTC(), Attempt: attempt,
-		})
+		lastErr = runCtx.Err()
+		if lastErr == nil {
+			lastErr = definition.Handler(runCtx, contracts.JobRun{
+				ID: runID, JobID: definition.ID, ScheduledAt: scheduledAt.UTC(), Attempt: attempt,
+			})
+		}
 		deadlineExceeded := errors.Is(runCtx.Err(), context.DeadlineExceeded)
 		cancel()
 		status := "succeeded"

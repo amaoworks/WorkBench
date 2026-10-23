@@ -47,6 +47,7 @@ type Service struct {
 	publicHTTPS    bool
 	allowedOrigins map[string]struct{}
 	cookieSameSite http.SameSite
+	passwordLimit  *passwordLimit
 }
 
 func New(ctx context.Context, db *sql.DB, cfg Config) (*Service, error) {
@@ -106,6 +107,7 @@ func New(ctx context.Context, db *sql.DB, cfg Config) (*Service, error) {
 		queries: dbsqlc.New(db), mode: cfg.Mode, sessions: sessions, sessionStore: store,
 		allowedHosts: make(map[string]struct{}), publicHTTPS: cfg.PublicHTTPS,
 		allowedOrigins: origins, cookieSameSite: sessions.Cookie.SameSite,
+		passwordLimit: newPasswordLimit(),
 	}
 	for _, allowed := range cfg.AllowedHosts {
 		service.allowedHosts[strings.ToLower(allowed)] = struct{}{}
@@ -166,6 +168,10 @@ func (s *Service) Authenticate(ctx context.Context, password string) (bool, erro
 	if s.mode == ModeLocal {
 		return true, nil
 	}
+	if _, err := s.passwordLimit.acquire(false); err != nil {
+		return false, err
+	}
+	defer s.passwordLimit.release()
 	hash, err := s.queries.GetPasswordHash(ctx)
 	if err != nil {
 		return false, fmt.Errorf("load credential: %w", err)
@@ -232,6 +238,11 @@ func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"code": "invalid_request", "message": "invalid login request"})
 		return
 	}
+	if retryAfter, err := s.passwordLimit.acquire(true); err != nil {
+		writePasswordLimit(w, retryAfter, err)
+		return
+	}
+	defer s.passwordLimit.release()
 	// Read the hash and version together so a concurrent password change cannot
 	// turn a login with the old password into a session for the new credential.
 	credential, err := s.queries.GetAuthCredential(r.Context())

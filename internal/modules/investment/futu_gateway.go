@@ -14,17 +14,40 @@ import (
 	investmentsqlc "workbench/internal/modules/investment/sqlc"
 )
 
+const (
+	futuPongWait  = 60 * time.Second
+	futuPingEvery = futuPongWait * 9 / 10
+	futuWriteWait = 10 * time.Second
+)
+
 type futuWSClient struct {
-	conn *websocket.Conn
-	send chan []byte
+	conn       *websocket.Conn
+	send       chan []byte
+	owner      string
+	generation string
+	opend      *opendClient
+	opMu       sync.Mutex
+	subs       map[browserSubKey]struct{}
 }
 
 func (c *futuWSClient) writePump() {
 	defer c.conn.Close()
-	for message := range c.send {
-		_ = c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
-			return
+	ticker := time.NewTicker(futuPingEvery)
+	defer ticker.Stop()
+	for {
+		select {
+		case message, ok := <-c.send:
+			if !ok {
+				return
+			}
+			_ = c.conn.SetWriteDeadline(time.Now().Add(futuWriteWait))
+			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
+				return
+			}
+		case <-ticker.C:
+			if err := c.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(futuWriteWait)); err != nil {
+				return
+			}
 		}
 	}
 }
@@ -37,6 +60,7 @@ type futuGateway struct {
 	client     *opendClient
 	instanceID string
 	generation uint64
+	nextOwner  uint64
 	closed     bool
 	refs       map[subKey]*subLease
 	subOps     map[subOperationKey]*subOperation
@@ -98,6 +122,7 @@ func (g *futuGateway) closeLocked() {
 	clear(g.refs)
 	for client := range g.clients {
 		g.removeLocked(client)
+		_ = client.conn.Close()
 	}
 }
 
@@ -106,7 +131,6 @@ func (g *futuGateway) removeLocked(client *futuWSClient) {
 		delete(g.clients, client)
 		close(client.send)
 	}
-	_ = client.conn.Close()
 }
 
 func (g *futuGateway) ensure(ctx context.Context) (*opendClient, error) {
@@ -199,9 +223,14 @@ func (g *futuGateway) addWS(ctx context.Context, client *futuWSClient) error {
 	if g.client == nil || g.closed {
 		return errors.New("OpenD 连接已断开")
 	}
+	g.nextOwner++
+	client.owner = g.instanceID + ":ws:" + strconv.FormatUint(g.nextOwner, 10)
+	client.generation = g.generationTokenLocked()
+	client.opend = g.client
+	client.subs = make(map[browserSubKey]struct{})
 	g.clients[client] = struct{}{}
 	ready, _ := json.Marshal(map[string]any{"stream": map[string]any{
-		"status": "ready", "generation": g.generationTokenLocked(),
+		"status": "ready", "generation": client.generation, "owner": client.owner,
 	}})
 	client.send <- ready
 	return nil
@@ -209,12 +238,18 @@ func (g *futuGateway) addWS(ctx context.Context, client *futuWSClient) error {
 
 func (g *futuGateway) removeWS(client *futuWSClient) {
 	g.mu.Lock()
-	defer g.mu.Unlock()
-	if _, ok := g.clients[client]; !ok {
-		_ = client.conn.Close()
-		return
-	}
 	g.removeLocked(client)
+	g.mu.Unlock()
+	_ = client.conn.Close()
+
+	// Disconnect first invalidates the owner, then waits for any in-flight ADD
+	// before releasing exactly the references acquired by this WebSocket.
+	client.opMu.Lock()
+	defer client.opMu.Unlock()
+	for key := range client.subs {
+		g.releaseBrowserSub(client, key)
+		delete(client.subs, key)
+	}
 }
 
 func (g *futuGateway) broadcast(payload []byte) {

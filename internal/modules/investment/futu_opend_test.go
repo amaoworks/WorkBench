@@ -3,6 +3,7 @@ package investment
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"strings"
@@ -159,6 +160,64 @@ func (f *fakeOpenD) serve(conn net.Conn) {
 		if err := writeOpendPacket(conn, proto, serial, resp); err != nil {
 			return
 		}
+	}
+}
+
+func TestOpendCloseKeepsInFlightReplyChannelOpen(t *testing.T) {
+	reply := make(chan opendReply, 1)
+	client := &opendClient{
+		conn: discardConn{}, stop: make(chan struct{}),
+		pending: map[uint32]chan opendReply{1: reply},
+	}
+	// readLoop can retain a reply channel after releasing client.mu.
+	inFlight := client.pending[1]
+	client.close()
+	client.close()
+	select {
+	case <-client.stop:
+	default:
+		t.Fatal("close did not signal pending calls")
+	}
+	if len(client.pending) != 0 {
+		t.Fatal("close retained pending calls")
+	}
+	select {
+	case inFlight <- opendReply{proto: protoGetGlobalState}:
+	default:
+		t.Fatal("late reply could not be delivered")
+	}
+}
+
+func TestOpendCloseUnblocksPendingCall(t *testing.T) {
+	fake := startFakeOpenD(t)
+	fake.subStarted = make(chan struct{}, 1)
+	fake.releaseSub = make(chan struct{})
+	defer close(fake.releaseSub)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	client, err := dialOpend(ctx, fake.addr(), "workbench-close-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.close()
+	done := make(chan error, 1)
+	go func() { done <- client.subscribe(ctx, "AAPL", []int{subTypeBasic}, true) }()
+	select {
+	case <-fake.subStarted:
+	case <-ctx.Done():
+		t.Fatal("subscription did not reach OpenD")
+	}
+	client.close()
+	select {
+	case err := <-done:
+		if !errors.Is(err, errOpendClosed) {
+			t.Fatalf("pending call returned %v, want closed connection", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("close did not unblock pending call")
+	}
+	if _, err := client.call(ctx, protoGetGlobalState, map[string]any{}); !errors.Is(err, errOpendClosed) {
+		t.Fatalf("call after close returned %v", err)
 	}
 }
 

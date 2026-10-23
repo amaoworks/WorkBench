@@ -145,10 +145,7 @@ func (c *opendClient) close() {
 	c.closed = true
 	close(c.stop)
 	_ = c.conn.Close()
-	for id, ch := range c.pending {
-		close(ch)
-		delete(c.pending, id)
-	}
+	clear(c.pending)
 }
 
 func (c *opendClient) keepAlive(intervalSec int) {
@@ -198,10 +195,7 @@ func (c *opendClient) call(ctx context.Context, proto uint32, req any) (map[stri
 		return nil, ctx.Err()
 	case <-c.stop:
 		return nil, errOpendClosed
-	case reply, ok := <-ch:
-		if !ok {
-			return nil, errOpendClosed
-		}
+	case reply := <-ch:
 		return parseFutuS2C(reply.body)
 	}
 }

@@ -10,6 +10,7 @@ import { Switch } from "../../components/ui/Switch";
 import { saveWallosSettings, syncWallos, useRefreshTodo, useWallosSettings } from "./queries";
 import type { WallosSettings as Settings } from "./schema";
 import { formatDateTime } from "../../shared/format";
+import { useReportDirty } from "../../shared/settingsDialog";
 
 export default function WallosSettings({ enabled }: { enabled: boolean }) {
   const settings = useWallosSettings(enabled);
@@ -34,6 +35,7 @@ function WallosForm({ initial }: { initial: Settings }) {
     timeZone: initial.timeZone,
   });
   const [dirty, setDirty] = useState(false);
+  useReportDirty(dirty);
   const change = (patch: Partial<typeof form>) => {
     setForm((value) => ({ ...value, ...patch }));
     setDirty(true);

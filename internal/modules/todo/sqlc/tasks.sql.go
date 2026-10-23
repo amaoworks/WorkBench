@@ -70,9 +70,18 @@ func (q *Queries) GetTask(ctx context.Context, id string) (TodoTask, error) {
 
 const listDueTasks = `-- name: ListDueTasks :many
 SELECT id, title, due_at FROM todo_tasks
-WHERE completed_at IS NULL AND due_at IS NOT NULL AND due_at <= ?
-ORDER BY due_at LIMIT 100
+WHERE completed_at IS NULL AND due_at IS NOT NULL AND due_at <= ?1
+  AND (CAST(?2 AS BIGINT) = 0 OR
+    (due_at, id) > (CAST(?3 AS BIGINT), CAST(?4 AS TEXT)))
+ORDER BY due_at, id LIMIT 100
 `
+
+type ListDueTasksParams struct {
+	ScanBefore sql.NullInt64 `json:"scan_before"`
+	HasCursor  int64         `json:"has_cursor"`
+	CursorDue  int64         `json:"cursor_due"`
+	CursorID   string        `json:"cursor_id"`
+}
 
 type ListDueTasksRow struct {
 	ID    string        `json:"id"`
@@ -80,8 +89,13 @@ type ListDueTasksRow struct {
 	DueAt sql.NullInt64 `json:"due_at"`
 }
 
-func (q *Queries) ListDueTasks(ctx context.Context, dueAt sql.NullInt64) ([]ListDueTasksRow, error) {
-	rows, err := q.db.QueryContext(ctx, listDueTasks, dueAt)
+func (q *Queries) ListDueTasks(ctx context.Context, arg ListDueTasksParams) ([]ListDueTasksRow, error) {
+	rows, err := q.db.QueryContext(ctx, listDueTasks,
+		arg.ScanBefore,
+		arg.HasCursor,
+		arg.CursorDue,
+		arg.CursorID,
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -19,7 +19,10 @@ def main():
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--binary", type=Path)
     source.add_argument("--image", help="local Docker image:tag to test through compose.image.yaml")
+    parser.add_argument("--database", choices=("sqlite", "postgres"), default="sqlite")
     args = parser.parse_args()
+    if args.database == "postgres" and not args.image:
+        parser.error("--database postgres requires --image and uses an isolated Compose database")
     repo = Path(__file__).resolve().parent.parent
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -28,26 +31,35 @@ def main():
     origin = "https://deployment.workbench.invalid"
     env = {k: v for k, v in os.environ.items() if not k.startswith(("WORKBENCH_", "OPENAI_"))}
     env.update(WORKBENCH_LISTEN=f"127.0.0.1:{port}", WORKBENCH_AUTH="password",
-               WORKBENCH_PUBLIC_URL=origin, WORKBENCH_PASSWORD=password, WORKBENCH_DB_DRIVER="sqlite")
+               WORKBENCH_PUBLIC_URL=origin, WORKBENCH_PASSWORD=password, WORKBENCH_DB_DRIVER=args.database)
     cookies = {}
     token = ""
     process = None
     with tempfile.TemporaryDirectory(prefix="workbench-deployment-") as temp:
         work = Path(temp)
         env["WORKBENCH_DATA"] = str(work / "data.db")
-        compose = ["docker", "compose", "--project-name", work.name,
+        interpolation = work / "compose.env"
+        interpolation.write_text("")
+        compose = ["docker", "compose", "--env-file", str(interpolation), "--project-name", work.name,
                    "--file", str(repo / "compose.image.yaml")]
         if args.image:
             image, tag = args.image.rsplit(":", 1)
             env.update(WORKBENCH_IMAGE=image, WORKBENCH_VERSION=tag, WORKBENCH_PORT=str(port), WORKBENCH_HTTP_PORT="8080")
-            # Keep the existing SQLite backup checks isolated from the default PG stack.
             runtime = work / "compose.runtime.yaml"
-            runtime.write_text("services:\n  workbench:\n    env_file: !reset []\n    depends_on: !reset {}\n    environment: " + json.dumps({
+            runtime_environment = {
                 "WORKBENCH_LISTEN": "0.0.0.0:8080", "WORKBENCH_HTTP_PORT": "8080",
-                "WORKBENCH_DATA": "/data/data.db", "WORKBENCH_DB_DRIVER": "sqlite",
+                "WORKBENCH_DATA": "/data/data.db", "WORKBENCH_DB_DRIVER": args.database,
                 "WORKBENCH_AUTH": "password", "WORKBENCH_PUBLIC_URL": origin,
                 "WORKBENCH_PASSWORD": "${WORKBENCH_PASSWORD:-}", "WORKBENCH_LOG_LEVEL": "${WORKBENCH_LOG_LEVEL:-info}"
-            }) + "\n")
+            }
+            dependencies = "    depends_on: !reset {}\n"
+            if args.database == "postgres":
+                env.update(POSTGRES_DB="workbench", POSTGRES_USER="workbench",
+                           POSTGRES_PASSWORD=password, POSTGRES_PORT="5432")
+                runtime_environment["WORKBENCH_DATABASE_URL"] = "postgresql://workbench:${POSTGRES_PASSWORD}@postgres:5432/workbench?sslmode=disable"
+                dependencies = ""  # Keep the published stack's PostgreSQL health dependency.
+            runtime.write_text("services:\n  workbench:\n    env_file: !reset []\n" + dependencies +
+                               "    environment: " + json.dumps(runtime_environment) + "\n")
             compose.extend(["--file", str(runtime)])
         log = (work / "server.log").open("w+")
 
@@ -125,23 +137,30 @@ def main():
             token = request("GET", "/api/auth/csrf")["token"]
             request("PUT", "/api/settings/logging", {"level": "error"}, expected=401)
             login()
-            assert request("GET", "/api/settings")["logging"]["level"] == "info"
+            settings = request("GET", "/api/settings")
+            assert settings["logging"]["level"] == "info"
+            assert settings["deployment"]["databaseDriver"] == args.database
+            assert settings["deployment"]["backupSupported"] == (args.database == "sqlite")
             request("PUT", "/api/settings/logging", {"level": "warn"})
             request("PUT", "/api/settings/logging", {"level": "invalid"}, expected=400)
             title = "Deployment persistence " + secrets.token_hex(4)
             request("POST", "/api/modules/todo/tasks", {"title": title}, expected=201)
-            backup = request("POST", "/api/system/backup", {}, expected=201)["file"]
             if args.image:
                 container = command(compose + ["ps", "-q", "workbench"], capture_output=True).stdout.strip()
                 info = json.loads(command(["docker", "inspect", container], capture_output=True).stdout)[0]
                 assert info["Config"]["User"] == "65532:65532", "container must run as non-root"
-                command(["docker", "cp", f"{container}:/data/backups/{backup}", str(work / "backup.db")])
-                backup_path = work / "backup.db"
+            if args.database == "sqlite":
+                backup = request("POST", "/api/system/backup", {}, expected=201)["file"]
+                if args.image:
+                    command(["docker", "cp", f"{container}:/data/backups/{backup}", str(work / "backup.db")])
+                    backup_path = work / "backup.db"
+                else:
+                    backup_path = work / "backups" / backup
+                with sqlite3.connect(backup_path) as db:
+                    assert db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+                    assert db.execute("SELECT count(*) FROM todo_tasks WHERE title = ?", (title,)).fetchone()[0] == 1
             else:
-                backup_path = work / "backups" / backup
-            with sqlite3.connect(backup_path) as db:
-                assert db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-                assert db.execute("SELECT count(*) FROM todo_tasks WHERE title = ?", (title,)).fetchone()[0] == 1
+                request("POST", "/api/system/backup", {}, expected=501)
             stop()
             env["WORKBENCH_PASSWORD"] = ""  # Existing credentials must survive recreation.
             env["WORKBENCH_LOG_LEVEL"] = "debug"  # Saved settings must take precedence.
@@ -150,7 +169,7 @@ def main():
             assert request("GET", "/api/settings")["logging"]["level"] == "warn", "log level lost after restart"
             assert title in json.dumps(request("GET", "/api/modules/todo/tasks")), "data lost after restart"
             stop()
-            print("PASS: initialization, login, healthcheck, backup, graceful stop and persisted data/credentials/log level")
+            print(f"PASS ({args.database}): initialization, login, healthcheck, backup capability, graceful stop and persisted data/credentials/log level")
         except BaseException:
             if args.image:
                 subprocess.run(compose + ["logs", "--no-color", "--tail", "80"], env=env, check=False)
