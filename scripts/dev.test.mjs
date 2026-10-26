@@ -221,7 +221,7 @@ test("a config file alone configures backend, Vite proxy, hosts and dev options"
     assert.equal(plan.env.WORKBENCH_DEV_PORT, "9090");
     assert.equal(plan.env.WORKBENCH_DEV_PUBLIC_URL, "https://hmr.example.test");
     assert.deepEqual(plan.options.sources, {
-      webHost: "WORKBENCH_DEV_WEB_HOST", webPort: "WORKBENCH_DEV_WEB_PORT", devUrl: "WORKBENCH_DEV_URL",
+      mode: "default", webHost: "WORKBENCH_DEV_WEB_HOST", webPort: "WORKBENCH_DEV_WEB_PORT", devUrl: "WORKBENCH_DEV_URL",
     });
     assert.deepEqual(plan.env.WORKBENCH_DEV_HOSTS.split(","), ["w.vm2.de5.net", "other.example.test", "hmr.example.test"]);
     for (const host of ["w.vm2.de5.net", "other.example.test", "localhost:9090", "127.0.0.1:9091"]) {
@@ -243,7 +243,7 @@ test("public URL host reaches Vite and backend allowed hosts without WORKBENCH_A
 
 test("dev option precedence is CLI, then WORKBENCH_DEV_WEB_*, then legacy names, then defaults", () => {
   assert.equal(parseDevArgs([], {}).webPort, 5173);
-  assert.deepEqual(parseDevArgs([], {}).sources, { webHost: "default", webPort: "default", devUrl: "" });
+  assert.deepEqual(parseDevArgs([], {}).sources, { mode: "default", webHost: "default", webPort: "default", devUrl: "" });
   const legacy = parseDevArgs([], { WORKBENCH_DEV_PORT: "5180", WORKBENCH_DEV_HOST: "0.0.0.0" });
   assert.equal(legacy.webPort, 5180);
   assert.equal(legacy.webHost, "0.0.0.0");
@@ -490,6 +490,68 @@ test("a Go build failure does not start services", {
     });
     assert.equal(code, 4);
     await assert.rejects(readFile(marker), { code: "ENOENT" });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("mode precedence is --mode, then WORKBENCH_MODE, then dev", () => {
+  assert.equal(parseDevArgs([], {}).mode, "dev");
+  assert.equal(parseDevArgs([], { WORKBENCH_MODE: "prod" }).mode, "prod");
+  assert.equal(parseDevArgs([], { WORKBENCH_MODE: "prod" }).sources.mode, "WORKBENCH_MODE");
+  const cli = parseDevArgs(["--mode", "dev"], { WORKBENCH_MODE: "prod" });
+  assert.equal(cli.mode, "dev");
+  assert.equal(cli.sources.mode, "--mode");
+  assert.equal(parseDevArgs(["--mode=PROD"], {}).mode, "prod");
+  assert.throws(() => parseDevArgs([], { WORKBENCH_MODE: "staging" }), /WORKBENCH_MODE must be dev or prod/);
+  assert.throws(() => parseDevArgs(["--mode", "x"], {}), /--mode must be dev or prod/);
+});
+
+test("prod mode targets the backend only and passes no Vite settings", () => {
+  const env = { WORKBENCH_MODE: "prod", WORKBENCH_PUBLIC_URL: "https://w.vm2.de5.net", WORKBENCH_LISTEN: "127.0.0.1:9091", WORKBENCH_DEV_WEB_PORT: "9090" };
+  const plan = makeDevPlan(parseDevArgs([], env), env, "/repo");
+  assert.equal(plan.mode, "prod");
+  assert.equal(plan.backendUrl, "http://127.0.0.1:9091");
+  const hosts = plan.env.WORKBENCH_ALLOWED_HOSTS.split(",");
+  assert.ok(hosts.includes("w.vm2.de5.net"));
+  assert.ok(hosts.includes("127.0.0.1:9091"));
+  assert.ok(!hosts.includes("127.0.0.1:9090"));
+  for (const key of ["WORKBENCH_DEV_CHART_DIR", "WORKBENCH_DEV_BACKEND_URL", "WORKBENCH_DEV_HOSTS", "WORKBENCH_DEV_PUBLIC_URL"]) {
+    assert.equal(plan.env[key], undefined, key);
+  }
+  const dev = makeDevPlan(parseDevArgs(["--mode", "dev"], env), env, "/repo");
+  assert.equal(dev.mode, "dev");
+  assert.equal(dev.env.WORKBENCH_DEV_BACKEND_URL, "http://127.0.0.1:9091");
+  assert.ok(dev.env.WORKBENCH_ALLOWED_HOSTS.split(",").includes("127.0.0.1:9090"));
+});
+
+test("build steps run in order and a failed web build stops before Go build and services", {
+  skip: process.platform === "win32",
+  timeout: 20_000,
+}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "workbench-dev-test-"));
+  const goMarker = join(directory, "go-build");
+  const serviceMarker = join(directory, "service");
+  const touch = (file) => `await import('node:fs').then(({writeFileSync}) => writeFileSync(${JSON.stringify(file)}, 'ran'))`;
+  try {
+    const failed = await supervise({
+      build: [{ name: "web build", ...fixture("process.exit(3)") }, { name: "Go build", ...fixture(touch(goMarker)) }],
+      services: [childService("service", touch(serviceMarker))],
+      graceMs: 1_000,
+    });
+    assert.equal(failed, 3);
+    await assert.rejects(readFile(goMarker), { code: "ENOENT" });
+    await assert.rejects(readFile(serviceMarker), { code: "ENOENT" });
+
+    const order = join(directory, "order");
+    const append = (label) => `await import('node:fs').then(({appendFileSync}) => appendFileSync(${JSON.stringify(order)}, ${JSON.stringify(label)}))`;
+    const ok = await supervise({
+      build: [{ name: "web build", ...fixture(append("web,")) }, { name: "Go build", ...fixture(append("go,")) }],
+      services: [{ name: "backend", ...fixture(append("service")), oneShot: true }],
+      graceMs: 1_000,
+    });
+    assert.equal(ok, 0);
+    assert.equal(await readFile(order, "utf8"), "web,go,service");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

@@ -21,6 +21,7 @@
 | `--web-port 5173` | Vite 前端端口；占用时失败，不自动改端口 |
 | `--web-host 127.0.0.1` | Vite 监听地址 |
 | `--dev-url https://w.vm2.de5.net` | 浏览器访问的外部来源，用于热更新连接；默认采用已有 `-public-url` |
+| `--mode dev\|prod` | `dev`（默认）启动 Go 后端和 Vite；`prod` 先在 `web/` 执行 `npm run build`（失败即退出），再以生产构建（不带 `-tags dev`）编译 Go 以嵌入新产物，只启动后端，反代应指向后端端口 |
 | `--config .env.dev` | 加载环境变量文件，可重复，后者覆盖前者；见下文 |
 | `--print-config` | 输出解析后的地址、数据路径和文件变量（隐藏密钥）后退出，不编译、不启动 |
 | `--help` | 查看开发脚本用法 |
@@ -42,6 +43,7 @@ cp scripts/dev.env.example .env.dev && chmod 600 .env.dev
 | `--web-port` | `WORKBENCH_DEV_WEB_PORT`（兼容旧名 `WORKBENCH_DEV_PORT`） |
 | `--web-host` | `WORKBENCH_DEV_WEB_HOST`（兼容旧名 `WORKBENCH_DEV_HOST`） |
 | `--dev-url` | `WORKBENCH_DEV_URL` |
+| `--mode` | `WORKBENCH_MODE`（`dev`/`prod`） |
 
 `--print-config` 显示监听地址、Vite 端口与监听地址各自的来源，以及最终 Host 允许列表。临时改端口时可在命令行或 Shell 中覆盖，例如 `WORKBENCH_LISTEN=127.0.0.1:19091 ./scripts/dev.sh --config .env.dev --web-port 19090`。
 
@@ -83,7 +85,9 @@ cp scripts/dev.env.example .env.dev && chmod 600 .env.dev
 
 `-version` 和 `-healthcheck` 会在编译后仅执行对应后端命令，保留退出码，不启动 Vite；健康检查沿用原始后端参数和 Host 配置。
 
-React 和 CSS 使用 Vite 热更新。投资终端 HTML/JS 通过开发构建从磁盘读取，文件修改触发页面刷新。TradingView 上游图表库继续使用现有代理和缓存。修改 Go 后按 Ctrl+C，再执行同一条开发命令；脚本不监听 Go 文件，也不执行生产前端构建。
+React 和 CSS 使用 Vite 热更新。投资终端 HTML/JS 通过开发构建从磁盘读取，文件修改触发页面刷新。TradingView 上游图表库继续使用现有代理和缓存。修改 Go 后按 Ctrl+C，再执行同一条开发命令；脚本不监听 Go 文件，开发模式下也不执行生产前端构建。
+
+`--mode prod`（或配置文件中 `WORKBENCH_MODE=prod`，例如 `./scripts/dev.sh --config .env.prod-pg`）用于以打包产物对外服务：每次启动先执行 `npm run build`（会改写已提交的 `internal/webui/dist`），再编译并只运行 Go 后端，没有热更新；前端或 Go 修改后重新执行同一命令。反向代理改为指向 `WORKBENCH_LISTEN` 的端口（如 `127.0.0.1:9091`）。
 
 通过 HTTPS 域名调试的完整示例：
 

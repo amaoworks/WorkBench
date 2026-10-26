@@ -19,8 +19,11 @@ export const DEV_HELP = `Usage: ./scripts/dev.sh [dev options] [workbench option
 
 Start a freshly compiled Go backend and the Vite development server.
 Go source files are not watched; run this script again after Go changes.
+With --mode prod, run "npm run build" in web/ first, then compile the Go backend
+(without -tags dev) so it embeds the new web build, and start only the backend.
 
 Dev options:
+  --mode MODE       dev (default: Go backend + Vite) or prod (build web, then Go backend only; env WORKBENCH_MODE)
   --web-port PORT   Vite port (default: ${defaultWebPort}; fixed, no port drift; env WORKBENCH_DEV_WEB_PORT)
   --web-host HOST   Vite bind host (default: ${defaultWebHost}; env WORKBENCH_DEV_WEB_HOST)
   --dev-url URL     Browser-facing origin used for Vite HMR through a proxy (env WORKBENCH_DEV_URL)
@@ -67,15 +70,26 @@ function envOption(env, names) {
   return undefined;
 }
 
+const modes = new Set(["dev", "prod"]);
+
+function modeName(value, name) {
+  const mode = String(value).trim().toLowerCase();
+  if (!modes.has(mode)) throw new Error(`${name} must be dev or prod`);
+  return mode;
+}
+
 export function parseDevArgs(argv, env = process.env) {
+  const envMode = envOption(env, ["WORKBENCH_MODE"]);
   const envHost = envOption(env, ["WORKBENCH_DEV_WEB_HOST", "WORKBENCH_DEV_HOST"]);
   const envPort = envOption(env, ["WORKBENCH_DEV_WEB_PORT", "WORKBENCH_DEV_PORT"]);
   const envDevUrl = envOption(env, ["WORKBENCH_DEV_URL"]);
   const options = {
+    mode: envMode ? modeName(envMode.value, envMode.source) : "dev",
     webHost: envHost?.value ?? defaultWebHost,
     webPort: envPort ? portNumber(envPort.value, envPort.source) : defaultWebPort,
     devUrl: envDevUrl ? browserOrigin(envDevUrl.value, envDevUrl.source) : "",
     sources: {
+      mode: envMode?.source ?? "default",
       webHost: envHost?.source ?? "default",
       webPort: envPort?.source ?? "default",
       devUrl: envDevUrl?.source ?? "",
@@ -101,7 +115,7 @@ export function parseDevArgs(argv, env = process.env) {
       continue;
     }
 
-    const match = /^--?(web-port|web-host|dev-url)(?:=(.*))?$/.exec(arg);
+    const match = /^--?(mode|web-port|web-host|dev-url)(?:=(.*))?$/.exec(arg);
     if (!match) {
       options.goArgs.push(arg);
       continue;
@@ -112,6 +126,10 @@ export function parseDevArgs(argv, env = process.env) {
       if (i + 1 >= argv.length) throw new Error(`${arg} requires a value`);
       value = argv[i + 1];
       i += 1;
+    }
+    if (match[1] === "mode") {
+      options.mode = modeName(value, "--mode");
+      options.sources.mode = "--mode";
     }
     if (match[1] === "web-port") {
       options.webPort = portNumber(value, "--web-port");
@@ -233,6 +251,7 @@ function unique(values) {
 }
 
 export function makeDevPlan(options, env = process.env, root = repoRoot) {
+  const prod = options.mode === "prod";
   const flags = parseGoFlags(options.goArgs);
   const value = (name, key, fallback) => flags.values.has(name) ? flags.values.get(name) : (env[key] || fallback);
   let listen = value("listen", "WORKBENCH_LISTEN", defaultListen);
@@ -266,7 +285,9 @@ export function makeDevPlan(options, env = process.env, root = repoRoot) {
     throw new Error("-listen must use a fixed host:port with a port from 1 to 65535 for -healthcheck");
   }
   if (!flags.oneShot && !parsedBackend) {
-    throw new Error("-listen must use a fixed host:port with a port from 1 to 65535 so Vite can proxy to it");
+    throw new Error(prod
+      ? "-listen must use a fixed host:port with a port from 1 to 65535"
+      : "-listen must use a fixed host:port with a port from 1 to 65535 so Vite can proxy to it");
   }
   const backend = parsedBackend || splitListenAddress(defaultListen);
   const backendPort = backend.port;
@@ -302,7 +323,8 @@ export function makeDevPlan(options, env = process.env, root = repoRoot) {
     const url = new URL(origin);
     originHosts.push(url.host);
   }
-  const generatedAllowedHosts = [...webAddressHosts, ...healthHosts, ...originHosts];
+  // In prod mode the browser talks to the Go backend directly; there is no Vite port.
+  const generatedAllowedHosts = [...(prod ? [] : webAddressHosts), ...healthHosts, ...originHosts];
   const allowedHosts = flags.oneShot ? baseAllowedHosts : [...baseAllowedHosts];
   if (!flags.oneShot) {
     for (const host of generatedAllowedHosts) {
@@ -322,6 +344,8 @@ export function makeDevPlan(options, env = process.env, root = repoRoot) {
   if (!flags.oneShot) {
     if (dataSource === "dev default") childEnv.WORKBENCH_DATA = dataPath;
     if (!explicitInvalid) childEnv.WORKBENCH_ALLOWED_HOSTS = allowedHosts.join(",");
+  }
+  if (!flags.oneShot && !prod) {
     childEnv.WORKBENCH_DEV_CHART_DIR = resolve(root, "internal/modules/investment/chart");
     childEnv.WORKBENCH_DEV_BACKEND_URL = backendUrl;
     childEnv.WORKBENCH_DEV_PORT = String(options.webPort);
@@ -335,6 +359,7 @@ export function makeDevPlan(options, env = process.env, root = repoRoot) {
   const displayWebHost = options.webHost === "0.0.0.0" || options.webHost === "::" ? "localhost" : options.webHost;
 
   return {
+    mode: prod ? "prod" : "dev",
     options: { ...options, goArgs },
     env: childEnv,
     listen,
@@ -499,35 +524,40 @@ export async function supervise({ build, services, graceMs = shutdownGraceMs, lo
   });
 
   try {
-    const buildProcess = launch(build);
-    const buildStarted = await buildProcess.started;
-    if (buildStarted.error) {
-      log(`[dev] Could not start Go build: ${buildStarted.error.message}`);
-      requestStop({ kind: "build-error" }, 1);
-      await buildProcess.done;
-      await stopAll();
-      return exitCode;
-    }
-    const buildResult = await Promise.race([
-      buildProcess.done.then((result) => ({ kind: "build", result })),
-      stopRequested.then((reason) => ({ kind: "stop", reason })),
-    ]);
-    if (buildResult.kind === "stop") {
-      await buildProcess.done;
-      await stopAll();
-      return exitCode;
-    }
-    await stopRecord(buildStarted.pid);
-    if (requestedStop) {
-      await stopAll();
-      return exitCode;
-    }
-    if (buildResult.result.code !== 0) {
-      const status = buildResult.result.code ?? 1;
-      log(`[dev] Go build failed${buildResult.result.signal ? ` (${buildResult.result.signal})` : ` (exit ${status})`}.`);
-      requestStop({ kind: "build-exit" }, status || 1);
-      await stopAll();
-      return exitCode;
+    // Build steps run in order (prod: web build, then Go); any failure stops before services start.
+    for (const step of Array.isArray(build) ? build : [build]) {
+      const stepName = step.name || "Go build";
+      if (step.name) log(`[dev] Running ${stepName}...`);
+      const buildProcess = launch(step);
+      const buildStarted = await buildProcess.started;
+      if (buildStarted.error) {
+        log(`[dev] Could not start ${stepName}: ${buildStarted.error.message}`);
+        requestStop({ kind: "build-error" }, 1);
+        await buildProcess.done;
+        await stopAll();
+        return exitCode;
+      }
+      const buildResult = await Promise.race([
+        buildProcess.done.then((result) => ({ kind: "build", result })),
+        stopRequested.then((reason) => ({ kind: "stop", reason })),
+      ]);
+      if (buildResult.kind === "stop") {
+        await buildProcess.done;
+        await stopAll();
+        return exitCode;
+      }
+      await stopRecord(buildStarted.pid);
+      if (requestedStop) {
+        await stopAll();
+        return exitCode;
+      }
+      if (buildResult.result.code !== 0) {
+        const status = buildResult.result.code ?? 1;
+        log(`[dev] ${stepName} failed${buildResult.result.signal ? ` (${buildResult.result.signal})` : ` (exit ${status})`}.`);
+        requestStop({ kind: "build-exit" }, status || 1);
+        await stopAll();
+        return exitCode;
+      }
     }
 
     const running = [];
@@ -625,7 +655,12 @@ async function main(argv = process.argv.slice(2), shellEnv = process.env) {
     const sources = plan.options.sources;
     console.log(`[dev] Go API: ${plan.backendUrl} (listen ${plan.listen} from ${plan.listenSource}, auth ${plan.auth}, db ${plan.dbDriver})`);
     console.log(`[dev] Data: ${plan.dataPath} (from ${plan.dataSource})`);
-    console.log(`[dev] Vite: ${plan.webUrl} (host from ${sources.webHost}, port from ${sources.webPort})`);
+    console.log(`[dev] Mode: ${plan.mode} (from ${sources.mode})`);
+    if (plan.mode === "prod") {
+      console.log("[dev] Web: npm run build in web/, embedded by the Go backend (no Vite)");
+    } else {
+      console.log(`[dev] Vite: ${plan.webUrl} (host from ${sources.webHost}, port from ${sources.webPort})`);
+    }
     if (plan.publicUrl) console.log(`[dev] Public URL: ${plan.publicUrl}`);
     if (plan.options.devUrl) console.log(`[dev] Dev URL: ${plan.options.devUrl} (from ${sources.devUrl})`);
     console.log(`[dev] Allowed hosts: ${plan.env.WORKBENCH_ALLOWED_HOSTS || "(backend default)"}`);
@@ -655,34 +690,48 @@ async function main(argv = process.argv.slice(2), shellEnv = process.env) {
   try {
     temporaryDirectory = await mkdtemp(join(env.TMPDIR || "/tmp", "workbench-dev-"));
     const backendBinary = join(temporaryDirectory, "workbench");
+    const prod = plan.mode === "prod";
+    const goTagArgs = prod ? [] : ["-tags", "dev"];
+    const goTagLabel = prod ? "production build" : "-tags dev";
     if (plan.oneShot) {
-      console.log(`[dev] Compiling Go backend with -tags dev for one-shot -${plan.oneShot} command...`);
+      console.log(`[dev] Compiling Go backend with ${goTagLabel} for one-shot -${plan.oneShot} command...`);
     } else {
-      console.log("[dev] Compiling Go backend with -tags dev...");
+      if (prod) console.log("[dev] Mode: prod (npm run build in web/, then Go backend only; Vite is not started)");
+      console.log(`[dev] Compiling Go backend with ${goTagLabel}...`);
       console.log(`[dev] Go API: ${plan.backendUrl} (auth: ${plan.auth})`);
       console.log(`[dev] Data: ${plan.dataPath} (db: ${plan.dbDriver}, from ${plan.dataSource})`);
       if (plan.dataSource === "dev default") {
         console.log("[dev] Using the dev-only workspace; pass -data or WORKBENCH_DATA to open another one (native default: ~/.workbench/data.db).");
       }
-      console.log(`[dev] Vite: ${plan.webUrl}`);
+      if (!prod) console.log(`[dev] Vite: ${plan.webUrl}`);
       if (options.devUrl || plan.publicUrl) console.log(`[dev] Browser origin: ${options.devUrl || plan.publicUrl}`);
       for (const host of plan.externalHosts) {
-        console.log(`[dev] Reverse proxy for ${host} should target ${plan.webUrl} and forward WebSocket traffic.`);
+        console.log(`[dev] Reverse proxy for ${host} should target ${prod ? plan.backendUrl : plan.webUrl} and forward WebSocket traffic.`);
       }
       if (plan.auth === "password" && !plan.publicUrl && plan.externalHosts.length > 0) {
         console.log(`[dev] For HTTPS access, add -public-url https://${plan.externalHosts[0]}; -allowed-host alone does not configure the browser origin.`);
       }
-      console.log("[dev] Press Ctrl+C to stop both services and their child processes.");
+      console.log(`[dev] Press Ctrl+C to stop ${prod ? "the backend and its" : "both services and their"} child processes.`);
       console.log("[dev] Go source files are not watched; rerun this script after Go changes.");
     }
 
+    const goBuild = {
+      name: prod ? "Go build" : undefined,
+      command: env.GO_BIN || "go",
+      args: ["build", ...goTagArgs, "-o", backendBinary, "./cmd/workbench"],
+      cwd: repoRoot,
+      env: prod ? plan.env : { ...plan.env, WORKBENCH_DEV_CHART_DIR: resolve(repoRoot, "internal/modules/investment/chart") },
+    };
+    // go:embed reads internal/webui/dist at compile time, so the web build must finish first.
+    const webBuild = {
+      name: "web build (npm run build)",
+      command: env.NPM_BIN || "npm",
+      args: ["run", "build"],
+      cwd: webDir,
+      env: plan.env,
+    };
     return await supervise({
-      build: {
-        command: env.GO_BIN || "go",
-        args: ["build", "-tags", "dev", "-o", backendBinary, "./cmd/workbench"],
-        cwd: repoRoot,
-        env: { ...plan.env, WORKBENCH_DEV_CHART_DIR: resolve(repoRoot, "internal/modules/investment/chart") },
-      },
+      build: prod && !plan.oneShot ? [webBuild, goBuild] : goBuild,
       services: [
         {
           name: "Go backend",
@@ -692,7 +741,7 @@ async function main(argv = process.argv.slice(2), shellEnv = process.env) {
           env: plan.env,
           oneShot: Boolean(plan.oneShot),
         },
-        ...(plan.oneShot ? [] : [{
+        ...(plan.oneShot || prod ? [] : [{
           name: "Vite",
           command: process.execPath,
           args: [viteEntry, "--host", options.webHost, "--port", String(options.webPort), "--strictPort"],
