@@ -45,9 +45,9 @@ function pendingQuery(client, queryKey) {
 test("clearing one module cancels and removes only that module prefix", async () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const todoTasksKey = moduleQueryKey("todo", "tasks");
-  const todoWidgetKey = moduleQueryKey("todo", "widget", "todo.summary");
+  const todoWidgetKey = moduleQueryKey("todo", "widget", "todo.today");
   const notificationsKey = ["notifications", "list"];
-  const newsWidgetKey = moduleQueryKey("news", "widget", "news.summary");
+  const newsWidgetKey = moduleQueryKey("news", "widget", "news.brief");
   const todo = pendingQuery(client, todoTasksKey);
   const notifications = pendingQuery(client, notificationsKey);
   const newsWidget = pendingQuery(client, newsWidgetKey);

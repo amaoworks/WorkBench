@@ -31,6 +31,8 @@ function InvestmentContent({ viewSettings }: { viewSettings: ReturnType<typeof u
   const [searchParams, setSearchParams] = useSearchParams();
   const restoredView = useRef(false);
   const expanded = searchParams.get("view") === "terminal";
+  const requestedSymbol = searchParams.get("symbol")?.trim().toUpperCase() ?? "";
+  const symbol = /^[A-Z$/][A-Z0-9./-]{0,14}$/.test(requestedSymbol) ? requestedSymbol : undefined;
   const monitoring = !expanded && searchParams.get("tab") === "monitor";
   const terminal = useRef<HTMLElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
@@ -221,18 +223,18 @@ function InvestmentContent({ viewSettings }: { viewSettings: ReturnType<typeof u
             授权后可使用交易终端。
           </Notice>
         )}
-        {connected && <InvestmentTerminal theme={theme} />}
+        {connected && <InvestmentTerminal theme={theme} symbol={symbol} />}
       </section>
       {monitoring && <InvestmentMonitor />}
     </div>
   );
 }
 
-function InvestmentTerminal({ theme }: { theme: Theme }) {
+function InvestmentTerminal({ theme, symbol }: { theme: Theme; symbol?: string }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const client = useQueryClient();
   // Keep the chart document and its selected symbol/interval across theme changes.
-  const [src] = useState(() => `/investment/terminal?theme=${theme}`);
+  const [src] = useState(() => `/investment/terminal?theme=${theme}${symbol ? `&symbol=${encodeURIComponent(symbol)}` : ""}`);
   useEffect(() => {
     frame.current?.contentWindow?.postMessage({ type: "workbench.theme", theme }, window.location.origin);
   }, [theme]);
@@ -245,7 +247,7 @@ function InvestmentTerminal({ theme }: { theme: Theme }) {
       )
         return;
       void client.invalidateQueries({ queryKey: moduleQueryKey("investment", "schwab") });
-      void client.invalidateQueries({ queryKey: moduleQueryKey("investment", "widget", "investment.overview") });
+      void client.invalidateQueries({ queryKey: moduleQueryKey("investment", "widget") });
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);

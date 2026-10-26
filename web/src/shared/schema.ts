@@ -46,7 +46,10 @@ export type ExternalModule = z.infer<typeof externalModuleSchema>;
 
 export const widgetSchema = z.object({
   id: z.string(), module: z.string(), schemaVersion: z.literal(1), title: z.string(), widgetKind: z.string(),
-  dataRoute: z.string(), size: z.enum(["small", "medium", "large"]), order: z.number()
+  dataRoute: z.string(), size: z.enum(["small", "medium", "large"]), order: z.number(),
+  // Present only on GET /api/dashboard?include=data: the widget's data route response, embedded so the
+  // overview renders from one request. Each widget validates it with its own schema.
+  data: z.unknown().optional()
 });
 export const dashboardSchema = z.object({ widgets: z.array(widgetSchema) });
 export type Widget = z.infer<typeof widgetSchema>;

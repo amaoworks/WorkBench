@@ -36,3 +36,17 @@ WHERE completed_at IS NULL AND due_at IS NOT NULL AND due_at <= sqlc.arg(scan_be
   AND (CAST(sqlc.arg(has_cursor) AS BIGINT) = 0 OR
     (due_at, id) > (CAST(sqlc.arg(cursor_due) AS BIGINT), CAST(sqlc.arg(cursor_id) AS TEXT)))
 ORDER BY due_at, id LIMIT 100;
+
+-- name: ListAgendaTasks :many
+SELECT id, title, description, due_at, completed_at, created_at, updated_at
+FROM todo_tasks
+WHERE completed_at IS NULL AND due_at IS NOT NULL AND due_at < CAST(sqlc.arg(due_before) AS BIGINT)
+ORDER BY due_at, id
+LIMIT sqlc.arg(row_limit);
+
+-- name: CountAgendaTasks :one
+SELECT
+    CAST(COUNT(*) AS BIGINT) AS total,
+    CAST(COALESCE(SUM(CASE WHEN due_at < CAST(sqlc.arg(now_ms) AS BIGINT) THEN 1 ELSE 0 END), 0) AS BIGINT) AS overdue
+FROM todo_tasks
+WHERE completed_at IS NULL AND due_at IS NOT NULL AND due_at < CAST(sqlc.arg(due_before) AS BIGINT);

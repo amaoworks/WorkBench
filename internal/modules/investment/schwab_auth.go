@@ -53,7 +53,7 @@ func (m *Module) refreshAccessTokenLocked(ctx context.Context) error {
 		if errors.Is(err, errSchwabReauthorizationRequired) {
 			rec.ReauthorizationRequired = true
 			rec.AccessToken, rec.RefreshToken, rec.StreamerInfo = "", "", ""
-			rec.TokenExpiresAt = time.Time{}
+			rec.TokenExpiresAt, rec.AuthorizedAt = time.Time{}, time.Time{}
 		}
 		if storeErr := m.storeSchwab(ctx, rec); storeErr != nil {
 			return storeErr

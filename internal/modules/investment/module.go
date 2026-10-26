@@ -65,6 +65,7 @@ type Module struct {
 	scanMu         sync.Mutex
 	marketLocation *time.Location
 	marketHours    marketHoursCache // guarded by scanMu
+	overview       overviewState
 }
 
 func New(deps Dependencies) (*Module, error) {
@@ -165,8 +166,15 @@ func (m *Module) Register(r contracts.ModuleRegistrar) error {
 		r.Handle("GET", "/api/modules/investment/futu/kline", http.HandlerFunc(m.getFutuKline)),
 		r.Handle("GET", "/api/modules/investment/futu/quote/ws", http.HandlerFunc(m.serveFutuStream)),
 		r.Handle("POST", "/api/modules/investment/futu/quote/ws/command", http.HandlerFunc(m.futuCommand)),
-		r.Widget(contracts.WidgetDefinition{ID: "investment.overview", Module: "investment", SchemaVersion: 1,
-			Title: "投资", WidgetKind: "investment.overview", DataRoute: "/api/modules/investment/schwab", Size: contracts.WidgetMedium, Order: 20}),
+		r.Handle("GET", "/api/modules/investment/overview/snapshot", http.HandlerFunc(m.getOverviewSnapshot)),
+		r.Handle("GET", "/api/modules/investment/overview/quotes", http.HandlerFunc(m.getOverviewQuotes)),
+		r.Handle("GET", "/api/modules/investment/overview/alerts", http.HandlerFunc(m.getOverviewAlerts)),
+		r.Widget(contracts.WidgetDefinition{ID: "investment.snapshot", Module: "investment", SchemaVersion: 1,
+			Title: "资产快照", WidgetKind: "investment.snapshot", DataRoute: "/api/modules/investment/overview/snapshot", Size: contracts.WidgetLarge, Order: 10}),
+		r.Widget(contracts.WidgetDefinition{ID: "investment.quotes", Module: "investment", SchemaVersion: 1,
+			Title: "持仓与自选行情", WidgetKind: "investment.quotes", DataRoute: "/api/modules/investment/overview/quotes", Size: contracts.WidgetLarge, Order: 30}),
+		r.Widget(contracts.WidgetDefinition{ID: "investment.alerts", Module: "investment", SchemaVersion: 1,
+			Title: "提醒与异动", WidgetKind: "investment.alerts", DataRoute: "/api/modules/investment/overview/alerts", Size: contracts.WidgetMedium, Order: 40}),
 		r.Job(contracts.JobDefinition{ID: "investment.schwab_refresh", Module: "investment", Schedule: contracts.ScheduleSpec{Kind: contracts.ScheduleInterval, Interval: 20 * time.Minute},
 			TimeZone: "UTC", Timeout: 30 * time.Second, OverlapPolicy: contracts.OverlapSkip, MisfirePolicy: contracts.MisfireRunOnce,
 			Retry: contracts.RetryPolicy{MaxAttempts: 3, InitialWait: time.Second, MaxWait: time.Minute}, Handler: func(ctx context.Context, _ contracts.JobRun) error {

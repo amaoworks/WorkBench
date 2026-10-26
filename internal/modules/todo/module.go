@@ -62,9 +62,10 @@ func (m *Module) Register(r contracts.ModuleRegistrar) error {
 		r.Handle(http.MethodPatch, "/api/modules/todo/tasks/{id}", http.HandlerFunc(m.updateTask)),
 		r.Handle(http.MethodDelete, "/api/modules/todo/tasks/{id}", http.HandlerFunc(m.deleteTask)),
 		r.Handle(http.MethodGet, "/api/modules/todo/widget/summary", http.HandlerFunc(m.summary)),
+		r.Handle(http.MethodGet, "/api/modules/todo/widget/today", http.HandlerFunc(m.agendaHTTP)),
 		r.Widget(contracts.WidgetDefinition{
-			ID: "todo.summary", Module: "todo", SchemaVersion: 1, Title: "待办概览", WidgetKind: "todo.summary",
-			DataRoute: "/api/modules/todo/widget/summary", Size: contracts.WidgetSmall, Order: 10,
+			ID: "todo.today", Module: "todo", SchemaVersion: 1, Title: "今天要处理", WidgetKind: "todo.today",
+			DataRoute: "/api/modules/todo/widget/today", Size: contracts.WidgetMedium, Order: 20,
 		}),
 		r.Job(contracts.JobDefinition{
 			ID: "todo.scan_due", Module: "todo",

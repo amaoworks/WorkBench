@@ -64,3 +64,37 @@ export const investmentPreferenceSavedSchema = z.object({
   sequence: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
 });
 export type InvestmentView = z.infer<typeof investmentViewSchema>;
+
+// Overview cards (GET /api/modules/investment/overview/*).
+const overviewStatus = z.enum(["ok", "disconnected", "reauth", "error"]);
+export const overviewSessionSchema = z.enum(["pre", "regular", "post", "overnight", "closed"]);
+export type OverviewSession = z.infer<typeof overviewSessionSchema>;
+export const overviewSnapshotSchema = z.object({
+  status: overviewStatus, message: z.string().optional(), stale: z.boolean().optional(),
+  netWorth: z.number(), dayPnl: z.number(), dayPnlPct: z.number(), cash: z.number(), buyingPower: z.number(), invested: z.number(),
+  accounts: z.number(), positions: z.number(),
+  movers: z.array(z.object({ symbol: z.string(), description: z.string(), marketValue: z.number(), dayPnl: z.number(), dayPnlPct: z.number() })),
+  symbols: z.array(z.string()), updatedAt: z.string().optional()
+});
+export type OverviewSnapshot = z.infer<typeof overviewSnapshotSchema>;
+export const overviewQuotesSchema = z.object({
+  status: overviewStatus, message: z.string().optional(), session: overviewSessionSchema,
+  items: z.array(z.object({
+    symbol: z.string(), description: z.string(), price: z.number(), changePct: z.number(), session: overviewSessionSchema,
+    extChangePct: z.number().optional(), held: z.boolean(), watched: z.boolean(), spark: z.array(z.number()).optional()
+  })),
+  updatedAt: z.string().optional()
+});
+export type OverviewQuotes = z.infer<typeof overviewQuotesSchema>;
+export const overviewAlertsSchema = z.object({
+  schwab: z.object({
+    status: z.enum(["connected", "reauth", "disconnected", "unconfigured"]), lastError: z.string().optional(),
+    tokenExpiresAt: z.string().optional(), refreshExpiresAt: z.string().optional()
+  }),
+  futu: z.object({ enabled: z.boolean(), serviceState: z.string().optional(), connected: z.boolean(), qotLogined: z.boolean(), lastError: z.string().optional() }),
+  triggers: z.array(z.object({
+    id: z.string(), symbol: z.string(), direction: z.enum(["up", "down"]), thresholdPercent: z.number(),
+    price: z.number(), changePercent: z.number(), triggeredAt: z.string()
+  }))
+});
+export type OverviewAlerts = z.infer<typeof overviewAlertsSchema>;

@@ -13,8 +13,19 @@ async function csrf() {
     return csrfToken;
 }
 
+// Reads (K-lines, snapshots) must not hang a chart forever when OpenD stalls; writes keep the caller's lifetime.
+const READ_TIMEOUT_MS = 30_000;
+
+function readSignal(signal) {
+    if (typeof AbortSignal.timeout !== "function") return signal;
+    const timeout = AbortSignal.timeout(READ_TIMEOUT_MS);
+    if (!signal) return timeout;
+    return typeof AbortSignal.any === "function" ? AbortSignal.any([signal, timeout]) : signal;
+}
+
 export async function futuFetch(path = "", init = {}) {
     const method = (init.method ?? "GET").toUpperCase();
+    if (method === "GET") init = { ...init, signal: readSignal(init.signal) };
     const headers = new Headers(init.headers);
     if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
         headers.set("X-CSRF-Token", await csrf());

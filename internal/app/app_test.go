@@ -100,7 +100,7 @@ func TestTodoHTTPVerticalSliceAndModuleGate(t *testing.T) {
 		t.Fatalf("disabled module status = %d, body = %s", blocked.Code, blocked.Body.String())
 	}
 	dashboard := request(t, application.Handler(), http.MethodGet, "/api/dashboard", nil, "", cookies)
-	if dashboard.Code != http.StatusOK || bytes.Contains(dashboard.Body.Bytes(), []byte("todo.summary")) {
+	if dashboard.Code != http.StatusOK || bytes.Contains(dashboard.Body.Bytes(), []byte("todo.today")) {
 		t.Fatalf("disabled module remained on dashboard: status = %d, body = %s", dashboard.Code, dashboard.Body.String())
 	}
 	reenabled := request(t, application.Handler(), http.MethodPut, "/api/modules/todo/enabled", []byte(`{"enabled":true}`), token, cookies)

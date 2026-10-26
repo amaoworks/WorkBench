@@ -263,6 +263,17 @@ func (c *opendClient) historyQuota(ctx context.Context) (remain int, usedCodes m
 	return remain, usedCodes, nil
 }
 
+func historyKLList(raw any) ([]any, error) {
+	if raw == nil {
+		return []any{}, nil
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		return nil, errors.New("Futu 历史 K 线分页格式无效")
+	}
+	return list, nil
+}
+
 func (c *opendClient) requestHistoryKL(ctx context.Context, code string, klType int, begin, end string) ([]futuBar, error) {
 	var (
 		all      []futuBar
@@ -285,9 +296,10 @@ func (c *opendClient) requestHistoryKL(ctx context.Context, code string, klType 
 		if err != nil {
 			return nil, err
 		}
-		list, ok := s2c["klList"].([]any)
-		if !ok {
-			return nil, errors.New("Futu 历史 K 线分页格式无效")
+		// OpenD omits klList when a successful range has no trades.
+		list, err := historyKLList(s2c["klList"])
+		if err != nil {
+			return nil, err
 		}
 		all = append(all, parseKLList(list)...)
 		next, ok := s2c["nextReqKey"]

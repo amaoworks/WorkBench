@@ -18,8 +18,9 @@ const schemas = {
   aiStatus: shared.aiStatusSchema, error: shared.apiErrorSchema, saved: shared.savedSchema,
   settings: settings.settingsSchema, appearance: settings.appearanceSchema, logging: settings.loggingSettingsSchema,
   backup: settings.backupSchema, task: todo.taskSchema, tasks: todo.tasksResponseSchema,
-  summary: todo.summarySchema, wallos: todo.wallosSettingsSchema, wallosSync: todo.wallosSyncSchema,
+  summary: todo.summarySchema, todoToday: todo.todoTodaySchema, wallos: todo.wallosSettingsSchema, wallosSync: todo.wallosSyncSchema,
   schwab: investment.schwabSettingsSchema, futu: investment.futuSettingsSchema, overnight: investment.overnightSettingsSchema,
+  investmentSnapshot: investment.overviewSnapshotSchema, investmentQuotes: investment.overviewQuotesSchema, investmentAlerts: investment.overviewAlertsSchema,
   investmentPreferences: investment.investmentViewPreferencesSchema, investmentPreferenceSaved: investment.investmentPreferenceSavedSchema,
   telegram: settings.telegramSettingsSchema, priceMonitor: investment.priceMonitorSchema, priceRule: investment.priceRuleSchema, priceHistory: investment.priceHistorySchema,
   newsSources: news.sourcesResponseSchema, newsSource: news.sourceSchema,
@@ -27,7 +28,8 @@ const schemas = {
   newsRules: news.rulesResponseSchema, newsRule: news.ruleSchema,
   newsArticles: news.articlesResponseSchema, newsArticle: news.articleSchema,
   newsSettings: news.settingsSchema, newsStats: news.statsSchema,
-  newsDigests: news.digestsResponseSchema, newsDigest: news.digestSchema
+  newsDigests: news.digestsResponseSchema, newsDigest: news.digestSchema,
+  newsBrief: news.newsBriefSchema
 };
 
 const temporary = mkdtempSync(join(tmpdir(), "workbench-contracts-"));
@@ -66,7 +68,9 @@ for (const sample of samples) {
   test(`${sample.name}: detects field type drift`, () => {
     const schema = schemas[sample.schema];
     const parsed = schema.parse(sample.body);
-    for (const path of scalarPaths(parsed)) {
+    // Embedded widget data is opaque to the dashboard schema; it is checked per widget below.
+    const opaque = (path) => sample.schema === "dashboard" && path[0] === "widgets" && path[2] === "data";
+    for (const path of scalarPaths(parsed).filter((path) => !opaque(path))) {
       const damaged = structuredClone(parsed);
       let parent = damaged;
       for (const key of path.slice(0, -1)) parent = parent[key];
@@ -93,6 +97,23 @@ for (const [name, path] of [
     assert.equal(schemas[sample.schema].safeParse(damaged).success, false);
   });
 }
+
+const widgetDataSchemas = {
+  "investment.snapshot": investment.overviewSnapshotSchema, "investment.quotes": investment.overviewQuotesSchema,
+  "investment.alerts": investment.overviewAlertsSchema, "todo.today": todo.todoTodaySchema, "news.brief": news.newsBriefSchema,
+  "notifications.summary": shared.unreadCountSchema
+};
+test("dashboard include=data embeds each widget's own contract", () => {
+  const widgets = samples.find((sample) => sample.name === "dashboard.data").body.widgets;
+  assert.ok(widgets.some((widget) => widget.data !== undefined), "no widget data embedded");
+  for (const widget of widgets) {
+    if (widget.data === undefined) continue;
+    const schema = widgetDataSchemas[widget.widgetKind];
+    assert.ok(schema, `no schema for ${widget.widgetKind}`);
+    const result = schema.safeParse(widget.data);
+    assert.equal(result.success, true, `${widget.id}: ${JSON.stringify(result.error?.issues)}`);
+  }
+});
 
 test("rejects unsupported enum and module contract versions", () => {
   const module = samples.find((sample) => sample.name === "module.enabled").body;

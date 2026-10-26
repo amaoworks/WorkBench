@@ -6,6 +6,6 @@ export default {
   id: "news",
   settings: lazy(() => import("./NewsSettings")),
   pages: { "news.list": lazy(() => import("./NewsPage")) },
-  widgets: { "news.summary": lazy(() => import("./NewsSummaryWidget")) },
+  widgets: { "news.brief": lazy(() => import("./NewsBriefWidget")) },
   icons: { newspaper: Newspaper }
 } satisfies ModuleUI;

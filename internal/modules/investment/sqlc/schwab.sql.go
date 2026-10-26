@@ -11,7 +11,7 @@ import (
 
 const getSchwab = `-- name: GetSchwab :one
 SELECT app_key, app_secret, callback_url, access_token, refresh_token, token_expires_at,
-    streamer_info, oauth_state, oauth_state_expires_at, last_error, updated_at, reauthorization_required
+    streamer_info, oauth_state, oauth_state_expires_at, last_error, updated_at, reauthorization_required, authorized_at
 FROM investment_schwab WHERE id = 1
 `
 
@@ -28,6 +28,7 @@ type GetSchwabRow struct {
 	LastError               string `json:"last_error"`
 	UpdatedAt               int64  `json:"updated_at"`
 	ReauthorizationRequired int64  `json:"reauthorization_required"`
+	AuthorizedAt            int64  `json:"authorized_at"`
 }
 
 func (q *Queries) GetSchwab(ctx context.Context) (GetSchwabRow, error) {
@@ -46,6 +47,7 @@ func (q *Queries) GetSchwab(ctx context.Context) (GetSchwabRow, error) {
 		&i.LastError,
 		&i.UpdatedAt,
 		&i.ReauthorizationRequired,
+		&i.AuthorizedAt,
 	)
 	return i, err
 }
@@ -53,8 +55,8 @@ func (q *Queries) GetSchwab(ctx context.Context) (GetSchwabRow, error) {
 const upsertSchwab = `-- name: UpsertSchwab :exec
 INSERT INTO investment_schwab(
     id, app_key, app_secret, callback_url, access_token, refresh_token, token_expires_at,
-    streamer_info, oauth_state, oauth_state_expires_at, last_error, updated_at, reauthorization_required
-) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    streamer_info, oauth_state, oauth_state_expires_at, last_error, updated_at, reauthorization_required, authorized_at
+) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     app_key = excluded.app_key,
     app_secret = excluded.app_secret,
@@ -67,7 +69,8 @@ ON CONFLICT(id) DO UPDATE SET
     oauth_state_expires_at = excluded.oauth_state_expires_at,
     last_error = excluded.last_error,
     updated_at = excluded.updated_at,
-    reauthorization_required = excluded.reauthorization_required
+    reauthorization_required = excluded.reauthorization_required,
+    authorized_at = excluded.authorized_at
 `
 
 type UpsertSchwabParams struct {
@@ -83,6 +86,7 @@ type UpsertSchwabParams struct {
 	LastError               string `json:"last_error"`
 	UpdatedAt               int64  `json:"updated_at"`
 	ReauthorizationRequired int64  `json:"reauthorization_required"`
+	AuthorizedAt            int64  `json:"authorized_at"`
 }
 
 func (q *Queries) UpsertSchwab(ctx context.Context, arg UpsertSchwabParams) error {
@@ -99,6 +103,7 @@ func (q *Queries) UpsertSchwab(ctx context.Context, arg UpsertSchwabParams) erro
 		arg.LastError,
 		arg.UpdatedAt,
 		arg.ReauthorizationRequired,
+		arg.AuthorizedAt,
 	)
 	return err
 }

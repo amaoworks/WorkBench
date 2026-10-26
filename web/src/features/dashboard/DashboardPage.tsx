@@ -1,8 +1,10 @@
-import { Component, Suspense, useState, type ComponentType, type ReactNode } from "react";
+import { Component, Suspense, useCallback, useMemo, useState, type ComponentType, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { Bell, CheckSquare2, ChartNoAxesCombined, LayoutGrid, Newspaper, Wallet } from "lucide-react";
 import { api } from "../../shared/api";
 import { dashboardSchema, widgetCatalogSchema, type ConfigurableWidget, type Widget } from "../../shared/schema";
+import { DashboardSignalsContext, WidgetHeaderSlotContext } from "../../shared/dashboard";
 import { widgetRegistry } from "../../modules/registry";
 import { Card } from "../../components/ui/Card";
 import { Button, ButtonLink } from "../../components/ui/Button";
@@ -18,18 +20,37 @@ import { Select } from "../../components/ui/Select";
 // Overview cards owned by the platform rather than a business module.
 const platformWidgets: Record<string, ComponentType<{ widget: Widget }>> = { "notifications.summary": NotificationsSummary };
 
+const widgetIcons: Record<string, ComponentType<{ size?: number }>> = {
+  "investment.snapshot": Wallet,
+  "investment.quotes": ChartNoAxesCombined,
+  "investment.alerts": Bell,
+  "notifications.summary": Bell,
+  "todo.today": CheckSquare2,
+  "news.brief": Newspaper,
+};
+
+const WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+const todayLabel = (date = new Date()) => `${date.getMonth() + 1}月${date.getDate()}日 ${WEEKDAYS[date.getDay()]}`;
+const sameSymbols = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((value, index) => value === b[index]);
+
 export default function DashboardPage() {
   const [editing, setEditing] = useState(false);
-  const dashboard = useQuery({ queryKey: ["dashboard"], queryFn: async () => dashboardSchema.parse(await api("/api/dashboard")) });
+  // One request carries every visible card's data; cards then poll their own routes.
+  const dashboard = useQuery({ queryKey: ["dashboard"], queryFn: async () => dashboardSchema.parse(await api("/api/dashboard?include=data")) });
   const catalog = useQuery({
     queryKey: ["dashboard", "catalog"],
     queryFn: async () => widgetCatalogSchema.parse(await api("/api/dashboard/widgets")),
     enabled: editing,
   });
+  const [heldSymbols, setHeld] = useState<readonly string[]>([]);
+  const setHeldSymbols = useCallback((symbols: readonly string[]) => setHeld((current) => (sameSymbols(current, symbols) ? current : [...symbols])), []);
+  const signals = useMemo(() => ({ heldSymbols, setHeldSymbols }), [heldSymbols, setHeldSymbols]);
+  const widgets = dashboard.data?.widgets ?? [];
   return (
     <div className="page">
       <PageHeader
         title="总览"
+        description={todayLabel()}
         action={
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" size="sm" onClick={() => setEditing(!editing)}>
@@ -54,7 +75,12 @@ export default function DashboardPage() {
           )}
         </Card>
       )}
-      {dashboard.isPending && <Skeleton className="h-32" />}
+      {dashboard.isPending && (
+        <div className="dashboard-grid" aria-busy="true">
+          <Skeleton className="dashboard-skeleton widget-large h-48" />
+          <Skeleton className="dashboard-skeleton widget-medium h-48" />
+        </div>
+      )}
       {dashboard.isError && (
         <Notice tone="danger" title="总览加载失败">
           {dashboard.error.message}
@@ -65,28 +91,58 @@ export default function DashboardPage() {
           <EmptyState title="暂无卡片" description="可在配置总览中选择卡片，或前往设置启用业务。" />
         </Card>
       )}
-      <div className="dashboard-grid">
-        {dashboard.data?.widgets.map((widget) => {
-          const Renderer = platformWidgets[widget.widgetKind] ?? widgetRegistry[widget.widgetKind];
-          return (
-            <section key={widget.id} className={`dashboard-widget widget-${widget.size}`} aria-label={widget.title}>
-              <h2 className="mb-3 font-medium">{widget.title}</h2>
-              <WidgetBoundary title={widget.title}>
-                <Suspense fallback={<Skeleton className="h-32" />}>
-                  {Renderer ? (
-                    <Renderer widget={widget} />
-                  ) : (
-                    <Notice tone="warning" title="组件不可用">
-                      {widget.widgetKind}
-                    </Notice>
-                  )}
-                </Suspense>
-              </WidgetBoundary>
-            </section>
-          );
-        })}
-      </div>
+      <DashboardSignalsContext.Provider value={signals}>
+        <div className="dashboard-grid">
+          {widgets.map((widget) => (
+            <DashboardCard key={widget.id} widget={widget} />
+          ))}
+        </div>
+        {widgets.length > 0 && (
+          <Card className="dashboard-all-empty">
+            <EmptyState title="暂时没有需要关注的内容" description="连接券商、添加待办或订阅源后，相关卡片会自动出现。" />
+          </Card>
+        )}
+      </DashboardSignalsContext.Provider>
+      {widgets.length > 0 && (
+        <p className="dashboard-hint">
+          <LayoutGrid size={13} />
+          空卡片默认隐藏；在「配置总览」中可调整顺序与大小。
+        </p>
+      )}
     </div>
+  );
+}
+
+function DashboardCard({ widget }: { widget: Widget }) {
+  const [slot, setSlot] = useState<HTMLDivElement | null>(null);
+  const Renderer = platformWidgets[widget.widgetKind] ?? widgetRegistry[widget.widgetKind];
+  const Icon = widgetIcons[widget.widgetKind];
+  return (
+    <section className={`dashboard-widget widget-${widget.size}`} aria-label={widget.title}>
+      <header className="dashboard-widget-head">
+        <h2>
+          {Icon && <Icon size={16} />}
+          {widget.title}
+        </h2>
+        <div className="dashboard-widget-meta" ref={setSlot} />
+      </header>
+      {/* Renderers return null when they have nothing to show; CSS then hides the whole card. */}
+      <div className="widget-body">
+        <WidgetHeaderSlotContext.Provider value={slot}>
+          <WidgetBoundary title={widget.title}>
+            <Suspense fallback={<Skeleton className="h-32" />}>
+              {Renderer ? (
+                <Renderer widget={widget} />
+              ) : (
+                <Notice tone="warning" title="组件不可用">
+                  {widget.widgetKind}
+                </Notice>
+              )}
+            </Suspense>
+          </WidgetBoundary>
+        </WidgetHeaderSlotContext.Provider>
+      </div>
+    </section>
   );
 }
 

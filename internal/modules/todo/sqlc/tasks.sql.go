@@ -10,6 +10,31 @@ import (
 	"database/sql"
 )
 
+const countAgendaTasks = `-- name: CountAgendaTasks :one
+SELECT
+    CAST(COUNT(*) AS BIGINT) AS total,
+    CAST(COALESCE(SUM(CASE WHEN due_at < CAST(?1 AS BIGINT) THEN 1 ELSE 0 END), 0) AS BIGINT) AS overdue
+FROM todo_tasks
+WHERE completed_at IS NULL AND due_at IS NOT NULL AND due_at < CAST(?2 AS BIGINT)
+`
+
+type CountAgendaTasksParams struct {
+	NowMs     int64 `json:"now_ms"`
+	DueBefore int64 `json:"due_before"`
+}
+
+type CountAgendaTasksRow struct {
+	Total   int64 `json:"total"`
+	Overdue int64 `json:"overdue"`
+}
+
+func (q *Queries) CountAgendaTasks(ctx context.Context, arg CountAgendaTasksParams) (CountAgendaTasksRow, error) {
+	row := q.db.QueryRowContext(ctx, countAgendaTasks, arg.NowMs, arg.DueBefore)
+	var i CountAgendaTasksRow
+	err := row.Scan(&i.Total, &i.Overdue)
+	return i, err
+}
+
 const createTask = `-- name: CreateTask :exec
 INSERT INTO todo_tasks(id, title, description, due_at, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?)
@@ -66,6 +91,50 @@ func (q *Queries) GetTask(ctx context.Context, id string) (TodoTask, error) {
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const listAgendaTasks = `-- name: ListAgendaTasks :many
+SELECT id, title, description, due_at, completed_at, created_at, updated_at
+FROM todo_tasks
+WHERE completed_at IS NULL AND due_at IS NOT NULL AND due_at < CAST(?1 AS BIGINT)
+ORDER BY due_at, id
+LIMIT ?2
+`
+
+type ListAgendaTasksParams struct {
+	DueBefore int64 `json:"due_before"`
+	RowLimit  int64 `json:"row_limit"`
+}
+
+func (q *Queries) ListAgendaTasks(ctx context.Context, arg ListAgendaTasksParams) ([]TodoTask, error) {
+	rows, err := q.db.QueryContext(ctx, listAgendaTasks, arg.DueBefore, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TodoTask{}
+	for rows.Next() {
+		var i TodoTask
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Description,
+			&i.DueAt,
+			&i.CompletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listDueTasks = `-- name: ListDueTasks :many

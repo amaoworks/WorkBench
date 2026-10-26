@@ -2,7 +2,8 @@ import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-quer
 import { api, apiValidated } from "../../shared/api";
 import { savedSchema, type Widget } from "../../shared/schema";
 import { moduleQueryKey } from "../../shared/queryKeys";
-import { summarySchema, tasksResponseSchema, wallosSettingsSchema, wallosSyncSchema, taskSchema, type WallosSettingsInput } from "./schema";
+import { widgetSeed } from "../../shared/dashboard";
+import { todoTodaySchema, tasksResponseSchema, wallosSettingsSchema, wallosSyncSchema, taskSchema, type WallosSettingsInput } from "./schema";
 
 const todoKey = (...parts: readonly unknown[]) => moduleQueryKey("todo", ...parts);
 
@@ -27,8 +28,16 @@ export function deleteTask(id: string) {
   return api(`/api/modules/todo/tasks/${id}`, { method: "DELETE" });
 }
 
-export function useTodoSummary(widget: Widget) {
-  return useQuery({ queryKey: todoKey("widget", widget.id), queryFn: async () => summarySchema.parse(await api(widget.dataRoute)) });
+export const browserTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+
+/** Overview card: due-today and overdue tasks plus upcoming renewals, bucketed in the browser's time zone. */
+export function useTodoToday(widget: Widget) {
+  const tz = browserTimeZone();
+  const seed = widgetSeed(widget, todoTodaySchema);
+  return useQuery({
+    queryKey: todoKey("widget", widget.id, tz), ...(seed.initialData?.timeZone === tz ? seed : {}),
+    queryFn: () => apiValidated(`${widget.dataRoute}?tz=${encodeURIComponent(tz)}`, todoTodaySchema), refetchInterval: 120_000
+  });
 }
 
 export function useWallosSettings(enabled: boolean) {

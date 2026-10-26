@@ -90,3 +90,14 @@ export const digestSchema = z.object({
 export type Digest = z.infer<typeof digestSchema>;
 export const digestsResponseSchema = z.object({ items: z.array(digestSchema), nextCursor: z.string().optional() });
 export type DigestInput = { topic: string; periodHours: number; maxItems: number; push: boolean };
+
+// Overview card (GET /api/modules/news/brief).
+const briefArticleSchema = z.object({
+  id: z.string(), title: z.string(), url: z.string(), sourceName: z.string(), summary: z.string().optional(),
+  publishedAt: z.string(), read: z.boolean(), matched: z.boolean(), symbols: z.array(z.string()).optional()
+});
+export const newsBriefSchema = z.object({
+  sources: z.number(), unread: z.number(), digest: digestSchema.optional(),
+  latest: z.array(briefArticleSchema), related: z.array(briefArticleSchema)
+});
+export type NewsBrief = z.infer<typeof newsBriefSchema>;

@@ -17,3 +17,11 @@ WHERE NOT EXISTS (SELECT 1 FROM todo_tasks WHERE id = todo_wallos_occurrences.ta
 -- name: GetWallosOccurrenceTask :one
 SELECT task_id FROM todo_wallos_occurrences
 WHERE source = ? AND subscription_id = ? AND payment_date = ?;
+
+-- name: ListUpcomingWallos :many
+SELECT o.payment_date, t.id, t.title, t.description, t.due_at
+FROM todo_wallos_occurrences o
+JOIN todo_tasks t ON t.id = o.task_id
+WHERE t.completed_at IS NULL AND o.payment_date >= CAST(sqlc.arg(from_date) AS TEXT)
+ORDER BY o.payment_date, t.id
+LIMIT sqlc.arg(row_limit);

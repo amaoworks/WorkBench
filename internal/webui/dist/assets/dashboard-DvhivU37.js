@@ -1,0 +1,1 @@
+import{et as e,rt as t}from"./Notice-CT7L2NZ-.js";var n=t(e(),1),r=(0,n.createContext)({heldSymbols:[],setHeldSymbols:()=>{}});function i(){return(0,n.useContext)(r)}var a=(0,n.createContext)(null);function o(e,t){if(e.data===void 0)return{};let n=t.safeParse(e.data);return n.success?{initialData:n.data,initialDataUpdatedAt:Date.now()}:{}}export{o as i,a as n,i as r,r as t};

@@ -21,7 +21,7 @@ import (
 func TestDashboardLayoutIndependentOfModuleAndSurvivesRestart(t *testing.T) {
 	a := newTestApp(t)
 	token, cookies := csrf(t, a.Handler())
-	layout := []byte(`{"items":[{"id":"todo.summary","visible":false,"size":"large","order":1},{"id":"investment.overview","visible":true,"size":"small","order":0},{"id":"news.summary","visible":false,"size":"medium","order":2},{"id":"notifications.summary","visible":false,"size":"small","order":3}]}`)
+	layout := []byte(`{"items":[{"id":"todo.today","visible":false,"size":"large","order":1},{"id":"investment.snapshot","visible":true,"size":"small","order":0},{"id":"news.brief","visible":false,"size":"medium","order":2},{"id":"notifications.summary","visible":false,"size":"small","order":3},{"id":"investment.quotes","visible":true,"size":"large","order":4},{"id":"investment.alerts","visible":true,"size":"medium","order":5}]}`)
 	if got := request(t, a.Handler(), "PUT", "/api/dashboard/layout", layout, "", nil); got.Code != 400 {
 		t.Fatalf("missing CSRF: %d", got.Code)
 	}
@@ -30,17 +30,17 @@ func TestDashboardLayoutIndependentOfModuleAndSurvivesRestart(t *testing.T) {
 	}
 	for _, invalid := range []string{
 		`{"items":[]}`,
-		`{"items":[{"id":"todo.summary","visible":true,"size":"huge","order":0},{"id":"investment.overview","visible":true,"size":"small","order":1}]}`,
-		`{"items":[{"id":"todo.summary","visible":true,"size":"small","order":0},{"id":"todo.summary","visible":true,"size":"small","order":1}]}`,
-		`{"items":[{"id":"unknown.card","visible":true,"size":"small","order":0},{"id":"investment.overview","visible":true,"size":"small","order":1}]}`,
-		`{"items":[{"id":"todo.summary","size":"small","order":0},{"id":"investment.overview","visible":true,"size":"small","order":1}]}`,
+		`{"items":[{"id":"todo.today","visible":true,"size":"huge","order":0},{"id":"investment.snapshot","visible":true,"size":"small","order":1}]}`,
+		`{"items":[{"id":"todo.today","visible":true,"size":"small","order":0},{"id":"todo.today","visible":true,"size":"small","order":1}]}`,
+		`{"items":[{"id":"unknown.card","visible":true,"size":"small","order":0},{"id":"investment.snapshot","visible":true,"size":"small","order":1}]}`,
+		`{"items":[{"id":"todo.today","size":"small","order":0},{"id":"investment.snapshot","visible":true,"size":"small","order":1}]}`,
 	} {
 		if got := request(t, a.Handler(), "PUT", "/api/dashboard/layout", []byte(invalid), token, cookies); got.Code != 400 {
 			t.Fatalf("invalid layout accepted: %s", invalid)
 		}
 	}
 	got := request(t, a.Handler(), "GET", "/api/dashboard", nil, "", cookies)
-	if got.Code != 200 || bytes.Contains(got.Body.Bytes(), []byte("todo.summary")) || !bytes.Contains(got.Body.Bytes(), []byte("investment.overview")) {
+	if got.Code != 200 || bytes.Contains(got.Body.Bytes(), []byte("todo.today")) || !bytes.Contains(got.Body.Bytes(), []byte("investment.snapshot")) {
 		t.Fatalf("visible cards: %s", got.Body.String())
 	}
 	if got := request(t, a.Handler(), "GET", "/api/modules/todo/tasks", nil, "", cookies); got.Code != 200 {
@@ -72,23 +72,24 @@ func TestDashboardLayoutIndependentOfModuleAndSurvivesRestart(t *testing.T) {
 	if err := json.Unmarshal(catalog.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if len(body.Widgets) != 4 || body.Widgets[0].ID != "investment.overview" || body.Widgets[0].Enabled || body.Widgets[0].Size != "small" || body.Widgets[1].Visible || body.Widgets[1].Size != "large" ||
-		body.Widgets[2].ID != "news.summary" || body.Widgets[2].Visible || body.Widgets[2].Size != "medium" ||
-		body.Widgets[3].ID != "notifications.summary" || body.Widgets[3].Visible || !body.Widgets[3].Enabled {
+	if len(body.Widgets) != 6 || body.Widgets[0].ID != "investment.snapshot" || body.Widgets[0].Enabled || body.Widgets[0].Size != "small" || body.Widgets[1].Visible || body.Widgets[1].Size != "large" ||
+		body.Widgets[2].ID != "news.brief" || body.Widgets[2].Visible || body.Widgets[2].Size != "medium" ||
+		body.Widgets[3].ID != "notifications.summary" || body.Widgets[3].Visible || !body.Widgets[3].Enabled ||
+		body.Widgets[4].ID != "investment.quotes" || body.Widgets[5].ID != "investment.alerts" || body.Widgets[5].Size != "medium" {
 		t.Fatalf("lost preferences: %+v", body)
 	}
 	if got := request(t, restarted.Handler(), "PUT", "/api/modules/investment/enabled", []byte(`{"enabled":true}`), token, cookies); got.Code != 200 {
 		t.Fatal(got.Body.String())
 	}
 	visible := request(t, restarted.Handler(), "GET", "/api/dashboard", nil, "", cookies)
-	if bytes.Contains(visible.Body.Bytes(), []byte("todo.summary")) || !bytes.Contains(visible.Body.Bytes(), []byte("investment.overview")) {
+	if bytes.Contains(visible.Body.Bytes(), []byte("todo.today")) || !bytes.Contains(visible.Body.Bytes(), []byte("investment.snapshot")) {
 		t.Fatal("reenabling lost preferences")
 	}
 	if got := request(t, restarted.Handler(), "DELETE", "/api/dashboard/layout", []byte(`{}`), token, cookies); got.Code != 200 {
 		t.Fatal(got.Body.String())
 	}
 	defaults := request(t, restarted.Handler(), "GET", "/api/dashboard", nil, "", cookies)
-	if !bytes.Contains(defaults.Body.Bytes(), []byte("todo.summary")) || !bytes.Contains(defaults.Body.Bytes(), []byte("notifications.summary")) {
+	if !bytes.Contains(defaults.Body.Bytes(), []byte("todo.today")) || !bytes.Contains(defaults.Body.Bytes(), []byte("notifications.summary")) {
 		t.Fatal("reset did not restore defaults")
 	}
 }
@@ -180,7 +181,7 @@ func TestUpgradeTodoOnlyWorkspacePreservesDataAndAddsDefaultWidget(t *testing.T)
 	if _, err := module.Create(ctx, todo.CreateTask{Title: "Old workspace task"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.SQL().Exec(`INSERT INTO workspace_settings(section,value) VALUES('dashboard','[{"id":"todo.summary","visible":false,"size":"large","order":0}]')`); err != nil {
+	if _, err := db.SQL().Exec(`INSERT INTO workspace_settings(section,value) VALUES('dashboard','[{"id":"todo.summary","visible":true,"size":"small","order":9},{"id":"todo.today","visible":false,"size":"large","order":0}]')`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -205,9 +206,11 @@ func TestUpgradeTodoOnlyWorkspacePreservesDataAndAddsDefaultWidget(t *testing.T)
 	if err := json.Unmarshal(catalog.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if len(body.Widgets) != 4 || body.Widgets[0].Visible || body.Widgets[0].Size != "large" || !body.Widgets[1].Visible || body.Widgets[1].ID != "investment.overview" ||
-		!body.Widgets[2].Visible || body.Widgets[2].ID != "news.summary" ||
-		!body.Widgets[3].Visible || !body.Widgets[3].Enabled || body.Widgets[3].ID != "notifications.summary" {
+	// Saved preferences for retired cards (todo.summary) are ignored; new cards appear with defaults.
+	if len(body.Widgets) != 6 || body.Widgets[0].ID != "todo.today" || body.Widgets[0].Visible || body.Widgets[0].Size != "large" ||
+		!body.Widgets[1].Visible || body.Widgets[1].ID != "investment.snapshot" || body.Widgets[2].ID != "investment.quotes" ||
+		body.Widgets[3].ID != "investment.alerts" || !body.Widgets[4].Visible || !body.Widgets[4].Enabled || body.Widgets[4].ID != "notifications.summary" ||
+		!body.Widgets[5].Visible || body.Widgets[5].ID != "news.brief" {
 		t.Fatalf("upgrade layout: %+v", body)
 	}
 	// Online backup must include both the new schema and the original settings.

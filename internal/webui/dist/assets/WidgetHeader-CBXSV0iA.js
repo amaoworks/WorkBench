@@ -1,0 +1,1 @@
+import{$ as e,Q as t,et as n,rt as r}from"./Notice-CT7L2NZ-.js";import{n as i}from"./dashboard-DvhivU37.js";var a=r(n(),1),o=r(e(),1),s=t();function c({children:e}){let t=(0,a.useContext)(i);return t?(0,o.createPortal)(e,t):null}function l({children:e,action:t}){return(0,s.jsxs)(`div`,{className:`widget-setup`,children:[(0,s.jsx)(`span`,{children:e}),t]})}export{l as n,c as t};

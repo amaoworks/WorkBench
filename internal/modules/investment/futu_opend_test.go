@@ -22,6 +22,7 @@ type fakeOpenD struct {
 	historyBegin   string
 	historyEnd     string
 	historyNextKey any
+	historyOmitKL  bool
 	klList         []map[string]any
 	histList       []map[string]any
 	remain         int
@@ -140,13 +141,16 @@ func (f *fakeOpenD) serve(conn net.Conn) {
 			f.historyN++
 			f.historyBegin, _ = c2s["beginTime"].(string)
 			f.historyEnd, _ = c2s["endTime"].(string)
-			failed, nextKey, history := f.historyFail, f.historyNextKey, f.histList
+			failed, nextKey, history, omitKL := f.historyFail, f.historyNextKey, f.histList, f.historyOmitKL
 			f.mu.Unlock()
 			if failed {
 				retType, retMsg = -1, "fixture history failure"
 				s2c = map[string]any{}
 			} else {
-				s2c = map[string]any{"klList": history, "security": map[string]any{"market": marketUS, "code": "AAPL"}}
+				s2c = map[string]any{"security": map[string]any{"market": marketUS, "code": "AAPL"}, "name": "AAPL"}
+				if !omitKL {
+					s2c["klList"] = history
+				}
 				if nextKey != nil {
 					s2c["nextReqKey"] = nextKey
 				}
@@ -253,6 +257,24 @@ func TestFutuHistoryRejectsRepeatedPaginationCursor(t *testing.T) {
 	fake.mu.Unlock()
 	if requests != 2 {
 		t.Fatalf("requests=%d want two pages before detecting the stuck cursor", requests)
+	}
+}
+
+func TestFutuHistoryAcceptsOmittedKLList(t *testing.T) {
+	fake := startFakeOpenD(t)
+	fake.mu.Lock()
+	fake.historyOmitKL = true
+	fake.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	client, err := dialOpend(ctx, fake.addr(), "workbench-omitted-history-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.close()
+	bars, err := client.requestHistoryKL(ctx, "AAPL", klType1Min, "2026-10-24", "2026-10-25")
+	if err != nil || len(bars) != 0 {
+		t.Fatalf("successful history without klList is an empty range: bars=%+v err=%v", bars, err)
 	}
 }
 

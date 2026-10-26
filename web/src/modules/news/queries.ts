@@ -3,11 +3,12 @@ import { api, apiValidated } from "../../shared/api";
 import { moduleQueryKey } from "../../shared/queryKeys";
 import {
   articleSchema, articlesResponseSchema, digestSchema, digestsResponseSchema, refreshAllSchema, refreshSourceSchema,
-  ruleSchema, rulesResponseSchema, settingsSchema, sourceSchema, sourcesResponseSchema, statsSchema,
+  newsBriefSchema, ruleSchema, rulesResponseSchema, settingsSchema, sourceSchema, sourcesResponseSchema, statsSchema,
   type DigestInput, type NewsSettings, type RuleInput, type SourceInput
 } from "./schema";
 
 import type { Widget } from "../../shared/schema";
+import { widgetSeed } from "../../shared/dashboard";
 
 const BASE = "/api/modules/news";
 const newsKey = (...parts: readonly unknown[]) => moduleQueryKey("news", ...parts);
@@ -86,9 +87,12 @@ export function useRefreshNews() {
   return () => client.invalidateQueries({ queryKey: newsKey() });
 }
 
-export function useNewsWidget(widget: Widget) {
-  return useQuery({ queryKey: newsKey("widget", widget.id), queryFn: () => apiValidated(widget.dataRoute, statsSchema), refetchInterval: 60_000 });
-}
-export function useLatestArticles(limit: number) {
-  return useQuery({ queryKey: newsKey("latest", limit), queryFn: () => apiValidated(`${BASE}/articles?limit=${limit}`, articlesResponseSchema), refetchInterval: 60_000 });
+/** Overview brief; held symbols (from the investment card) select holdings-related items. */
+export function useNewsBrief(widget: Widget, symbols: readonly string[]) {
+  const list = [...symbols].sort().slice(0, 20).join(",");
+  return useQuery({
+    queryKey: newsKey("widget", widget.id, list), ...(list ? {} : widgetSeed(widget, newsBriefSchema)),
+    queryFn: () => apiValidated(`${widget.dataRoute}${list ? `?symbols=${encodeURIComponent(list)}` : ""}`, newsBriefSchema),
+    placeholderData: (previous) => previous, refetchInterval: 120_000
+  });
 }

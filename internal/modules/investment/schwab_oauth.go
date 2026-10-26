@@ -82,6 +82,7 @@ func (m *Module) oauthCallback(w http.ResponseWriter, r *http.Request) {
 	rec.OAuthState, rec.OAuthStateExpiresAt = "", time.Time{}
 	rec.LastError = ""
 	rec.ReauthorizationRequired = false
+	rec.AuthorizedAt = m.now().UTC()
 	if err := m.storeSchwab(r.Context(), rec); err != nil {
 		writeHTML(w, http.StatusInternalServerError, "授权成功但无法保存令牌")
 		return

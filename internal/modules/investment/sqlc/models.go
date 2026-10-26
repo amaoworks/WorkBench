@@ -94,6 +94,7 @@ type InvestmentSchwab struct {
 	LastError               string `json:"last_error"`
 	UpdatedAt               int64  `json:"updated_at"`
 	ReauthorizationRequired int64  `json:"reauthorization_required"`
+	AuthorizedAt            int64  `json:"authorized_at"`
 }
 
 type InvestmentWatchlist struct {

@@ -293,8 +293,16 @@ func (a *App) routes(
 		protected.Put("/api/settings/appearance", a.saveAppearance)
 		protected.Put("/api/settings/logging", a.saveLoggingSettings)
 		protected.Put("/api/settings/password", a.auth.ChangePasswordHandler)
+		// widgetData serves the read-only card data routes embedded by
+		// GET /api/dashboard?include=data; it runs inside this authenticated request.
+		widgetData := chi.NewRouter()
+		widgetData.Get("/api/notifications", notificationHTTP.List)
+		widgetData.Get("/api/notifications/unread-count", notificationHTTP.UnreadCount)
 		for _, route := range a.registry.Catalog().Routes {
 			protected.Method(route.Method, route.Pattern, a.registry.Gate(route.Module, route.Handler))
+			if route.Method == http.MethodGet {
+				widgetData.Method(route.Method, route.Pattern, a.registry.Gate(route.Module, route.Handler))
+			}
 		}
 		for _, binding := range a.builtins {
 			if binding.routes == nil {
@@ -305,8 +313,12 @@ func (a *App) routes(
 					continue
 				}
 				protected.Method(route.Method, route.Pattern, a.registry.Gate(binding.id, route.Handler))
+				if route.Method == http.MethodGet {
+					widgetData.Method(route.Method, route.Pattern, a.registry.Gate(binding.id, route.Handler))
+				}
 			}
 		}
+		dashboardService.UseDataHandler(widgetData)
 	})
 	router.NotFound(ui.ServeHTTP)
 	return router

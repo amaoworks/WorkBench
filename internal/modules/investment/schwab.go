@@ -26,6 +26,8 @@ type schwabRecord struct {
 	LastError               string
 	UpdatedAt               time.Time
 	ReauthorizationRequired bool
+	// AuthorizedAt is the last interactive OAuth grant; Schwab refresh tokens expire 7 days later.
+	AuthorizedAt time.Time
 }
 
 type schwabSettingsView struct {
@@ -59,6 +61,7 @@ func (m *Module) loadSchwab(ctx context.Context) (schwabRecord, error) {
 		OAuthState: row.OauthState, OAuthStateExpiresAt: unixMilli(row.OauthStateExpiresAt),
 		LastError: row.LastError, UpdatedAt: unixMilli(row.UpdatedAt),
 		ReauthorizationRequired: row.ReauthorizationRequired != 0,
+		AuthorizedAt:            unixMilli(row.AuthorizedAt),
 	}, nil
 }
 
@@ -74,6 +77,7 @@ func (m *Module) storeSchwab(ctx context.Context, rec schwabRecord) error {
 		OauthState: rec.OAuthState, OauthStateExpiresAt: timeUnixMilli(rec.OAuthStateExpiresAt),
 		LastError: rec.LastError, UpdatedAt: m.now().UTC().UnixMilli(),
 		ReauthorizationRequired: reauthorizationRequired,
+		AuthorizedAt:            timeUnixMilli(rec.AuthorizedAt),
 	})
 }
 
@@ -200,6 +204,7 @@ func (m *Module) disconnectSchwab(w http.ResponseWriter, r *http.Request) {
 	}
 	rec.AccessToken, rec.RefreshToken, rec.StreamerInfo = "", "", ""
 	rec.TokenExpiresAt, rec.OAuthState, rec.OAuthStateExpiresAt = time.Time{}, "", time.Time{}
+	rec.AuthorizedAt = time.Time{}
 	rec.ReauthorizationRequired = false
 	rec.LastError = ""
 	if err := m.storeSchwab(r.Context(), rec); err != nil {

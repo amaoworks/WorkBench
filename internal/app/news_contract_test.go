@@ -45,6 +45,7 @@ func captureNewsContracts(t *testing.T, a *App, capture func(string, string, str
 	defer server.Close()
 	prefix := "/api/modules/news"
 	capture("news.sources.empty", "newsSources", "GET", prefix+"/sources", "", 200)
+	capture("news.brief.empty", "newsBrief", "GET", prefix+"/brief", "", 200)
 	sourceRaw := capture("news.source.created", "newsSource", "POST", prefix+"/sources", fmt.Sprintf(`{"name":"Finance","kind":"rss","url":%q,"query":"","topic":"市场","enabled":true,"intervalMinutes":30}`, server.URL), 201)
 	var src struct {
 		ID string `json:"id"`
@@ -101,6 +102,9 @@ func captureNewsContracts(t *testing.T, a *App, capture func(string, string, str
 	capture("news.digest.pushed.again", "newsDigest", "POST", prefix+"/digests/"+d.ID+"/push", "{}", 200)
 	capture("news.digests.populated", "newsDigests", "GET", prefix+"/digests", "", 200)
 	capture("news.stats", "newsStats", "GET", prefix+"/stats", "", 200)
+	capture("news.brief.populated", "newsBrief", "GET", prefix+"/brief?symbols=AAPL,NVDA", "", 200)
+	capture("news.brief.symbols", "newsBrief", "GET", prefix+"/brief?symbols=BRK%2FB,BRK-B,%24SPX,%2FES", "", 200)
+	capture("news.brief.invalid", "error", "GET", prefix+"/brief?symbols=bad%20symbol", "", 400)
 	capture("news.invalid.source", "error", "POST", prefix+"/sources", `{"name":"Bad","kind":"rss","url":"file:///tmp/data","enabled":true,"intervalMinutes":30}`, 400)
 	capture("news.invalid.cursor", "error", "GET", prefix+"/articles?cursor=bad", "", 400)
 }

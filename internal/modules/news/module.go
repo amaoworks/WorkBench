@@ -97,7 +97,7 @@ func (m *Module) Register(r contracts.ModuleRegistrar) error {
 		{"POST", "sources/{id}/refresh", m.refreshSourceHTTP}, {"POST", "refresh", m.refreshHTTP},
 		{"GET", "rules", m.listRulesHTTP}, {"POST", "rules", m.saveRuleHTTP}, {"PUT", "rules/{id}", m.saveRuleHTTP}, {"DELETE", "rules/{id}", m.deleteRuleHTTP},
 		{"GET", "articles", m.listArticlesHTTP}, {"GET", "articles/{id}", m.articleHTTP}, {"PATCH", "articles/{id}", m.updateArticleHTTP}, {"POST", "articles/{id}/analyze", m.analyzeHTTP},
-		{"GET", "settings", m.settingsHTTP}, {"PUT", "settings", m.saveSettingsHTTP}, {"GET", "stats", m.statsHTTP},
+		{"GET", "settings", m.settingsHTTP}, {"PUT", "settings", m.saveSettingsHTTP}, {"GET", "stats", m.statsHTTP}, {"GET", "brief", m.briefHTTP},
 		{"GET", "digests", m.listDigestsHTTP}, {"POST", "digests", m.createDigestHTTP}, {"POST", "digests/{id}/push", m.pushDigestHTTP},
 	}
 	for _, route := range routes {
@@ -113,8 +113,8 @@ func (m *Module) Register(r contracts.ModuleRegistrar) error {
 	}
 	// The overview card reads the existing stats route; the frontend adds the latest headlines itself.
 	if err := r.Widget(contracts.WidgetDefinition{
-		ID: "news.summary", Module: "news", SchemaVersion: 1, Title: "资讯概览", WidgetKind: "news.summary",
-		DataRoute: "/api/modules/news/stats", Size: contracts.WidgetSmall, Order: 30,
+		ID: "news.brief", Module: "news", SchemaVersion: 1, Title: "资讯简报", WidgetKind: "news.brief",
+		DataRoute: "/api/modules/news/brief", Size: contracts.WidgetLarge, Order: 50,
 	}); err != nil {
 		return err
 	}

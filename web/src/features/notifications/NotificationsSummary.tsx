@@ -1,10 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { Bell } from "lucide-react";
 import { api, apiValidated } from "../../shared/api";
 import { notificationsPageSchema, unreadCountSchema, type Widget } from "../../shared/schema";
 import { ButtonLink } from "../../components/ui/Button";
 import { StatCard } from "../../components/ui/Card";
-import { EmptyState } from "../../components/ui/EmptyState";
 import { Notice } from "../../components/ui/Notice";
 import { Skeleton } from "../../components/ui/States";
 import { cn } from "../../shared/cn";
@@ -29,7 +27,8 @@ export function NotificationsSummary({ widget }: { widget: Widget }) {
       </Notice>
     );
   const items = latest.data.items;
-  if (items.length === 0) return <EmptyState icon={<Bell size={22} />} title="暂无通知" description="业务提醒和简报推送会显示在这里。" />;
+  // Empty overview cards hide themselves.
+  if (items.length === 0) return null;
   return (
     <div className="space-y-4">
       <div className="dashboard-stats">

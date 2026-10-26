@@ -72,6 +72,57 @@ func (q *Queries) GetWallosSettings(ctx context.Context) (GetWallosSettingsRow, 
 	return i, err
 }
 
+const listUpcomingWallos = `-- name: ListUpcomingWallos :many
+SELECT o.payment_date, t.id, t.title, t.description, t.due_at
+FROM todo_wallos_occurrences o
+JOIN todo_tasks t ON t.id = o.task_id
+WHERE t.completed_at IS NULL AND o.payment_date >= CAST(?1 AS TEXT)
+ORDER BY o.payment_date, t.id
+LIMIT ?2
+`
+
+type ListUpcomingWallosParams struct {
+	FromDate string `json:"from_date"`
+	RowLimit int64  `json:"row_limit"`
+}
+
+type ListUpcomingWallosRow struct {
+	PaymentDate string        `json:"payment_date"`
+	ID          string        `json:"id"`
+	Title       string        `json:"title"`
+	Description string        `json:"description"`
+	DueAt       sql.NullInt64 `json:"due_at"`
+}
+
+func (q *Queries) ListUpcomingWallos(ctx context.Context, arg ListUpcomingWallosParams) ([]ListUpcomingWallosRow, error) {
+	rows, err := q.db.QueryContext(ctx, listUpcomingWallos, arg.FromDate, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUpcomingWallosRow{}
+	for rows.Next() {
+		var i ListUpcomingWallosRow
+		if err := rows.Scan(
+			&i.PaymentDate,
+			&i.ID,
+			&i.Title,
+			&i.Description,
+			&i.DueAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const saveWallosSettings = `-- name: SaveWallosSettings :exec
 INSERT INTO todo_wallos_settings(id, config) VALUES (1, ?)
 ON CONFLICT(id) DO UPDATE SET config = excluded.config, last_sync = NULL, last_error = ''

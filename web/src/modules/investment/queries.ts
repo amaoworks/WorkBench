@@ -3,7 +3,8 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { api, apiValidated } from "../../shared/api";
 import type { Widget } from "../../shared/schema";
 import { moduleQueryKey } from "../../shared/queryKeys";
-import { futuSettingsSchema, overnightSettingsSchema, schwabSettingsSchema, priceMonitorSchema, priceHistorySchema, priceRuleSchema, investmentViewPreferencesSchema, investmentPreferenceSavedSchema, type InvestmentView, type PriceRuleInput, type FutuSettingsInput, type SchwabSettingsInput } from "./schema";
+import { widgetSeed } from "../../shared/dashboard";
+import { overviewAlertsSchema, overviewQuotesSchema, overviewSnapshotSchema, futuSettingsSchema, overnightSettingsSchema, schwabSettingsSchema, priceMonitorSchema, priceHistorySchema, priceRuleSchema, investmentViewPreferencesSchema, investmentPreferenceSavedSchema, type InvestmentView, type PriceRuleInput, type FutuSettingsInput, type SchwabSettingsInput } from "./schema";
 
 const PREFERENCES = "/api/modules/investment/preferences";
 const investmentKey = (...parts: readonly unknown[]) => moduleQueryKey("investment", ...parts);
@@ -48,8 +49,18 @@ export function deletePriceRule(id: string) {
   return api(`${MONITOR}/rules/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
-export function useInvestmentWidget(widget: Widget) {
-  return useQuery({ queryKey: investmentKey("widget", widget.id), queryFn: async () => schwabSettingsSchema.parse(await api(widget.dataRoute)), refetchInterval: 30_000 });
+// Overview cards. Seeded from /api/dashboard?include=data, then polled on their own routes.
+export function useOverviewSnapshot(widget: Widget) {
+  return useQuery({ queryKey: investmentKey("widget", widget.id), ...widgetSeed(widget, overviewSnapshotSchema),
+    queryFn: () => apiValidated(widget.dataRoute, overviewSnapshotSchema), refetchInterval: 60_000 });
+}
+export function useOverviewQuotes(widget: Widget) {
+  return useQuery({ queryKey: investmentKey("widget", widget.id), ...widgetSeed(widget, overviewQuotesSchema),
+    queryFn: () => apiValidated(widget.dataRoute, overviewQuotesSchema), refetchInterval: 30_000 });
+}
+export function useOverviewAlerts(widget: Widget) {
+  return useQuery({ queryKey: investmentKey("widget", widget.id), ...widgetSeed(widget, overviewAlertsSchema),
+    queryFn: () => apiValidated(widget.dataRoute, overviewAlertsSchema), refetchInterval: 60_000 });
 }
 
 export function useSchwabSettings(enabled: boolean) {

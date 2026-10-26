@@ -68,11 +68,17 @@ func TestFrontendContracts(t *testing.T) {
 	capture("task.second", "task", "POST", "/api/modules/todo/tasks", `{"title":"Second task","dueAt":null}`, 201)
 	capture("tasks.paginated", "tasks", "GET", "/api/modules/todo/tasks?limit=1", "", 200)
 	capture("todo.summary", "summary", "GET", "/api/modules/todo/widget/summary", "", 200)
+	if _, err := a.DB().Exec(`UPDATE todo_tasks SET due_at=?, completed_at=NULL WHERE id=?`, time.Now().Add(-time.Hour).UnixMilli(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	capture("todo.today", "todoToday", "GET", "/api/modules/todo/widget/today?tz=Asia/Shanghai", "", 200)
 	capture("wallos", "wallos", "GET", "/api/modules/todo/wallos", "", 200)
 	capture("wallos.saved", "saved", "PUT", "/api/modules/todo/wallos", `{"enabled":false,"baseUrl":"","apiKey":"","daysBefore":3,"reminderHour":9,"timeZone":"UTC"}`, 200)
 	capture("wallos.sync", "wallosSync", "POST", "/api/modules/todo/wallos/sync", `{}`, 200)
 	capture("schwab", "schwab", "GET", "/api/modules/investment/schwab", "", 200)
 	capture("schwab.saved", "schwab", "PUT", "/api/modules/investment/schwab", `{"appKey":"fixture","appSecret":"fixture-secret","callbackUrl":"https://127.0.0.1:8080/oauth/schwab"}`, 200)
+	capture("overview.snapshot.disconnected", "investmentSnapshot", "GET", "/api/modules/investment/overview/snapshot", "", 200)
+	capture("overview.quotes.disconnected", "investmentQuotes", "GET", "/api/modules/investment/overview/quotes", "", 200)
 	capture("futu", "futu", "GET", "/api/modules/investment/futu", "", 200)
 	capture("futu.saved", "futu", "PUT", "/api/modules/investment/futu", `{"enabled":false,"account":"","password":"","clearPassword":true}`, 200)
 	capture("overnight", "overnight", "GET", "/api/modules/investment/overnight", "", 200)
@@ -100,6 +106,10 @@ func TestFrontendContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	capture("monitor.history.populated", "priceHistory", "GET", "/api/modules/investment/monitor/history", "", 200)
+	if _, err := a.DB().Exec(`UPDATE investment_price_triggers SET triggered_at=? WHERE id='trigger'`, time.Now().Add(-time.Hour).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	capture("overview.alerts", "investmentAlerts", "GET", "/api/modules/investment/overview/alerts", "", 200)
 	capture("notifications.empty", "notifications", "GET", "/api/notifications", "", 200)
 	service, err := notifications.NewService(a.DB(), events.NewStore(a.DB()))
 	if err != nil {
@@ -119,6 +129,7 @@ func TestFrontendContracts(t *testing.T) {
 	}
 	capture("notifications.read", "notifications", "GET", "/api/notifications", "", 200)
 	capture("notifications.count", "unreadCount", "GET", "/api/notifications/unread-count", "", 200)
+	capture("dashboard.data", "dashboard", "GET", "/api/dashboard?include=data", "", 200)
 	captureNewsContracts(t, a, capture)
 	capture("module.disabled", "module", "PUT", "/api/modules/todo/enabled", `{"enabled":false}`, 200)
 	capture("module.status", "module", "GET", "/api/modules/todo/status", "", 200)
