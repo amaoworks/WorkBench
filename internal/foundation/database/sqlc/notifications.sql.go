@@ -23,6 +23,25 @@ func (q *Queries) CountUnreadNotifications(ctx context.Context, expiresAt sql.Nu
 	return count, err
 }
 
+const countUnreadNotificationsBySource = `-- name: CountUnreadNotificationsBySource :one
+SELECT COUNT(*) FROM notifications
+WHERE read_at IS NULL AND archived_at IS NULL
+  AND (expires_at IS NULL OR expires_at > ?1)
+  AND (?2 = '' OR source_module = ?2)
+`
+
+type CountUnreadNotificationsBySourceParams struct {
+	ExpiresAt    sql.NullInt64 `json:"expires_at"`
+	SourceModule interface{}   `json:"source_module"`
+}
+
+func (q *Queries) CountUnreadNotificationsBySource(ctx context.Context, arg CountUnreadNotificationsBySourceParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countUnreadNotificationsBySource, arg.ExpiresAt, arg.SourceModule)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteExpiredSessionsForMaintenance = `-- name: DeleteExpiredSessionsForMaintenance :exec
 DELETE FROM sessions WHERE expiry <= ?
 `
@@ -40,6 +59,54 @@ WHERE created_at < ? AND (read_at IS NOT NULL OR archived_at IS NOT NULL)
 func (q *Queries) DeleteOldHandledNotifications(ctx context.Context, createdAt int64) error {
 	_, err := q.db.ExecContext(ctx, deleteOldHandledNotifications, createdAt)
 	return err
+}
+
+const getNotificationByID = `-- name: GetNotificationByID :one
+SELECT id, source_module, external, severity, title, content,
+       COALESCE(action_label, '') AS action_label,
+       COALESCE(action_route, '') AS action_route,
+       idempotency_key, COALESCE(source_event_id, '') AS source_event_id,
+       created_at, read_at, archived_at, expires_at
+FROM notifications WHERE id = ?
+`
+
+type GetNotificationByIDRow struct {
+	ID             string        `json:"id"`
+	SourceModule   string        `json:"source_module"`
+	External       int64         `json:"external"`
+	Severity       string        `json:"severity"`
+	Title          string        `json:"title"`
+	Content        string        `json:"content"`
+	ActionLabel    string        `json:"action_label"`
+	ActionRoute    string        `json:"action_route"`
+	IdempotencyKey string        `json:"idempotency_key"`
+	SourceEventID  string        `json:"source_event_id"`
+	CreatedAt      int64         `json:"created_at"`
+	ReadAt         sql.NullInt64 `json:"read_at"`
+	ArchivedAt     sql.NullInt64 `json:"archived_at"`
+	ExpiresAt      sql.NullInt64 `json:"expires_at"`
+}
+
+func (q *Queries) GetNotificationByID(ctx context.Context, id string) (GetNotificationByIDRow, error) {
+	row := q.db.QueryRowContext(ctx, getNotificationByID, id)
+	var i GetNotificationByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.SourceModule,
+		&i.External,
+		&i.Severity,
+		&i.Title,
+		&i.Content,
+		&i.ActionLabel,
+		&i.ActionRoute,
+		&i.IdempotencyKey,
+		&i.SourceEventID,
+		&i.CreatedAt,
+		&i.ReadAt,
+		&i.ArchivedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
 }
 
 const getNotificationByIdempotencyKey = `-- name: GetNotificationByIdempotencyKey :one
@@ -137,6 +204,91 @@ func (q *Queries) InsertNotification(ctx context.Context, arg InsertNotification
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const listNotifications = `-- name: ListNotifications :many
+SELECT id, source_module, external, severity, title, content,
+       COALESCE(action_label, '') AS action_label,
+       COALESCE(action_route, '') AS action_route,
+       idempotency_key, COALESCE(source_event_id, '') AS source_event_id,
+       created_at, read_at, archived_at, expires_at
+FROM notifications
+WHERE archived_at IS NULL
+  AND (created_at < ?1
+       OR (created_at = ?1 AND id < ?2))
+  AND (?3 = 0 OR read_at IS NULL)
+  AND (?4 = '' OR source_module = ?4)
+ORDER BY created_at DESC, id DESC
+LIMIT ?5
+`
+
+type ListNotificationsParams struct {
+	CursorCreatedAt int64       `json:"cursor_created_at"`
+	CursorID        string      `json:"cursor_id"`
+	UnreadOnly      interface{} `json:"unread_only"`
+	SourceModule    interface{} `json:"source_module"`
+	PageSize        int64       `json:"page_size"`
+}
+
+type ListNotificationsRow struct {
+	ID             string        `json:"id"`
+	SourceModule   string        `json:"source_module"`
+	External       int64         `json:"external"`
+	Severity       string        `json:"severity"`
+	Title          string        `json:"title"`
+	Content        string        `json:"content"`
+	ActionLabel    string        `json:"action_label"`
+	ActionRoute    string        `json:"action_route"`
+	IdempotencyKey string        `json:"idempotency_key"`
+	SourceEventID  string        `json:"source_event_id"`
+	CreatedAt      int64         `json:"created_at"`
+	ReadAt         sql.NullInt64 `json:"read_at"`
+	ArchivedAt     sql.NullInt64 `json:"archived_at"`
+	ExpiresAt      sql.NullInt64 `json:"expires_at"`
+}
+
+func (q *Queries) ListNotifications(ctx context.Context, arg ListNotificationsParams) ([]ListNotificationsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listNotifications,
+		arg.CursorCreatedAt,
+		arg.CursorID,
+		arg.UnreadOnly,
+		arg.SourceModule,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListNotificationsRow{}
+	for rows.Next() {
+		var i ListNotificationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SourceModule,
+			&i.External,
+			&i.Severity,
+			&i.Title,
+			&i.Content,
+			&i.ActionLabel,
+			&i.ActionRoute,
+			&i.IdempotencyKey,
+			&i.SourceEventID,
+			&i.CreatedAt,
+			&i.ReadAt,
+			&i.ArchivedAt,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const markAllNotificationsRead = `-- name: MarkAllNotificationsRead :exec

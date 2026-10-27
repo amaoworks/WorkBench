@@ -46,9 +46,10 @@ type Notification struct {
 }
 
 type NotificationQuery struct {
-	UnreadOnly bool
-	Limit      int
-	Cursor     string
+	UnreadOnly   bool
+	SourceModule ModuleID
+	Limit        int
+	Cursor       string
 }
 
 type NotificationPage struct {

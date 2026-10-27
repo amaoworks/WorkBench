@@ -138,3 +138,57 @@ func TestListUsesStableCursorPagination(t *testing.T) {
 		t.Fatalf("second page = %+v", second)
 	}
 }
+
+func TestListAndUnreadCountFilterBySource(t *testing.T) {
+	service, _ := openService(t)
+	base := time.Unix(2_000, 0).UTC()
+	created := make(map[string]contracts.Notification)
+	for index, fixture := range []struct {
+		source contracts.ModuleID
+		title  string
+	}{
+		{source: "todo", title: "todo-old"},
+		{source: "news", title: "news-old"},
+		{source: "todo", title: "todo-middle"},
+		{source: "news", title: "news-new"},
+		{source: "todo", title: "todo-new"},
+	} {
+		service.now = func() time.Time { return base.Add(time.Duration(index) * time.Millisecond) }
+		notification, err := service.Create(context.Background(), contracts.NewNotification{
+			SourceModule: fixture.source, Severity: contracts.NotificationInfo, Title: fixture.title,
+			Content: fixture.title, IdempotencyKey: "source:" + fixture.title,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		created[fixture.title] = notification
+	}
+	if err := service.MarkRead(context.Background(), []string{created["todo-new"].ID}); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := service.List(context.Background(), contracts.NotificationQuery{
+		UnreadOnly: true, SourceModule: "todo", Limit: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Items) != 1 || first.Items[0].Title != "todo-middle" || first.NextCursor == "" {
+		t.Fatalf("first filtered page = %+v", first)
+	}
+	second, err := service.List(context.Background(), contracts.NotificationQuery{
+		UnreadOnly: true, SourceModule: "todo", Limit: 1, Cursor: first.NextCursor,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Items) != 1 || second.Items[0].Title != "todo-old" || second.NextCursor != "" {
+		t.Fatalf("second filtered page = %+v", second)
+	}
+	if count, err := service.UnreadCountBySource(context.Background(), "todo"); err != nil || count != 2 {
+		t.Fatalf("UnreadCountBySource(todo) = %d, %v", count, err)
+	}
+	if count, err := service.UnreadCountBySource(context.Background(), "news"); err != nil || count != 2 {
+		t.Fatalf("UnreadCountBySource(news) = %d, %v", count, err)
+	}
+}

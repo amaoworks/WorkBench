@@ -67,6 +67,9 @@ func TestFrontendContracts(t *testing.T) {
 	capture("task.completed", "task", "PATCH", "/api/modules/todo/tasks/"+task.ID, `{"completed":true}`, 200)
 	capture("task.second", "task", "POST", "/api/modules/todo/tasks", `{"title":"Second task","dueAt":null}`, 201)
 	capture("tasks.paginated", "tasks", "GET", "/api/modules/todo/tasks?limit=1", "", 200)
+	capture("tasks.counts", "taskCounts", "GET", "/api/modules/todo/tasks/counts?tz=UTC", "", 200)
+	capture("task.priority", "task", "POST", "/api/modules/todo/tasks", `{"title":"Priority task","priority":"high","category":"work"}`, 201)
+	capture("tasks.filtered", "tasks", "GET", "/api/modules/todo/tasks?view=later&priority=high&category=work&tz=UTC", "", 200)
 	capture("todo.summary", "summary", "GET", "/api/modules/todo/widget/summary", "", 200)
 	if _, err := a.DB().Exec(`UPDATE todo_tasks SET due_at=?, completed_at=NULL WHERE id=?`, time.Now().Add(-time.Hour).UnixMilli(), task.ID); err != nil {
 		t.Fatal(err)
@@ -79,6 +82,10 @@ func TestFrontendContracts(t *testing.T) {
 	capture("schwab.saved", "schwab", "PUT", "/api/modules/investment/schwab", `{"appKey":"fixture","appSecret":"fixture-secret","callbackUrl":"https://127.0.0.1:8080/oauth/schwab"}`, 200)
 	capture("overview.snapshot.disconnected", "investmentSnapshot", "GET", "/api/modules/investment/overview/snapshot", "", 200)
 	capture("overview.quotes.disconnected", "investmentQuotes", "GET", "/api/modules/investment/overview/quotes", "", 200)
+	capture("positions.disconnected", "investmentPositions", "GET", "/api/modules/investment/positions", "", 200)
+	capture("orders.disconnected", "investmentOrders", "GET", "/api/modules/investment/orders?days=7&tz=UTC", "", 200)
+	capture("networth.disconnected", "investmentNetworth", "GET", "/api/modules/investment/networth?range=all", "", 200)
+	capturePortfolioContracts(t, a, capture)
 	capture("futu", "futu", "GET", "/api/modules/investment/futu", "", 200)
 	capture("futu.saved", "futu", "PUT", "/api/modules/investment/futu", `{"enabled":false,"account":"","password":"","clearPassword":true}`, 200)
 	capture("overnight", "overnight", "GET", "/api/modules/investment/overnight", "", 200)
@@ -124,6 +131,14 @@ func TestFrontendContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	capture("notifications.populated", "notifications", "GET", "/api/notifications", "", 200)
+	if _, err := service.Create(context.Background(), contracts.NewNotification{
+		SourceModule: "news", Severity: contracts.NotificationInfo, Title: "News fixture", Content: "News contract",
+		IdempotencyKey: "news-contract-fixture",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	capture("notifications.filtered", "notifications", "GET", "/api/notifications?source=todo&unread=true&limit=1", "", 200)
+	capture("notifications.source-count", "unreadCount", "GET", "/api/notifications/unread-count?source=news", "", 200)
 	if err := service.MarkRead(context.Background(), []string{note.ID}); err != nil {
 		t.Fatal(err)
 	}

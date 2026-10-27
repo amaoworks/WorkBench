@@ -1,43 +1,37 @@
-import { unreadCountSchema } from "../shared/schema";
+import { unreadCountSchema, type WorkbenchModule } from "../shared/schema";
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useState } from "react";
-import {
-  Bell,
-  Bot,
-  CheckSquare2,
-  LayoutDashboard,
-  Moon,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Sun,
-  Settings2,
-  Aperture,
-} from "lucide-react";
-import { NavLink, Route, Routes } from "react-router-dom";
+import { Bell, CheckSquare2, LayoutDashboard } from "lucide-react";
+import { Route, Routes, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { apiValidated } from "../shared/api";
-import { cn } from "../shared/cn";
 import { ThemeContext } from "../shared/theme";
-import { Button } from "../components/ui/Button";
+import { Button, ButtonLink } from "../components/ui/Button";
+import { Notice } from "../components/ui/Notice";
 import { Skeleton } from "../components/ui/States";
 import { useModules } from "./queries";
 import { AIPanel } from "../features/ai/AIPanel";
 import { useNotificationStream } from "../features/notifications/useNotificationStream";
 import { useSettings, useAppearance } from "../features/settings/queries";
 import { toast } from "sonner";
+import { TopNav } from "./TopNav";
+import { matchesLocation, notificationsMenu, overviewMenu, settingsIcon, settingsMenu, type NavEntry } from "./navigation";
 
 const DashboardPage = lazy(() => import("../features/dashboard/DashboardPage"));
 const NotificationsPage = lazy(() => import("../features/notifications/NotificationsPage"));
 const SettingsPage = lazy(() => import("../features/settings/SettingsPage"));
 
-import { pageRegistry, iconRegistry } from "../modules/registry";
+import { pageRegistry, iconRegistry, menuRegistry, subpageRegistry } from "../modules/registry";
 import { ExternalPage } from "./ExternalPage";
+
+const available = (item: WorkbenchModule) =>
+  item.enabled && (item.kind === "external" || (item.observedEnabled === true && !item.pending && !item.lastError));
 
 export function Layout() {
   const modules = useModules();
-  const [collapsed, setCollapsed] = useState(false);
   const [aiOpen, setAIOpen] = useState(false);
   const settings = useSettings();
   const appearance = useAppearance();
+  const location = useLocation();
   const theme = settings.data?.appearance.theme ?? "system";
   const motion = settings.data?.appearance.motion ?? "full";
   const palette = settings.data?.appearance.palette ?? "default";
@@ -72,81 +66,53 @@ export function Layout() {
     query.addEventListener("change", update);
     return () => query.removeEventListener("change", update);
   }, []);
+  // Ctrl+J (⌘J on macOS) toggles the AI panel from anywhere, including inside text fields.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== "j") return;
+      event.preventDefault();
+      setAIOpen((value) => !value);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const navigation = useMemo(
     () =>
       modules.data?.items
-        .filter((item) => item.enabled && (item.kind === "external" || (item.observedEnabled === true && !item.pending && !item.lastError)))
-        .flatMap((item) => item.navigation.map((nav) => ({ ...nav, icon: item.icon })))
+        .filter(available)
+        .flatMap((item) => item.navigation.map((nav) => ({ ...nav, icon: item.icon, moduleId: item.id })))
         .sort((a, b) => a.order - b.order) ?? [],
     [modules.data],
   );
+  const entries = useMemo<NavEntry[]>(
+    () => [
+      { key: "overview", label: "总览", to: "/", icon: LayoutDashboard, menu: overviewMenu },
+      ...navigation.map((item) => ({
+        key: item.pageKey,
+        label: item.label,
+        to: item.route,
+        icon: iconRegistry[item.icon] ?? CheckSquare2,
+        menu: menuRegistry[item.moduleId] ?? [],
+      })),
+      { key: "notifications", label: "通知", to: "/notifications", icon: Bell, badge: unread.data?.count, menu: notificationsMenu },
+      { key: "settings", label: "设置", to: "/settings", icon: settingsIcon, menu: settingsMenu },
+    ],
+    [navigation, unread.data?.count],
+  );
+  const context = pageContext(entries, location.pathname, location.search);
   return (
     <ThemeContext.Provider value={dark ? "dark" : "light"}>
       <div className="workbench-shell min-h-screen">
-        <aside
-          data-collapsed={collapsed}
-          className={cn(
-            "workspace-sidebar fixed inset-y-0 left-0 z-20 flex flex-col border-r border-[var(--border)] bg-[var(--surface)] transition-[width]",
-            collapsed ? "w-16" : "w-56",
-          )}
-        >
-          <div className="workspace-logo flex h-20 items-center gap-3 px-4">
-            <div className="brand-mark">
-              <Aperture size={23} strokeWidth={1.5} />
-            </div>
-            {!collapsed && <span className="sidebar-label font-semibold tracking-tight">Workbench</span>}
-          </div>
-          <nav className="flex-1 space-y-1 p-2" aria-label="主导航">
-            <SideLink to="/" icon={LayoutDashboard} label="总览" collapsed={collapsed} />
-            {navigation.map((item) => {
-              const Icon = iconRegistry[item.icon] ?? CheckSquare2;
-              return <SideLink key={item.pageKey} to={item.route} icon={Icon} label={item.label} collapsed={collapsed} />;
-            })}
-            <SideLink to="/notifications" icon={Bell} label="通知" collapsed={collapsed} badge={unread.data?.count} />
-            <SideLink to="/settings" icon={Settings2} label="设置" collapsed={collapsed} />
-          </nav>
-          <button
-            className="focus-ring m-2 flex items-center gap-3 rounded-lg p-2 text-[var(--muted)] hover:bg-[var(--soft)]"
-            onClick={() => setCollapsed((value) => !value)}
-            aria-label={collapsed ? "展开导航" : "折叠导航"}
-          >
-            {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
-            {!collapsed && <span>收起导航</span>}
-          </button>
-        </aside>
-        <div className={cn("workspace-body transition-[margin]", collapsed ? "ml-16" : "ml-56")}>
-          <header
-            className={cn(
-              "sticky top-0 z-10 flex h-16 items-center justify-end",
-              "border-b border-[var(--border)] bg-[color:var(--surface)]/90 px-6 backdrop-blur",
-            )}
-          >
-            <div className="flex items-center gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                disabled={!settings.data}
-                onClick={() =>
-                  appearance.mutate({ theme: dark ? "light" : "dark", motion, palette }, { onError: (err) => toast.error(err.message) })
-                }
-                aria-label="切换主题"
-              >
-                {dark ? <Sun size={18} /> : <Moon size={18} />}
-              </Button>
-              <Button variant="ghost" size="icon" onClick={() => setAIOpen(true)} aria-label="打开 AI">
-                <Bot size={19} />
-              </Button>
-            </div>
-          </header>
+        <TopNav
+          entries={entries}
+          onOpenAI={() => setAIOpen(true)}
+          theme={theme}
+          themeDisabled={!settings.data}
+          onTheme={(next) => appearance.mutate({ theme: next, motion, palette }, { onError: (err) => toast.error(err.message) })}
+        />
+        <div className="workspace-body">
           <main className="workspace-main mx-auto w-full">
-            <Suspense
-              fallback={
-                <div className="space-y-4">
-                  <Skeleton className="h-9 w-48" />
-                  <Skeleton className="h-72" />
-                </div>
-              }
-            >
+            <Suspense fallback={<PageSkeleton />}>
               <Routes>
                 <Route index element={<DashboardPage />} />
                 <Route path="notifications" element={<NotificationsPage />} />
@@ -155,57 +121,96 @@ export function Layout() {
                   const Page = pageRegistry[item.pageKey];
                   return Page ? <Route key={item.pageKey} path={item.route.replace(/^\//, "")} element={<Page />} /> : null;
                 })}
+                {navigation.flatMap((item) =>
+                  Object.entries(subpageRegistry[item.moduleId] ?? {}).map(([path, Page]) => (
+                    <Route key={`${item.pageKey}/${path}`} path={`${item.route.replace(/^\/|\/$/g, "")}/${path}`} element={<Page />} />
+                  )),
+                )}
                 <Route path="apps/:moduleId/:pageName" element={<ExternalPage />} />
-                <Route path="*" element={<UnknownPage />} />
+                <Route path="*" element={<RouteFallback modules={modules} />} />
               </Routes>
             </Suspense>
           </main>
         </div>
-        <AIPanel open={aiOpen} onClose={() => setAIOpen(false)} />
+        <AIPanel
+          open={aiOpen}
+          onClose={() => setAIOpen(false)}
+          context={context ? { route: location.pathname + location.search, label: context } : undefined}
+        />
       </div>
     </ThemeContext.Provider>
   );
 }
 
-function SideLink({
-  to,
-  icon: Icon,
-  label,
-  collapsed,
-  badge,
-}: {
-  to: string;
-  icon: React.ComponentType<{ size?: number }>;
-  label: string;
-  collapsed: boolean;
-  badge?: number;
-}) {
+function pageContext(entries: NavEntry[], pathname: string, search: string) {
+  const entry = [...entries].reverse().find((item) => (item.to === "/" ? pathname === "/" : pathname === item.to || pathname.startsWith(`${item.to}/`)));
+  if (!entry) return undefined;
+  const sub = entry.menu.find((item) => matchesLocation(item.to, pathname, search));
+  return sub && sub.label !== entry.label ? `${entry.label} · ${sub.label}` : entry.label;
+}
+
+function PageSkeleton() {
   return (
-    <NavLink
-      to={to}
-      end={to === "/"}
-      aria-label={badge ? `${label}，${badge} 条未读` : label}
-      className={({ isActive }) =>
-        cn("workspace-nav-link focus-ring flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition", isActive && "is-active")
-      }
-    >
-      <Icon size={18} />
-      {!collapsed && <span className="sidebar-label flex-1">{label}</span>}
-      {!collapsed && badge ? <span className="sidebar-label nav-badge">{badge}</span> : null}
-      {/* Shown only when the sidebar is icon-only (collapsed or narrow screens). */}
-      <span className="workspace-nav-tooltip" aria-hidden="true">
-        {badge ? `${label} · ${badge}` : label}
-      </span>
-      {badge ? <span className="workspace-nav-dot" aria-hidden="true" /> : null}
-    </NavLink>
+    <div className="space-y-4" aria-busy="true" aria-label="页面加载中">
+      <Skeleton className="h-9 w-48" />
+      <Skeleton className="h-72" />
+    </div>
   );
 }
 
-function UnknownPage() {
+/**
+ * Routes are built from /api/modules, so a direct visit to a module page lands here until the module list
+ * arrives or while the module is still starting. Explain which state it is instead of a dead end.
+ */
+function RouteFallback({ modules }: { modules: ReturnType<typeof useModules> }) {
+  const { pathname } = useLocation();
+  if (modules.isPending) return <PageSkeleton />;
+  if (modules.isError)
+    return (
+      <Notice tone="danger" title="业务列表加载失败" action={<Button variant="secondary" onClick={() => modules.refetch()}>重试</Button>}>
+        {modules.error.message}
+      </Notice>
+    );
+  const owner = modules.data.items.find((item) =>
+    item.navigation.some((nav) => pathname === nav.route || pathname.startsWith(`${nav.route.replace(/\/$/, "")}/`)),
+  );
+  const settingsLink = (
+    <ButtonLink variant="secondary" to={owner ? `/settings?tab=modules&module=${encodeURIComponent(owner.id)}` : "/settings?tab=modules"}>
+      业务设置
+    </ButtonLink>
+  );
+  if (owner && !owner.enabled)
+    return (
+      <Notice title={`${owner.name}未启用`} action={settingsLink}>
+        在业务设置中启用后即可使用此页面。
+      </Notice>
+    );
+  if (owner?.lastError)
+    return (
+      <Notice tone="danger" title={`${owner.name}运行异常`} action={settingsLink}>
+        {owner.lastError}
+      </Notice>
+    );
+  if (owner && (owner.pending || (owner.kind === "builtin" && owner.observedEnabled !== true)))
+    return (
+      <div className="space-y-4" aria-busy="true">
+        <Notice title={`${owner.name}正在启动`}>启动完成后页面会自动打开。</Notice>
+        <Skeleton className="h-72" />
+      </div>
+    );
+  if (owner)
+    return (
+      <Notice tone="warning" title="页面暂不可用" action={settingsLink}>
+        当前版本的界面不包含此页面，请刷新或更新后再试。
+      </Notice>
+    );
   return (
     <div className="py-20 text-center">
-      <h1 className="text-xl font-semibold">页面不可用</h1>
-      <p className="mt-2 text-[var(--muted)]">业务页面未注册或当前版本不兼容。</p>
+      <h1 className="text-xl font-semibold">页面不存在</h1>
+      <p className="mt-2 text-[var(--muted)]">地址可能已变更。</p>
+      <ButtonLink className="mt-6" variant="secondary" to="/">
+        返回总览
+      </ButtonLink>
     </div>
   );
 }

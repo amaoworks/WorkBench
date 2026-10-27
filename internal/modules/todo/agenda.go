@@ -37,8 +37,9 @@ type Agenda struct {
 	Overdue  int64        `json:"overdue"`
 	Items    []AgendaTask `json:"items"`
 	// Renewals is omitted when Wallos is not enabled so the card can hide the section.
-	Renewals []AgendaRenewal `json:"renewals,omitempty"`
-	Wallos   bool            `json:"wallos"`
+	Renewals       []AgendaRenewal `json:"renewals,omitempty"`
+	Wallos         bool            `json:"wallos"`
+	CompletedToday int64           `json:"completedToday"`
 }
 
 func (m *Module) agenda(ctx context.Context, zone string) (Agenda, error) {
@@ -55,6 +56,13 @@ func (m *Module) agenda(ctx context.Context, zone string) (Agenda, error) {
 	}
 	now := m.now().In(loc)
 	endOfDay := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, loc)
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	completedToday, err := m.queries.CountCompletedBetween(ctx, todosqlc.CountCompletedBetweenParams{
+		CompletedAt: toNullTime(&startOfDay), CompletedAt_2: toNullTime(&endOfDay),
+	})
+	if err != nil {
+		return Agenda{}, err
+	}
 	counts, err := m.queries.CountAgendaTasks(ctx, todosqlc.CountAgendaTasksParams{NowMs: now.UnixMilli(), DueBefore: endOfDay.UnixMilli()})
 	if err != nil {
 		return Agenda{}, err
@@ -63,7 +71,7 @@ func (m *Module) agenda(ctx context.Context, zone string) (Agenda, error) {
 	if err != nil {
 		return Agenda{}, err
 	}
-	out := Agenda{TimeZone: zone, Total: counts.Total, Overdue: counts.Overdue, Items: make([]AgendaTask, 0, len(rows)), Wallos: settings.Enabled}
+	out := Agenda{TimeZone: zone, Total: counts.Total, Overdue: counts.Overdue, CompletedToday: completedToday, Items: make([]AgendaTask, 0, len(rows)), Wallos: settings.Enabled}
 	listed := map[string]bool{}
 	for _, row := range rows {
 		task := taskFromRow(row)

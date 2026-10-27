@@ -9,6 +9,7 @@ import { Skeleton } from "../../components/ui/States";
 import { WidgetHeader } from "../../components/dashboard/WidgetHeader";
 import { cn } from "../../shared/cn";
 import { formatClock } from "../../shared/format";
+import { useOverviewSummary } from "../../shared/dashboard";
 import { moduleQueryKey } from "../../shared/queryKeys";
 import { updateTask, useTodoToday } from "./queries";
 import type { TodoToday } from "./schema";
@@ -44,6 +45,24 @@ export default function TodoTodayWidget({ widget }: { widget: Widget }) {
     },
   });
 
+  const summaryData = today.data;
+  const nextItem = summaryData?.items[0];
+  const summaryCompleted = summaryData?.completedToday ?? 0;
+  const summaryTotal = (summaryData?.total ?? 0) + summaryCompleted;
+  useOverviewSummary(
+    widget.widgetKind,
+    summaryData && (summaryTotal > 0 || summaryData.overdue > 0)
+      ? {
+          title: "今日待办",
+          value: summaryCompleted,
+          unit: `/ ${summaryTotal} 项完成${summaryData.overdue > 0 ? ` · ${summaryData.overdue} 项逾期` : ""}`,
+          phrase: `${summaryCompleted}/${summaryTotal} 项完成`,
+          detail: nextItem ? `下一项：${nextItem.title}` : undefined,
+          to: "/todo?view=today",
+        }
+      : null,
+  );
+
   if (today.isPending) return <Skeleton className="h-32" />;
   if (today.isError)
     return (
@@ -55,13 +74,28 @@ export default function TodoTodayWidget({ widget }: { widget: Widget }) {
   const doneIds = new Set(done.map((item) => item.id));
   const open = data.items.filter((item) => !doneIds.has(item.id));
   const renewals = data.renewals ?? [];
-  if (open.length === 0 && done.length === 0 && renewals.length === 0) return null;
-  const more = data.total - open.length;
+  const completedToday = data.completedToday ?? 0;
+  const dayTotal = data.total + completedToday;
+  const progress = dayTotal > 0 ? Math.round((completedToday / dayTotal) * 100) : 0;
+  if (open.length === 0 && done.length === 0 && renewals.length === 0 && completedToday === 0) return null;
+  const visibleCompleted = data.items.filter((item) => doneIds.has(item.id)).length;
+  const more = Math.max(0, data.total - open.length - visibleCompleted);
   return (
     <>
       <WidgetHeader>
         {data.overdue > 0 ? <Badge tone="danger">{data.overdue} 项逾期</Badge> : open.length > 0 && <Badge>{data.total} 项</Badge>}
       </WidgetHeader>
+      {dayTotal > 0 && (
+        <div className="mb-4" aria-label={`今日完成 ${completedToday}/${dayTotal}`}>
+          <div className="mb-1 flex items-center justify-between text-xs text-[var(--muted)]">
+            <span>今日完成</span>
+            <span>{completedToday}/{dayTotal}</span>
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-full bg-[var(--soft)]">
+            <div className="h-full rounded-full bg-[var(--cta)]" style={{ width: `${progress}%` }} />
+          </div>
+        </div>
+      )}
       {(open.length > 0 || done.length > 0) && (
         <>
           <p className="ov-section">任务</p>

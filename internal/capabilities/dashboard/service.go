@@ -82,7 +82,7 @@ func (s *Service) list(ctx context.Context) ([]Widget, error) {
 	}
 	widgets := make([]Widget, 0, len(s.widgets))
 	for _, definition := range s.widgets {
-		widget := Widget{WidgetDefinition: definition, Visible: true, Enabled: s.enabled(definition.Module)}
+		widget := Widget{WidgetDefinition: definition, Visible: definition.ID != "notifications.summary", Enabled: s.enabled(definition.Module)}
 		if pref, ok := preferences[definition.ID]; ok && pref.Visible != nil {
 			widget.Visible, widget.Size, widget.Order = *pref.Visible, pref.Size, pref.Order
 		}

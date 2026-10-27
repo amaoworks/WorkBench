@@ -1,26 +1,29 @@
 import { aiStatusSchema } from "../../shared/schema";
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Bot, Send, SquarePen, X } from "lucide-react";
+import { MapPin, Send, Sparkles, SquarePen, X } from "lucide-react";
 import { apiValidated, apiResponse } from "../../shared/api";
 import { Button, ButtonLink } from "../../components/ui/Button";
-import { EmptyState } from "../../components/ui/EmptyState";
 import { Notice } from "../../components/ui/Notice";
 import { cn } from "../../shared/cn";
+import { aiShortcut } from "../../shared/keyboard";
 import * as Dialog from "@radix-ui/react-dialog";
 
 type Message = { role: "user" | "assistant"; text: string };
 type ChatResponse = { conversationId: string; messageId: string; text: string };
+export type AIPageContext = { route: string; label: string };
+type ChatInput = { message: string; context?: AIPageContext };
 
 async function streamChat(
   conversationId: string,
   message: string,
+  context: AIPageContext | undefined,
   onStarted: (conversationId: string) => void,
   onDelta: (text: string) => void,
 ): Promise<ChatResponse> {
   const response = await apiResponse("/api/chat/stream", {
     method: "POST",
-    body: JSON.stringify({ conversationId, message }),
+    body: JSON.stringify({ conversationId, message, ...(context ? { context } : {}) }),
   });
   if (!response.body) throw new Error("浏览器不支持流式响应");
   const reader = response.body.getReader();
@@ -59,8 +62,11 @@ async function streamChat(
   return completed;
 }
 
-export function AIPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+const suggestions = ["帮我创建明天上午 10 点开周会的待办", "今天下午 5 点前提醒我提交报销", "你能帮我做哪些事？"];
+
+export function AIPanel({ open, onClose, context }: { open: boolean; onClose: () => void; context?: AIPageContext }) {
   const [input, setInput] = useState("");
+  const [attachContext, setAttachContext] = useState(true);
   const [conversationId, setConversationId] = useState(() => localStorage.getItem("workbench-conversation-id") ?? "");
   const [messages, setMessages] = useState<Message[]>([]);
   const status = useQuery({ queryKey: ["ai", "status"], queryFn: () => apiValidated("/api/ai/status", aiStatusSchema), enabled: open });
@@ -68,9 +74,9 @@ export function AIPanel({ open, onClose }: { open: boolean; onClose: () => void 
     if (conversationId) localStorage.setItem("workbench-conversation-id", conversationId);
   }, [conversationId]);
   const chat = useMutation({
-    mutationFn: (message: string) => {
+    mutationFn: ({ message, context: messageContext }: ChatInput) => {
       let receivedDelta = false;
-      return streamChat(conversationId, message, setConversationId, (delta) => {
+      return streamChat(conversationId, message, messageContext, setConversationId, (delta) => {
         setMessages((current) =>
           current.map((item, index) => {
             if (index !== current.length - 1 || item.role !== "assistant") return item;
@@ -100,7 +106,7 @@ export function AIPanel({ open, onClose }: { open: boolean; onClose: () => void 
     if (!message || chat.isPending || status.data?.available === false) return;
     setMessages((current) => [...current, { role: "user", text: message }, { role: "assistant", text: "正在思考…" }]);
     setInput("");
-    chat.mutate(message);
+    chat.mutate({ message, context: context && attachContext ? context : undefined });
   }
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -118,8 +124,9 @@ export function AIPanel({ open, onClose }: { open: boolean; onClose: () => void 
         <Dialog.Content className="ai-panel z-40">
           <div className="flex h-16 items-center justify-between border-b border-[var(--border)] px-4">
             <Dialog.Title className="flex items-center gap-2 font-semibold">
-              <Bot size={19} className="text-brand" />
-              Workbench AI
+              <Sparkles size={18} className="text-brand" />
+              问 AI
+              <kbd className="workspace-kbd">{aiShortcut.label}</kbd>
             </Dialog.Title>
             <Dialog.Description className="sr-only">与 AI 对话，协助安排工作和处理待办。</Dialog.Description>
             <div className="flex items-center gap-1">
@@ -161,7 +168,14 @@ export function AIPanel({ open, onClose }: { open: boolean; onClose: () => void 
               />
             )}
             {messages.length === 0 && (
-              <EmptyState icon={<Bot size={22} />} title="对话" description="例如：帮我创建明天下午完成报告的待办。" />
+              <div className="ai-suggestions">
+                <p>试试这样问</p>
+                {suggestions.map((text) => (
+                  <button key={text} type="button" className="focus-ring" onClick={() => setInput(text)}>
+                    {text}
+                  </button>
+                ))}
+              </div>
             )}
             {messages.map((message, index) => (
               <div key={index} className={cn("ai-message", message.role === "user" && "user")}>
@@ -169,6 +183,14 @@ export function AIPanel({ open, onClose }: { open: boolean; onClose: () => void 
               </div>
             ))}
           </div>
+          {context && (
+            <div className="ai-context">
+              <button type="button" className="focus-ring" aria-pressed={attachContext} onClick={() => setAttachContext((value) => !value)}>
+                <MapPin size={13} />
+                {attachContext ? `附带当前页面：${context.label}` : "不附带当前页面"}
+              </button>
+            </div>
+          )}
           <form onSubmit={submit} className="flex gap-2 border-t border-[var(--border)] p-4">
             <textarea
               aria-label="发送给 Workbench AI 的消息"

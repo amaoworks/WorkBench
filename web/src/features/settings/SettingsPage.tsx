@@ -343,7 +343,7 @@ function AppearanceForm({ value }: { value: Settings }) {
   const save = useAppearance();
   const { theme, motion, palette = "default" } = value.appearance;
   const palettes = [
-    { id: "default", title: "草木（默认）", description: "大地橄榄绿与自然米灰", color: "#526b37" },
+    { id: "default", title: "TradingView（默认）", description: "纯白与纯黑底色，蓝色强调", color: "#2962ff" },
     { id: "claude", title: "暖陶（Claude）", description: "暖象牙纸底与焦糖赤陶色", color: "#cc785c" },
   ] as const;
   const themes = [

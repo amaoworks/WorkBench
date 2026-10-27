@@ -61,6 +61,8 @@ type Module struct {
 	logger         *slog.Logger
 	monitorMu      sync.Mutex
 	monitorEnabled bool
+	netWorthCancel context.CancelFunc
+	netWorthWG     sync.WaitGroup
 	monitorQuotes  monitorQuoteProvider
 	scanMu         sync.Mutex
 	marketLocation *time.Location
@@ -140,6 +142,10 @@ func (m *Module) Migrations() contracts.MigrationSet {
 func (m *Module) Register(r contracts.ModuleRegistrar) error {
 	proxyMethods := []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch}
 	regs := []error{
+		r.Handle("GET", "/api/modules/investment/positions", http.HandlerFunc(m.getPositions)),
+		r.Handle("GET", "/api/modules/investment/orders", http.HandlerFunc(m.getOrders)),
+		r.Handle("GET", "/api/modules/investment/networth", http.HandlerFunc(m.getNetWorth)),
+		r.Job(m.netWorthJob()),
 		r.Handle("GET", "/api/modules/investment/preferences", http.HandlerFunc(m.getPreferences)),
 		r.Handle("PUT", "/api/modules/investment/preferences", http.HandlerFunc(m.savePreference)),
 		r.Handle("GET", "/api/modules/investment/watchlists", http.HandlerFunc(m.getWatchlists)),
@@ -224,6 +230,10 @@ func (m *Module) Routes() []contracts.ProvidedRoute {
 func (m *Module) OnEnabledChanged(ctx context.Context, enabled bool) error {
 	m.monitorMu.Lock()
 	m.monitorEnabled = enabled
+	if !enabled && m.netWorthCancel != nil {
+		m.netWorthCancel()
+		m.netWorthCancel = nil
+	}
 	m.monitorMu.Unlock()
 	m.futu.connectMu.Lock()
 	defer m.futu.connectMu.Unlock()
@@ -242,6 +252,7 @@ func (m *Module) OnEnabledChanged(ctx context.Context, enabled bool) error {
 		return err
 	}
 	m.syncOpenD(rec)
+	m.startNetWorthSnapshot(ctx)
 	return nil
 }
 
@@ -255,7 +266,12 @@ func (m *Module) ResetStream() {
 func (m *Module) Close() {
 	m.monitorMu.Lock()
 	m.monitorEnabled = false
+	if m.netWorthCancel != nil {
+		m.netWorthCancel()
+		m.netWorthCancel = nil
+	}
 	m.monitorMu.Unlock()
+	m.netWorthWG.Wait()
 	m.futu.connectMu.Lock()
 	if m.opend != nil {
 		m.opend.close()

@@ -8,6 +8,11 @@ import (
 func TestDashboardIncludeDataEmbedsWidgetResponses(t *testing.T) {
 	a := newTestApp(t)
 	token, cookies := csrf(t, a.Handler())
+	// Explicitly enable the optional full notification card to verify its data route.
+	if _, err := a.DB().Exec(`INSERT INTO workspace_settings(section,value) VALUES('dashboard',?) ON CONFLICT(section) DO UPDATE SET value=excluded.value`,
+		`[{"id":"notifications.summary","visible":true,"size":"medium","order":0}]`); err != nil {
+		t.Fatal(err)
+	}
 	if got := request(t, a.Handler(), "POST", "/api/modules/todo/tasks", []byte(`{"title":"Pay rent","dueAt":"2020-01-01T00:00:00Z"}`), token, cookies); got.Code != 201 {
 		t.Fatal(got.Body.String())
 	}

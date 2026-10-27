@@ -32,6 +32,21 @@ type InvestmentFutuBar struct {
 	Volume     float64 `json:"volume"`
 }
 
+type InvestmentNetworthAccountScope struct {
+	AuthorizedAt int64  `json:"authorized_at"`
+	AccountHash  string `json:"account_hash"`
+}
+
+type InvestmentNetworthSnapshot struct {
+	AccountHash string  `json:"account_hash"`
+	Day         string  `json:"day"`
+	NetWorth    float64 `json:"net_worth"`
+	Cash        float64 `json:"cash"`
+	Invested    float64 `json:"invested"`
+	DayPnl      float64 `json:"day_pnl"`
+	CapturedAt  int64   `json:"captured_at"`
+}
+
 type InvestmentPreference struct {
 	Name         string `json:"name"`
 	Content      string `json:"content"`

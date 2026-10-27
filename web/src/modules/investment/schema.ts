@@ -98,3 +98,40 @@ export const overviewAlertsSchema = z.object({
   }))
 });
 export type OverviewAlerts = z.infer<typeof overviewAlertsSchema>;
+
+const portfolioStatus = z.enum(["ready", "unconfigured", "reauth", "error"]);
+const nullableNumber = z.number().nullable();
+export const portfolioPositionSchema = z.object({
+  accountHash: z.string(), accountLabel: z.string(), symbol: z.string(), description: z.string(), assetType: z.string(),
+  quantity: nullableNumber, averagePrice: nullableNumber, lastPrice: nullableNumber, marketValue: nullableNumber,
+  dayPnl: nullableNumber, dayPnlPct: nullableNumber, unrealizedPnl: nullableNumber, unrealizedPnlPct: nullableNumber, weight: nullableNumber,
+});
+export const positionsResponseSchema = z.object({
+  status: portfolioStatus, message: z.string().optional(), updatedAt: z.string().optional(),
+  accounts: z.array(z.object({
+    accountHash: z.string(), label: z.string(), netWorth: nullableNumber, cash: nullableNumber, invested: nullableNumber, dayPnl: nullableNumber,
+  })),
+  items: z.array(portfolioPositionSchema),
+});
+export type PortfolioPositions = z.infer<typeof positionsResponseSchema>;
+export const portfolioOrderSchema = z.object({
+  id: z.string(), accountHash: z.string(), accountLabel: z.string(), orderType: z.string(), duration: z.string(),
+  legs: z.array(z.object({
+    symbol: z.string(), instruction: z.string(), quantity: nullableNumber, filledQuantity: nullableNumber, averageFill: nullableNumber,
+  })),
+  quantity: nullableNumber, filledQuantity: nullableNumber, price: nullableNumber, stopPrice: nullableNumber, averageFill: nullableNumber,
+  status: z.string(), group: z.enum(["working", "filled", "canceled", "other"]), enteredAt: z.string(), closedAt: z.string(),
+});
+export const ordersResponseSchema = z.object({
+  status: portfolioStatus, message: z.string().optional(), updatedAt: z.string().optional(), items: z.array(portfolioOrderSchema),
+});
+
+export const netWorthPointSchema = z.object({
+  day: z.string(), accountHashes: z.array(z.string()),
+  netWorth: nullableNumber, cash: nullableNumber, invested: nullableNumber, dayPnl: nullableNumber,
+});
+export type NetWorthPoint = z.infer<typeof netWorthPointSchema>;
+export const netWorthHistorySchema = z.object({
+  status: portfolioStatus, message: z.string().optional(), currency: z.literal("USD"), range: z.enum(["1m", "3m", "1y", "all"]),
+  account: z.string().optional(), accounts: z.array(z.string()), points: z.array(netWorthPointSchema), updatedAt: z.string().optional(),
+});

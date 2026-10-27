@@ -35,18 +35,88 @@ func (q *Queries) CountAgendaTasks(ctx context.Context, arg CountAgendaTasksPara
 	return i, err
 }
 
+const countCompletedBetween = `-- name: CountCompletedBetween :one
+SELECT CAST(COUNT(*) AS BIGINT)
+FROM todo_tasks
+WHERE completed_at >= ? AND completed_at < ?
+`
+
+type CountCompletedBetweenParams struct {
+	CompletedAt   sql.NullInt64 `json:"completed_at"`
+	CompletedAt_2 sql.NullInt64 `json:"completed_at_2"`
+}
+
+func (q *Queries) CountCompletedBetween(ctx context.Context, arg CountCompletedBetweenParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countCompletedBetween, arg.CompletedAt, arg.CompletedAt_2)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countTaskGroups = `-- name: CountTaskGroups :one
+SELECT
+  CAST(COALESCE(SUM(CASE WHEN completed_at IS NULL AND due_at IS NOT NULL AND due_at < CAST(?1 AS BIGINT) THEN 1 ELSE 0 END), 0) AS BIGINT) AS overdue,
+  CAST(COALESCE(SUM(CASE WHEN completed_at IS NULL AND due_at >= CAST(?1 AS BIGINT) AND due_at < CAST(?2 AS BIGINT) THEN 1 ELSE 0 END), 0) AS BIGINT) AS today,
+  CAST(COALESCE(SUM(CASE WHEN completed_at IS NULL AND due_at >= CAST(?2 AS BIGINT) AND due_at < CAST(?3 AS BIGINT) THEN 1 ELSE 0 END), 0) AS BIGINT) AS week,
+  CAST(COALESCE(SUM(CASE WHEN completed_at IS NULL AND due_at >= CAST(?3 AS BIGINT) THEN 1 ELSE 0 END), 0) AS BIGINT) AS later,
+  CAST(COALESCE(SUM(CASE WHEN completed_at IS NULL AND due_at IS NULL THEN 1 ELSE 0 END), 0) AS BIGINT) AS none,
+  CAST(COALESCE(SUM(CASE WHEN completed_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS BIGINT) AS done
+FROM todo_tasks
+WHERE (CAST(?4 AS TEXT) = '' OR priority = CAST(?4 AS TEXT))
+  AND (CAST(?5 AS TEXT) = '' OR category = CAST(?5 AS TEXT))
+`
+
+type CountTaskGroupsParams struct {
+	NowMs          int64  `json:"now_ms"`
+	EndToday       int64  `json:"end_today"`
+	EndWeek        int64  `json:"end_week"`
+	PriorityFilter string `json:"priority_filter"`
+	CategoryFilter string `json:"category_filter"`
+}
+
+type CountTaskGroupsRow struct {
+	Overdue int64 `json:"overdue"`
+	Today   int64 `json:"today"`
+	Week    int64 `json:"week"`
+	Later   int64 `json:"later"`
+	None    int64 `json:"none"`
+	Done    int64 `json:"done"`
+}
+
+func (q *Queries) CountTaskGroups(ctx context.Context, arg CountTaskGroupsParams) (CountTaskGroupsRow, error) {
+	row := q.db.QueryRowContext(ctx, countTaskGroups,
+		arg.NowMs,
+		arg.EndToday,
+		arg.EndWeek,
+		arg.PriorityFilter,
+		arg.CategoryFilter,
+	)
+	var i CountTaskGroupsRow
+	err := row.Scan(
+		&i.Overdue,
+		&i.Today,
+		&i.Week,
+		&i.Later,
+		&i.None,
+		&i.Done,
+	)
+	return i, err
+}
+
 const createTask = `-- name: CreateTask :exec
-INSERT INTO todo_tasks(id, title, description, due_at, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO todo_tasks(id, title, description, due_at, priority, category, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateTaskParams struct {
-	ID          string        `json:"id"`
-	Title       string        `json:"title"`
-	Description string        `json:"description"`
-	DueAt       sql.NullInt64 `json:"due_at"`
-	CreatedAt   int64         `json:"created_at"`
-	UpdatedAt   int64         `json:"updated_at"`
+	ID          string         `json:"id"`
+	Title       string         `json:"title"`
+	Description string         `json:"description"`
+	DueAt       sql.NullInt64  `json:"due_at"`
+	Priority    string         `json:"priority"`
+	Category    sql.NullString `json:"category"`
+	CreatedAt   int64          `json:"created_at"`
+	UpdatedAt   int64          `json:"updated_at"`
 }
 
 func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) error {
@@ -55,6 +125,8 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) error {
 		arg.Title,
 		arg.Description,
 		arg.DueAt,
+		arg.Priority,
+		arg.Category,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
@@ -74,7 +146,7 @@ func (q *Queries) DeleteTask(ctx context.Context, id string) (int64, error) {
 }
 
 const getTask = `-- name: GetTask :one
-SELECT id, title, description, due_at, completed_at, created_at, updated_at
+SELECT id, title, description, due_at, completed_at, created_at, updated_at, priority, category
 FROM todo_tasks WHERE id = ?
 `
 
@@ -89,12 +161,14 @@ func (q *Queries) GetTask(ctx context.Context, id string) (TodoTask, error) {
 		&i.CompletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Priority,
+		&i.Category,
 	)
 	return i, err
 }
 
 const listAgendaTasks = `-- name: ListAgendaTasks :many
-SELECT id, title, description, due_at, completed_at, created_at, updated_at
+SELECT id, title, description, due_at, completed_at, created_at, updated_at, priority, category
 FROM todo_tasks
 WHERE completed_at IS NULL AND due_at IS NOT NULL AND due_at < CAST(?1 AS BIGINT)
 ORDER BY due_at, id
@@ -123,6 +197,8 @@ func (q *Queries) ListAgendaTasks(ctx context.Context, arg ListAgendaTasksParams
 			&i.CompletedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Priority,
+			&i.Category,
 		); err != nil {
 			return nil, err
 		}
@@ -187,28 +263,56 @@ func (q *Queries) ListDueTasks(ctx context.Context, arg ListDueTasksParams) ([]L
 }
 
 const listTasksPage = `-- name: ListTasksPage :many
-SELECT id, title, description, due_at, completed_at, created_at, updated_at
+SELECT id, title, description, due_at, completed_at, created_at, updated_at, priority, category
 FROM todo_tasks
-WHERE CAST(?1 AS BIGINT) = 0 OR
-  (CASE WHEN completed_at IS NOT NULL THEN 1 ELSE 0 END, COALESCE(due_at, 9223372036854775807), -created_at, id) >
-  (CAST(?2 AS BIGINT), CAST(?3 AS BIGINT), -CAST(?4 AS BIGINT), CAST(?5 AS TEXT))
-ORDER BY completed_at IS NOT NULL, COALESCE(due_at, 9223372036854775807), created_at DESC, id
-LIMIT ?6
+WHERE
+  (CAST(?1 AS BIGINT) = 0
+    OR (CAST(?1 AS BIGINT) = 1 AND completed_at IS NULL AND due_at IS NOT NULL AND due_at < CAST(?2 AS BIGINT))
+    OR (CAST(?1 AS BIGINT) = 2 AND completed_at IS NULL AND due_at IS NOT NULL AND due_at < CAST(?3 AS BIGINT))
+    OR (CAST(?1 AS BIGINT) = 3 AND completed_at IS NULL AND (due_at IS NULL OR due_at >= CAST(?3 AS BIGINT)))
+    OR (CAST(?1 AS BIGINT) = 4 AND completed_at IS NOT NULL)
+    OR (CAST(?1 AS BIGINT) = 5 AND completed_at IS NULL AND due_at IS NOT NULL AND due_at < CAST(?4 AS BIGINT)))
+  AND (CAST(?5 AS TEXT) = '' OR priority = CAST(?5 AS TEXT))
+  AND (CAST(?6 AS TEXT) = '' OR category = CAST(?6 AS TEXT))
+  AND (CAST(?7 AS BIGINT) = 0 OR
+    (CASE WHEN completed_at IS NOT NULL THEN 1 ELSE 0 END,
+      CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 ELSE 3 END,
+      COALESCE(due_at, 9223372036854775807), -created_at, id) >
+    (CAST(?8 AS BIGINT), CAST(?9 AS BIGINT), CAST(?10 AS BIGINT),
+      -CAST(?11 AS BIGINT), CAST(?12 AS TEXT)))
+ORDER BY completed_at IS NOT NULL,
+  CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 ELSE 3 END,
+  COALESCE(due_at, 9223372036854775807), created_at DESC, id
+LIMIT ?13
 `
 
 type ListTasksPageParams struct {
-	HasCursor int64  `json:"has_cursor"`
-	Done      int64  `json:"done"`
-	Due       int64  `json:"due"`
-	Created   int64  `json:"created"`
-	CursorID  string `json:"cursor_id"`
-	PageLimit int64  `json:"page_limit"`
+	View           int64  `json:"view"`
+	EndToday       int64  `json:"end_today"`
+	EndWeek        int64  `json:"end_week"`
+	NowMs          int64  `json:"now_ms"`
+	PriorityFilter string `json:"priority_filter"`
+	CategoryFilter string `json:"category_filter"`
+	HasCursor      int64  `json:"has_cursor"`
+	Done           int64  `json:"done"`
+	PriorityRank   int64  `json:"priority_rank"`
+	Due            int64  `json:"due"`
+	Created        int64  `json:"created"`
+	CursorID       string `json:"cursor_id"`
+	PageLimit      int64  `json:"page_limit"`
 }
 
 func (q *Queries) ListTasksPage(ctx context.Context, arg ListTasksPageParams) ([]TodoTask, error) {
 	rows, err := q.db.QueryContext(ctx, listTasksPage,
+		arg.View,
+		arg.EndToday,
+		arg.EndWeek,
+		arg.NowMs,
+		arg.PriorityFilter,
+		arg.CategoryFilter,
 		arg.HasCursor,
 		arg.Done,
+		arg.PriorityRank,
 		arg.Due,
 		arg.Created,
 		arg.CursorID,
@@ -229,6 +333,8 @@ func (q *Queries) ListTasksPage(ctx context.Context, arg ListTasksPageParams) ([
 			&i.CompletedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Priority,
+			&i.Category,
 		); err != nil {
 			return nil, err
 		}
@@ -266,17 +372,19 @@ func (q *Queries) TodoSummary(ctx context.Context, dueAt sql.NullInt64) (TodoSum
 
 const updateTask = `-- name: UpdateTask :exec
 UPDATE todo_tasks
-SET title = ?, description = ?, due_at = ?, completed_at = ?, updated_at = ?
+SET title = ?, description = ?, due_at = ?, completed_at = ?, priority = ?, category = ?, updated_at = ?
 WHERE id = ?
 `
 
 type UpdateTaskParams struct {
-	Title       string        `json:"title"`
-	Description string        `json:"description"`
-	DueAt       sql.NullInt64 `json:"due_at"`
-	CompletedAt sql.NullInt64 `json:"completed_at"`
-	UpdatedAt   int64         `json:"updated_at"`
-	ID          string        `json:"id"`
+	Title       string         `json:"title"`
+	Description string         `json:"description"`
+	DueAt       sql.NullInt64  `json:"due_at"`
+	CompletedAt sql.NullInt64  `json:"completed_at"`
+	Priority    string         `json:"priority"`
+	Category    sql.NullString `json:"category"`
+	UpdatedAt   int64          `json:"updated_at"`
+	ID          string         `json:"id"`
 }
 
 func (q *Queries) UpdateTask(ctx context.Context, arg UpdateTaskParams) error {
@@ -285,6 +393,8 @@ func (q *Queries) UpdateTask(ctx context.Context, arg UpdateTaskParams) error {
 		arg.Description,
 		arg.DueAt,
 		arg.CompletedAt,
+		arg.Priority,
+		arg.Category,
 		arg.UpdatedAt,
 		arg.ID,
 	)

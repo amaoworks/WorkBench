@@ -290,16 +290,16 @@ func (m *Module) importWallos(ctx context.Context, c wallosConfig, subs []wallos
 			if err != nil {
 				return 0, err
 			}
-			if row.Title != title || row.Description != description {
+			if row.Title != title || row.Description != description || !row.Category.Valid || row.Category.String != "renewal" {
 				task := taskFromRow(row)
-				task.Title, task.Description, task.UpdatedAt = title, description, now
+				task.Title, task.Description, task.Category, task.UpdatedAt = title, description, "renewal", now
 				if _, err := m.updateTaskTx(ctx, tx, task, "todo.task.updated"); err != nil {
 					return 0, err
 				}
 			}
 			continue
 		}
-		if _, err := m.createTaskTx(ctx, tx, taskID, CreateTask{Title: title, Description: description, DueAt: &due}, now); err != nil {
+		if _, err := m.createTaskTx(ctx, tx, taskID, CreateTask{Title: title, Description: description, DueAt: &due, Category: "renewal"}, now); err != nil {
 			return 0, err
 		}
 		created++

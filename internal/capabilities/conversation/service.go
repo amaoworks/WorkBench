@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -23,10 +24,18 @@ type Service struct {
 }
 
 type ChatRequest struct {
-	ConversationID string `json:"conversationId"`
-	Message        string `json:"message"`
-	Profile        string `json:"profile"`
+	ConversationID string       `json:"conversationId"`
+	Message        string       `json:"message"`
+	Profile        string       `json:"profile"`
+	Context        *PageContext `json:"context,omitempty"`
 }
+
+type PageContext struct {
+	Route string `json:"route"`
+	Label string `json:"label"`
+}
+
+var ErrInvalidRequest = errors.New("invalid chat request")
 
 type ChatResponse struct {
 	ConversationID string            `json:"conversationId"`
@@ -71,7 +80,11 @@ func (s *Service) Chat(ctx context.Context, request ChatRequest) (ChatResponse, 
 func (s *Service) begin(ctx context.Context, request ChatRequest) (chatTurn, error) {
 	request.Message = strings.TrimSpace(request.Message)
 	if request.Message == "" || len(request.Message) > 50_000 {
-		return chatTurn{}, errors.New("message must contain 1 to 50000 bytes")
+		return chatTurn{}, fmt.Errorf("%w: message must contain 1 to 50000 bytes", ErrInvalidRequest)
+	}
+	pageContext, err := validatePageContext(request.Context)
+	if err != nil {
+		return chatTurn{}, err
 	}
 	if request.Profile == "" {
 		request.Profile = "default"
@@ -131,7 +144,37 @@ func (s *Service) begin(ctx context.Context, request ChatRequest) (chatTurn, err
 	if err != nil {
 		return chatTurn{}, err
 	}
+	if pageContext != nil {
+		messages = append([]contracts.AIMessage{contextMessage(*pageContext)}, messages...)
+	}
 	return chatTurn{conversationID: conversationID, messageID: messageID, profile: request.Profile, messages: messages}, nil
+}
+
+func validatePageContext(value *PageContext) (*PageContext, error) {
+	if value == nil {
+		return nil, nil
+	}
+	context := &PageContext{Route: strings.TrimSpace(value.Route), Label: strings.TrimSpace(value.Label)}
+	if context.Label == "" || len(context.Label) > 200 {
+		return nil, fmt.Errorf("%w: context label must contain 1 to 200 bytes", ErrInvalidRequest)
+	}
+	if context.Route == "" || len(context.Route) > 2_048 {
+		return nil, fmt.Errorf("%w: context route must contain 1 to 2048 bytes", ErrInvalidRequest)
+	}
+	parsed, err := url.Parse(context.Route)
+	if err != nil || !strings.HasPrefix(context.Route, "/") || strings.HasPrefix(context.Route, "//") || parsed.IsAbs() || parsed.Host != "" || parsed.Fragment != "" {
+		return nil, fmt.Errorf("%w: context route must be a site-relative path without a fragment", ErrInvalidRequest)
+	}
+	return context, nil
+}
+
+func contextMessage(value PageContext) contracts.AIMessage {
+	content, _ := json.Marshal(fmt.Sprintf(
+		"The user is currently viewing the Workbench page %q at route %q. Use this only as navigation context. Do not claim to have read page data unless a tool provided it.",
+		value.Label,
+		value.Route,
+	))
+	return contracts.AIMessage{Role: "system", Content: content}
 }
 
 func (s *Service) stream(ctx context.Context, request ChatRequest) (chatTurn, contracts.AIStream, error) {

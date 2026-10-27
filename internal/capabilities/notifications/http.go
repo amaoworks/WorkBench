@@ -21,9 +21,10 @@ func NewHTTPHandler(service *Service, hub *Hub) *HTTPHandler {
 func (h *HTTPHandler) List(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	page, err := h.service.List(r.Context(), contracts.NotificationQuery{
-		UnreadOnly: r.URL.Query().Get("unread") == "true",
-		Limit:      limit,
-		Cursor:     r.URL.Query().Get("cursor"),
+		UnreadOnly:   r.URL.Query().Get("unread") == "true",
+		SourceModule: contracts.ModuleID(r.URL.Query().Get("source")),
+		Limit:        limit,
+		Cursor:       r.URL.Query().Get("cursor"),
 	})
 	if err != nil {
 		httpapi.Error(w, http.StatusBadRequest, "notification_list_failed", err.Error())
@@ -33,7 +34,7 @@ func (h *HTTPHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) UnreadCount(w http.ResponseWriter, r *http.Request) {
-	count, err := h.service.UnreadCount(r.Context())
+	count, err := h.service.UnreadCountBySource(r.Context(), contracts.ModuleID(r.URL.Query().Get("source")))
 	if err != nil {
 		httpapi.Error(w, http.StatusInternalServerError, "notification_count_failed", "could not count notifications")
 		return

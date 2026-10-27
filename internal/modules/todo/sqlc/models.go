@@ -165,13 +165,15 @@ type Session struct {
 }
 
 type TodoTask struct {
-	ID          string        `json:"id"`
-	Title       string        `json:"title"`
-	Description string        `json:"description"`
-	DueAt       sql.NullInt64 `json:"due_at"`
-	CompletedAt sql.NullInt64 `json:"completed_at"`
-	CreatedAt   int64         `json:"created_at"`
-	UpdatedAt   int64         `json:"updated_at"`
+	ID          string         `json:"id"`
+	Title       string         `json:"title"`
+	Description string         `json:"description"`
+	DueAt       sql.NullInt64  `json:"due_at"`
+	CompletedAt sql.NullInt64  `json:"completed_at"`
+	CreatedAt   int64          `json:"created_at"`
+	UpdatedAt   int64          `json:"updated_at"`
+	Priority    string         `json:"priority"`
+	Category    sql.NullString `json:"category"`
 }
 
 type TodoWallosOccurrence struct {

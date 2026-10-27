@@ -89,7 +89,7 @@ func TestDashboardLayoutIndependentOfModuleAndSurvivesRestart(t *testing.T) {
 		t.Fatal(got.Body.String())
 	}
 	defaults := request(t, restarted.Handler(), "GET", "/api/dashboard", nil, "", cookies)
-	if !bytes.Contains(defaults.Body.Bytes(), []byte("todo.today")) || !bytes.Contains(defaults.Body.Bytes(), []byte("notifications.summary")) {
+	if !bytes.Contains(defaults.Body.Bytes(), []byte("todo.today")) || bytes.Contains(defaults.Body.Bytes(), []byte("notifications.summary")) {
 		t.Fatal("reset did not restore defaults")
 	}
 }
@@ -209,7 +209,7 @@ func TestUpgradeTodoOnlyWorkspacePreservesDataAndAddsDefaultWidget(t *testing.T)
 	// Saved preferences for retired cards (todo.summary) are ignored; new cards appear with defaults.
 	if len(body.Widgets) != 6 || body.Widgets[0].ID != "todo.today" || body.Widgets[0].Visible || body.Widgets[0].Size != "large" ||
 		!body.Widgets[1].Visible || body.Widgets[1].ID != "investment.snapshot" || body.Widgets[2].ID != "investment.quotes" ||
-		body.Widgets[3].ID != "investment.alerts" || !body.Widgets[4].Visible || !body.Widgets[4].Enabled || body.Widgets[4].ID != "notifications.summary" ||
+		body.Widgets[3].ID != "investment.alerts" || body.Widgets[4].Visible || !body.Widgets[4].Enabled || body.Widgets[4].ID != "notifications.summary" ||
 		!body.Widgets[5].Visible || body.Widgets[5].ID != "news.brief" {
 		t.Fatalf("upgrade layout: %+v", body)
 	}

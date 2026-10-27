@@ -12,7 +12,7 @@ Migrations() MigrationSet
 Register(ModuleRegistrar) error
 ```
 
-Manifest 声明 ID、显示名称、业务版本、契约版本、图标和导航。当前契约版本为 1。`Migrations` 提供本模块的 `fs.FS`、SQLite `Dir` 和 PostgreSQL `PostgresDir`，数据库层按当前驱动选择目录；`Register` 调用 `Handle`、`Consume`、`Job`、`Tool`、`Widget` 声明资源。
+Manifest 声明 ID、显示名称、业务版本、契约版本、图标和导航。当前契约版本为 1。顶部导航的下拉菜单（`menu`）和子页面（`subpages`）属于前端 `ModuleUI`，不进入 Manifest，也不改变契约版本；子页面路径不能与后端已注册的页面或资源路径冲突。`Migrations` 提供本模块的 `fs.FS`、SQLite `Dir` 和 PostgreSQL `PostgresDir`，数据库层按当前驱动选择目录；`Register` 调用 `Handle`、`Consume`、`Job`、`Tool`、`Widget` 声明资源。
 
 资源声明含模块归属，名称以模块 ID 为前缀，注册时检查有效性和重复项。App 负责构造模块与所需服务。内置注册表在构建程序时确定；已保存的外部模块记录在运行时恢复，并通过 HTTP 协议管理。当前不开放通过网址新增外部模块。
 
@@ -45,7 +45,7 @@ Telegram 使用独立 dispatcher 和已有 `event_deliveries` 持久化投递。
 
 [AIProvider 与 AITool](../internal/contracts/ai.go) 服务于平台 Gateway。Provider 提供普通与流式生成；Gateway 暴露当前启用模块的工具，并最多循环四轮模型请求。工具参数在服务端校验，执行审计持久化。
 
-Tool 风险分为 read_only、low_write、high_write。写工具需要幂等键；high_write 还需要 `ConfirmedBy`。当前 Gateway 不提供用户确认交互，因此不能仅声明 high_write 就获得可用的确认流程。当前已注册业务工具是 `todo.create_task`。
+Tool 风险分为 read_only、low_write、high_write。写工具需要幂等键；high_write 还需要 `ConfirmedBy`。当前 Gateway 不提供用户确认交互，因此不能仅声明 high_write 就获得可用的确认流程。已注册 `todo.create_task`、`todo.list_tasks`、`todo.complete_task`、`notifications.list` 和 `notifications.mark_read`。待办和标记已读写操作按 low_write 执行；查询为 read_only。聊天请求可附带 `context: { route, label }`，后端校验后仅用于本轮导航上下文，原始用户消息独立保存。
 
 对话请求包含 `conversationId`（可省略以新建）、`message` 和 `profile`（默认 default），响应包含对话 ID、消息 ID、文本和用量。流式 HTTP 事件为 `chat.started`、`chat.delta`、`chat.completed` 或 `chat.error`。对话数据由 conversation 能力保存。
 

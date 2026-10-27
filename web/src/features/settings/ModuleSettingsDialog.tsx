@@ -1,5 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { Suspense, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Settings2, X } from "lucide-react";
 import { Button } from "../../components/ui/Button";
 import { settingsRegistry } from "../../modules/registry";
@@ -20,7 +21,20 @@ export function ModuleSettingsDialog({ module }: { module: WorkbenchModule }) {
     (settings.data?.appearance.theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches)
       ? "dark"
       : "light";
-  const [open, setOpen] = useState(false);
+  const [params, setParams] = useSearchParams();
+  const open = params.get("module") === module.id && (params.get("tab") ?? "modules") === "modules";
+  const setOpen = useCallback((next: boolean) => {
+    setParams((current) => {
+      const value = new URLSearchParams(current);
+      if (next) {
+        value.set("tab", "modules");
+        value.set("module", module.id);
+      } else if (value.get("module") === module.id) {
+        value.delete("module");
+      }
+      return value;
+    }, { replace: true });
+  }, [module.id, setParams]);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const discard = useRef(false);
   const dirty = useRef(false);
@@ -34,7 +48,7 @@ export function ModuleSettingsDialog({ module }: { module: WorkbenchModule }) {
         else setOpen(false);
       },
     }),
-    [],
+    [setOpen],
   );
   return (
     <Dialog.Root open={open} onOpenChange={(next) => (next ? setOpen(true) : control.requestClose())}>

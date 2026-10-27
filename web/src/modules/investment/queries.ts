@@ -4,7 +4,7 @@ import { api, apiValidated } from "../../shared/api";
 import type { Widget } from "../../shared/schema";
 import { moduleQueryKey } from "../../shared/queryKeys";
 import { widgetSeed } from "../../shared/dashboard";
-import { overviewAlertsSchema, overviewQuotesSchema, overviewSnapshotSchema, futuSettingsSchema, overnightSettingsSchema, schwabSettingsSchema, priceMonitorSchema, priceHistorySchema, priceRuleSchema, investmentViewPreferencesSchema, investmentPreferenceSavedSchema, type InvestmentView, type PriceRuleInput, type FutuSettingsInput, type SchwabSettingsInput } from "./schema";
+import { overviewAlertsSchema, overviewQuotesSchema, overviewSnapshotSchema, positionsResponseSchema, ordersResponseSchema, netWorthHistorySchema, futuSettingsSchema, overnightSettingsSchema, schwabSettingsSchema, priceMonitorSchema, priceHistorySchema, priceRuleSchema, investmentViewPreferencesSchema, investmentPreferenceSavedSchema, type InvestmentView, type PriceRuleInput, type FutuSettingsInput, type SchwabSettingsInput } from "./schema";
 
 const PREFERENCES = "/api/modules/investment/preferences";
 const investmentKey = (...parts: readonly unknown[]) => moduleQueryKey("investment", ...parts);
@@ -102,4 +102,29 @@ export function saveOvernightSettings(enabled: boolean) {
 export function useRefreshInvestment() {
   const client = useQueryClient();
   return () => client.invalidateQueries({ queryKey: investmentKey() });
+}
+
+export function usePositions() {
+  return useQuery({
+    queryKey: investmentKey("positions"),
+    queryFn: () => apiValidated("/api/modules/investment/positions", positionsResponseSchema),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useOrders(days: number, status: string) {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return useQuery({
+    queryKey: investmentKey("orders", days, status, tz),
+    queryFn: () => apiValidated(`/api/modules/investment/orders?${new URLSearchParams({ days: String(days), status, tz })}`, ordersResponseSchema),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useNetWorthHistory(range: string, account: string) {
+  return useQuery({
+    queryKey: investmentKey("networth", range, account),
+    queryFn: () => apiValidated(`/api/modules/investment/networth?${new URLSearchParams({ range, account })}`, netWorthHistorySchema),
+    refetchInterval: 60_000,
+  });
 }

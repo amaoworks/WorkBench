@@ -6,11 +6,11 @@ import { StatCard } from "../../components/ui/Card";
 import { Notice } from "../../components/ui/Notice";
 import { Skeleton } from "../../components/ui/States";
 import { cn } from "../../shared/cn";
-import { formatDateTime } from "../../shared/format";
+import { formatDateTime, formatRelative } from "../../shared/format";
+import { useOverviewSummary } from "../../shared/dashboard";
 
-/** Overview card for platform notifications: unread count plus the latest few items. */
-export function NotificationsSummary({ widget }: { widget: Widget }) {
-  // Shares the sidebar badge query, so the live notification stream keeps both in sync.
+function useSummaryData() {
+  // Shares the navigation badge query, so the live notification stream keeps both in sync.
   const unread = useQuery({
     queryKey: ["notifications", "count"],
     queryFn: () => apiValidated("/api/notifications/unread-count", unreadCountSchema),
@@ -19,6 +19,31 @@ export function NotificationsSummary({ widget }: { widget: Widget }) {
     queryKey: ["notifications", "latest"],
     queryFn: async () => notificationsPageSchema.parse(await api("/api/notifications?limit=3")),
   });
+  return { unread, latest };
+}
+
+export function NotificationsOverview() {
+  const { unread, latest } = useSummaryData();
+  const newest = latest.data?.items[0];
+  useOverviewSummary(
+    "notifications.summary",
+    unread.data && newest
+      ? {
+          title: "通知",
+          value: unread.data.count,
+          unit: "条未读",
+          phrase: unread.data.count > 0 ? `${unread.data.count} 条未读通知` : undefined,
+          detail: `${newest.title} · ${formatRelative(newest.createdAt)}`,
+          to: unread.data.count > 0 ? "/notifications?filter=unread" : "/notifications",
+        }
+      : null,
+  );
+  return null;
+}
+
+/** Optional full card. The overview tile remains available when this card is hidden. */
+export function NotificationsSummary({ widget }: { widget: Widget }) {
+  const { unread, latest } = useSummaryData();
   if (unread.isPending || latest.isPending) return <Skeleton className="h-32" />;
   if (unread.isError || latest.isError)
     return (

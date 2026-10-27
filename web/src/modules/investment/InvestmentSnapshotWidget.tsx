@@ -10,6 +10,7 @@ import { useDashboardSignals } from "../../shared/dashboard";
 import { cn } from "../../shared/cn";
 import { formatClock, formatSignedPct, formatSignedUSD, formatUSD } from "../../shared/format";
 import { useOverviewSnapshot } from "./queries";
+import { NetWorthHistory } from "./NetWorthHistory";
 
 const tone = (value: number) => (value > 0 ? "ov-up" : value < 0 ? "ov-down" : "");
 
@@ -109,6 +110,7 @@ export default function InvestmentSnapshotWidget({ widget }: { widget: Widget })
           )}
         </div>
       </div>
+      <NetWorthHistory />
     </>
   );
 }

@@ -58,6 +58,7 @@ func (m *Module) Register(r contracts.ModuleRegistrar) error {
 			Handler: func(ctx context.Context, _ contracts.JobRun) error { _, err := m.syncWallos(ctx); return err },
 		}),
 		r.Handle(http.MethodGet, "/api/modules/todo/tasks", http.HandlerFunc(m.listTasks)),
+		r.Handle(http.MethodGet, "/api/modules/todo/tasks/counts", http.HandlerFunc(m.taskCounts)),
 		r.Handle(http.MethodPost, "/api/modules/todo/tasks", http.HandlerFunc(m.createTask)),
 		r.Handle(http.MethodPatch, "/api/modules/todo/tasks/{id}", http.HandlerFunc(m.updateTask)),
 		r.Handle(http.MethodDelete, "/api/modules/todo/tasks/{id}", http.HandlerFunc(m.deleteTask)),
@@ -77,8 +78,18 @@ func (m *Module) Register(r contracts.ModuleRegistrar) error {
 		}),
 		r.Tool(contracts.AITool{
 			Name: "todo.create_task", Module: "todo", SchemaVersion: 1, Description: "创建一条待办任务",
-			ParametersSchema: json.RawMessage(`{"type":"object","properties":{"title":{"type":"string"},"description":{"type":["string","null"]},"dueAt":{"type":["string","null"],"format":"date-time"}},"required":["title","description","dueAt"],"additionalProperties":false}`),
+			ParametersSchema: json.RawMessage(`{"type":"object","properties":{"title":{"type":"string"},"description":{"type":["string","null"]},"dueAt":{"type":["string","null"],"format":"date-time"},"priority":{"type":["string","null"],"enum":["none","low","medium","high",null]},"category":{"type":["string","null"],"maxLength":40}},"required":["title","description","dueAt","priority","category"],"additionalProperties":false}`),
 			Risk:             contracts.ToolRiskLowWrite, Handler: m.createTaskTool,
+		}),
+		r.Tool(contracts.AITool{
+			Name: "todo.list_tasks", Module: "todo", SchemaVersion: 1, Description: "查询待办任务",
+			ParametersSchema: json.RawMessage(`{"type":"object","properties":{"view":{"type":"string","enum":["all","today","week","later","done","overdue"]},"timeZone":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":100}},"required":["view","timeZone","limit"],"additionalProperties":false}`),
+			Risk:             contracts.ToolRiskReadOnly, Handler: m.listTasksTool,
+		}),
+		r.Tool(contracts.AITool{
+			Name: "todo.complete_task", Module: "todo", SchemaVersion: 1, Description: "按任务 ID 标记待办完成",
+			ParametersSchema: json.RawMessage(`{"type":"object","properties":{"taskId":{"type":"string","pattern":"^[a-f0-9]{32}$"}},"required":["taskId"],"additionalProperties":false}`),
+			Risk:             contracts.ToolRiskLowWrite, Handler: m.completeTaskTool,
 		}),
 	}
 	return errors.Join(registrations...)

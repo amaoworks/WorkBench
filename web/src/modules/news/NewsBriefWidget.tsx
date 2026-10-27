@@ -3,7 +3,7 @@ import { ButtonLink } from "../../components/ui/Button";
 import { Notice } from "../../components/ui/Notice";
 import { Skeleton } from "../../components/ui/States";
 import { WidgetHeader } from "../../components/dashboard/WidgetHeader";
-import { useDashboardSignals } from "../../shared/dashboard";
+import { useDashboardSignals, useOverviewSummary } from "../../shared/dashboard";
 import { cn } from "../../shared/cn";
 import { formatRelative } from "../../shared/format";
 import { useNewsBrief } from "./queries";
@@ -30,6 +30,20 @@ function ArticleList({ items, label, tags }: { items: Article[]; label: string; 
 export default function NewsBriefWidget({ widget }: { widget: Widget }) {
   const { heldSymbols } = useDashboardSignals();
   const brief = useNewsBrief(widget, heldSymbols);
+  const summaryData = brief.data;
+  useOverviewSummary(
+    widget.widgetKind,
+    summaryData && summaryData.sources > 0
+      ? {
+          title: "资讯",
+          value: summaryData.unread,
+          unit: "篇未读文章",
+          phrase: summaryData.unread > 0 ? `${summaryData.unread} 篇未读文章` : undefined,
+          detail: summaryData.digest ? "AI 简报已生成" : `${summaryData.sources} 个订阅源`,
+          to: "/news",
+        }
+      : null,
+  );
   if (brief.isPending) return <Skeleton className="h-32" />;
   if (brief.isError)
     return (

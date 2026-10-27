@@ -130,34 +130,6 @@ func getByIdempotencyKey(ctx context.Context, queries *dbsqlc.Queries, key strin
 	}, nil
 }
 
-const notificationSelect = `
-	SELECT id, source_module, external, severity, title, content,
-	       COALESCE(action_label, ''), COALESCE(action_route, ''), idempotency_key,
-	       COALESCE(source_event_id, ''), created_at, read_at, archived_at, expires_at
-	FROM notifications`
-
-type scanner interface{ Scan(...any) error }
-
-func scanNotification(row scanner) (contracts.Notification, error) {
-	var notification contracts.Notification
-	var createdAt int64
-	var readAt, archivedAt, expiresAt sql.NullInt64
-	err := row.Scan(
-		&notification.ID, &notification.SourceModule, &notification.External, &notification.Severity,
-		&notification.Title, &notification.Content, &notification.ActionLabel,
-		&notification.ActionRoute, &notification.IdempotencyKey, &notification.SourceEventID,
-		&createdAt, &readAt, &archivedAt, &expiresAt,
-	)
-	if err != nil {
-		return contracts.Notification{}, err
-	}
-	notification.CreatedAt = time.UnixMilli(createdAt).UTC()
-	notification.ReadAt = nullableTime(readAt)
-	notification.ArchivedAt = nullableTime(archivedAt)
-	notification.ExpiresAt = nullableTime(expiresAt)
-	return notification, nil
-}
-
 func boolInt64(value bool) int64 {
 	if value {
 		return 1
@@ -193,31 +165,26 @@ func (s *Service) List(ctx context.Context, query contracts.NotificationQuery) (
 		}
 	}
 
-	statement := notificationSelect + `
-		WHERE archived_at IS NULL
-		  AND (created_at < ? OR (created_at = ? AND id < ?))`
-	args := []any{position.CreatedAt, position.CreatedAt, position.ID}
-	if query.UnreadOnly {
-		statement += " AND read_at IS NULL"
-	}
-	statement += " ORDER BY created_at DESC, id DESC LIMIT ?"
-	args = append(args, query.Limit+1)
-	rows, err := s.db.QueryContext(ctx, statement, args...)
+	rows, err := s.queries.ListNotifications(ctx, dbsqlc.ListNotificationsParams{
+		CursorCreatedAt: position.CreatedAt,
+		CursorID:        position.ID,
+		UnreadOnly:      boolInt64(query.UnreadOnly),
+		SourceModule:    string(query.SourceModule),
+		PageSize:        int64(query.Limit + 1),
+	})
 	if err != nil {
 		return contracts.NotificationPage{}, fmt.Errorf("list notifications: %w", err)
 	}
-	defer rows.Close()
 
 	page := contracts.NotificationPage{Items: make([]contracts.Notification, 0, query.Limit)}
-	for rows.Next() {
-		notification, err := scanNotification(rows)
-		if err != nil {
-			return contracts.NotificationPage{}, fmt.Errorf("scan notification: %w", err)
-		}
-		page.Items = append(page.Items, notification)
-	}
-	if err := rows.Err(); err != nil {
-		return contracts.NotificationPage{}, err
+	for _, row := range rows {
+		page.Items = append(page.Items, contracts.Notification{
+			ID: row.ID, SourceModule: contracts.ModuleID(row.SourceModule), External: row.External != 0,
+			Severity: contracts.NotificationSeverity(row.Severity), Title: row.Title, Content: row.Content,
+			ActionLabel: row.ActionLabel, ActionRoute: row.ActionRoute, IdempotencyKey: row.IdempotencyKey,
+			SourceEventID: contracts.EventID(row.SourceEventID), CreatedAt: time.UnixMilli(row.CreatedAt).UTC(),
+			ReadAt: nullableTime(row.ReadAt), ArchivedAt: nullableTime(row.ArchivedAt), ExpiresAt: nullableTime(row.ExpiresAt),
+		})
 	}
 	if len(page.Items) > query.Limit {
 		page.Items = page.Items[:query.Limit]
@@ -287,5 +254,12 @@ func (s *Service) MarkAllRead(ctx context.Context, before time.Time) error {
 }
 
 func (s *Service) UnreadCount(ctx context.Context) (int64, error) {
-	return s.queries.CountUnreadNotifications(ctx, sql.NullInt64{Int64: s.now().UTC().UnixMilli(), Valid: true})
+	return s.UnreadCountBySource(ctx, "")
+}
+
+func (s *Service) UnreadCountBySource(ctx context.Context, source contracts.ModuleID) (int64, error) {
+	return s.queries.CountUnreadNotificationsBySource(ctx, dbsqlc.CountUnreadNotificationsBySourceParams{
+		ExpiresAt:    sql.NullInt64{Int64: s.now().UTC().UnixMilli(), Valid: true},
+		SourceModule: string(source),
+	})
 }

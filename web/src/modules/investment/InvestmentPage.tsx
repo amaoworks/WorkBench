@@ -127,7 +127,7 @@ function InvestmentContent({ viewSettings }: { viewSettings: ReturnType<typeof u
             <Button
               variant="ghost"
               size="sm"
-              title={expanded ? "恢复侧栏与顶栏" : "隐藏工作台导航并撑满窗口"}
+              title={expanded ? "恢复顶部导航" : "隐藏工作台导航并撑满窗口"}
               onClick={() => {
                 void toggleExpanded();
               }}

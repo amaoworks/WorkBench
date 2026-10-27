@@ -1,10 +1,11 @@
 import { Component, Suspense, useCallback, useMemo, useState, type ComponentType, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Bell, CheckSquare2, ChartNoAxesCombined, LayoutGrid, Newspaper, Wallet } from "lucide-react";
+import { Bell, CheckSquare2, ChartNoAxesCombined, ChevronRight, LayoutGrid, Newspaper, Wallet } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../../shared/api";
 import { dashboardSchema, widgetCatalogSchema, type ConfigurableWidget, type Widget } from "../../shared/schema";
-import { DashboardSignalsContext, WidgetHeaderSlotContext } from "../../shared/dashboard";
+import { DashboardSignalsContext, WidgetHeaderSlotContext, type OverviewSummary } from "../../shared/dashboard";
 import { widgetRegistry } from "../../modules/registry";
 import { Card } from "../../components/ui/Card";
 import { Button, ButtonLink } from "../../components/ui/Button";
@@ -12,8 +13,7 @@ import { Skeleton } from "../../components/ui/States";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { Notice } from "../../components/ui/Notice";
 import { Badge } from "../../components/ui/Badge";
-import { PageHeader } from "../../components/ui/PageHeader";
-import { NotificationsSummary } from "../notifications/NotificationsSummary";
+import { NotificationsOverview, NotificationsSummary } from "../notifications/NotificationsSummary";
 import { Checkbox } from "../../components/ui/Checkbox";
 import { Select } from "../../components/ui/Select";
 
@@ -30,11 +30,23 @@ const widgetIcons: Record<string, ComponentType<{ size?: number }>> = {
 };
 
 const WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
-const todayLabel = (date = new Date()) => `${date.getMonth() + 1}月${date.getDate()}日 ${WEEKDAYS[date.getDay()]}`;
+const todayLabel = (date = new Date()) => `${date.getMonth() + 1} 月 ${date.getDate()} 日 ${WEEKDAYS[date.getDay()]}`;
+// Order of the 今日概况 tiles and of the phrases in the headline.
+const SUMMARY_ORDER = ["todo.today", "notifications.summary", "news.brief"];
+const summaryRank = (id: string) => (SUMMARY_ORDER.includes(id) ? SUMMARY_ORDER.indexOf(id) : SUMMARY_ORDER.length);
 const sameSymbols = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((value, index) => value === b[index]);
 
 export default function DashboardPage() {
-  const [editing, setEditing] = useState(false);
+  const [params, setParams] = useSearchParams();
+  const editing = params.get("edit") === "1";
+  function setEditing(next: boolean) {
+    setParams((current) => {
+      const value = new URLSearchParams(current);
+      if (next) value.set("edit", "1");
+      else value.delete("edit");
+      return value;
+    }, { replace: true });
+  }
   // One request carries every visible card's data; cards then poll their own routes.
   const dashboard = useQuery({ queryKey: ["dashboard"], queryFn: async () => dashboardSchema.parse(await api("/api/dashboard?include=data")) });
   const catalog = useQuery({
@@ -44,24 +56,45 @@ export default function DashboardPage() {
   });
   const [heldSymbols, setHeld] = useState<readonly string[]>([]);
   const setHeldSymbols = useCallback((symbols: readonly string[]) => setHeld((current) => (sameSymbols(current, symbols) ? current : [...symbols])), []);
-  const signals = useMemo(() => ({ heldSymbols, setHeldSymbols }), [heldSymbols, setHeldSymbols]);
+  const [summaries, setSummaries] = useState<Record<string, OverviewSummary>>({});
+  const setSummary = useCallback((id: string, summary: OverviewSummary | null) => {
+    setSummaries((current) => {
+      if (!summary) {
+        if (!(id in current)) return current;
+        const next = { ...current };
+        delete next[id];
+        return next;
+      }
+      return JSON.stringify(current[id]) === JSON.stringify(summary) ? current : { ...current, [id]: summary };
+    });
+  }, []);
+  const signals = useMemo(() => ({ heldSymbols, setHeldSymbols, summaries, setSummary }), [heldSymbols, setHeldSymbols, summaries, setSummary]);
   const widgets = dashboard.data?.widgets ?? [];
+  // Only the first configured card may lead, preserving the user's card order.
+  const lead = widgets[0]?.size === "large" ? widgets[0] : undefined;
+  const rest = widgets.filter((widget) => widget !== lead);
+  const tiles = Object.entries(summaries).sort(([a], [b]) => summaryRank(a) - summaryRank(b));
+  const phrases = tiles.map(([, summary]) => summary.phrase).filter(Boolean);
   return (
-    <div className="page">
-      <PageHeader
-        title="总览"
-        description={todayLabel()}
-        action={
-          <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" size="sm" onClick={() => setEditing(!editing)}>
-              {editing ? "关闭配置" : "配置总览"}
-            </Button>
-            <ButtonLink variant="secondary" size="sm" to="/settings?tab=modules">
-              管理业务
-            </ButtonLink>
-          </div>
-        }
-      />
+    <div className="page overview-page">
+      <header className="overview-hero">
+        <h1>今天，一目了然</h1>
+        <p>
+          {todayLabel()}
+          {phrases.length > 0 && ` · ${phrases.join("、")}`}
+        </p>
+      </header>
+      <div className="overview-section-head">
+        <h2>今日概况</h2>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" size="sm" onClick={() => setEditing(!editing)}>
+            {editing ? "关闭配置" : "配置卡片"}
+          </Button>
+          <ButtonLink variant="secondary" size="sm" to="/settings?tab=modules">
+            管理业务
+          </ButtonLink>
+        </div>
+      </div>
       {editing && (
         <Card className="mb-5 p-5">
           {catalog.isPending ? (
@@ -92,8 +125,25 @@ export default function DashboardPage() {
         </Card>
       )}
       <DashboardSignalsContext.Provider value={signals}>
+        <NotificationsOverview />
+        {(widgets.length > 0 || tiles.length > 0) && (
+          <div className="overview-today" data-has-tiles={tiles.length > 0} data-has-lead={Boolean(lead)}>
+            {tiles.length > 0 && (
+              <ul className="overview-tiles" aria-label="今日概况">
+                {tiles.map(([id, summary]) => (
+                  <SummaryTile key={id} id={id} summary={summary} />
+                ))}
+              </ul>
+            )}
+            {lead && (
+              <div className="dashboard-grid overview-lead">
+                <DashboardCard widget={lead} />
+              </div>
+            )}
+          </div>
+        )}
         <div className="dashboard-grid">
-          {widgets.map((widget) => (
+          {rest.map((widget) => (
             <DashboardCard key={widget.id} widget={widget} />
           ))}
         </div>
@@ -106,10 +156,34 @@ export default function DashboardPage() {
       {widgets.length > 0 && (
         <p className="dashboard-hint">
           <LayoutGrid size={13} />
-          空卡片默认隐藏；在「配置总览」中可调整顺序与大小。
+          空卡片默认隐藏；在「配置卡片」中可调整顺序与大小。
         </p>
       )}
     </div>
+  );
+}
+
+function SummaryTile({ id, summary }: { id: string; summary: OverviewSummary }) {
+  const Icon = widgetIcons[id];
+  return (
+    <li>
+      <Link to={summary.to} className="overview-tile focus-ring">
+        <span className="overview-tile-head">
+          {Icon && (
+            <span className="overview-tile-icon" aria-hidden="true">
+              <Icon size={15} />
+            </span>
+          )}
+          <span className="flex-1">{summary.title}</span>
+          <ChevronRight size={15} className="muted-icon" aria-hidden="true" />
+        </span>
+        <span className="overview-tile-value">
+          <b>{summary.value}</b>
+          <span>{summary.unit}</span>
+        </span>
+        {summary.detail && <span className="overview-tile-detail">{summary.detail}</span>}
+      </Link>
+    </li>
   );
 }
 

@@ -71,9 +71,19 @@ import type { ModuleUI } from "../registry";
 export default {
   id: "reading",
   pages: { "reading.list": lazy(() => import("./ReadingPage")) },
-  widgets: { "reading.summary": lazy(() => import("./ReadingWidget")) }
+  widgets: { "reading.summary": lazy(() => import("./ReadingWidget")) },
+  // 可选：顶部导航下拉菜单与模块子页面
+  menu: [
+    { label: "列表", to: "/reading", description: "全部条目", icon: List },
+    { label: "统计", to: "/reading/stats", description: "阅读进度" }
+  ],
+  subpages: { stats: lazy(() => import("./ReadingStatsPage")) }
 } satisfies ModuleUI;
 ```
+
+`menu` 是模块在顶部导航中的下拉项。`to` 是站内路径，可以带查询参数，用于深链到页面内的视图（如 `?view=`、`?tab=`）。不声明 `menu` 时，一级入口只是一个普通链接。菜单只能由模块在自己的 `<id>.module.ts` 中声明；总览、通知、设置等平台菜单放在 `web/src/app/navigation.ts`，外壳不导入业务实现，ESLint 边界保持不变。
+
+`subpages` 把额外页面挂到模块导航路由下，路径为 `${route}/${path}`，如 `/investment/positions`。路径只允许小写字母、数字、连字符和 `/`。子页面只在模块的导航路由可用时渲染，模块停用或启动中时由平台路由兜底显示对应状态。子页面不需要后端 pageKey，所以不能和后端已经占用的路径重名，例如 `/investment/terminal`。新功能优先放到新的子页面上，不要改动已有页面的结构。
 
 Registry 通过 `./*/*.module.ts` 收集声明，校验模块和资源标识。页面 key、Widget kind 必须与后端对应；组件通过 `React.lazy` 加载。提供模块设置时增加 `settings` 懒加载组件，接收 `{ enabled: boolean }`；关闭状态下暂停业务查询并提示启用模块。
 

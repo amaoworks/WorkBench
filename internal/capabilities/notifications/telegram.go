@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"workbench/internal/contracts"
+	dbsqlc "workbench/internal/foundation/database/sqlc"
 )
 
 const telegramConsumerID = "core.notification.telegram"
@@ -68,12 +69,19 @@ func (t *Telegram) Consumer() contracts.EventConsumer {
 			if json.Unmarshal(event.Payload, &payload) != nil || payload.NotificationID == "" {
 				return &telegramError{message: "通知事件格式无效", permanent: true}
 			}
-			note, err := scanNotification(t.db.QueryRowContext(ctx, notificationSelect+" WHERE id = ?", payload.NotificationID))
+			row, err := dbsqlc.New(t.db).GetNotificationByID(ctx, payload.NotificationID)
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil
 			}
 			if err != nil {
 				return errors.New("无法读取待推送通知")
+			}
+			note := contracts.Notification{
+				ID: row.ID, SourceModule: contracts.ModuleID(row.SourceModule), External: row.External != 0,
+				Severity: contracts.NotificationSeverity(row.Severity), Title: row.Title, Content: row.Content,
+				ActionLabel: row.ActionLabel, ActionRoute: row.ActionRoute, IdempotencyKey: row.IdempotencyKey,
+				SourceEventID: contracts.EventID(row.SourceEventID), CreatedAt: time.UnixMilli(row.CreatedAt).UTC(),
+				ReadAt: nullableTime(row.ReadAt), ArchivedAt: nullableTime(row.ArchivedAt), ExpiresAt: nullableTime(row.ExpiresAt),
 			}
 			return t.Deliver(ctx, note)
 		}}

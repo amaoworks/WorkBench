@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -29,6 +30,8 @@ func (h *HTTPHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		code := "chat_failed"
 		if err == ai.ErrUnavailable {
 			status, code = http.StatusServiceUnavailable, "ai_unavailable"
+		} else if errors.Is(err, ErrInvalidRequest) {
+			status, code = http.StatusBadRequest, "invalid_request"
 		}
 		httpapi.Error(w, status, code, err.Error())
 		return
@@ -53,6 +56,8 @@ func (h *HTTPHandler) Stream(w http.ResponseWriter, r *http.Request) {
 		code := "chat_failed"
 		if err == ai.ErrUnavailable {
 			status, code = http.StatusServiceUnavailable, "ai_unavailable"
+		} else if errors.Is(err, ErrInvalidRequest) {
+			status, code = http.StatusBadRequest, "invalid_request"
 		}
 		httpapi.Error(w, status, code, err.Error())
 		return

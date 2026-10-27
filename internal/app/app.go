@@ -175,7 +175,8 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 		return module == notifications.PlatformModule || registry.IsEnabled(module)
 	})
 	notificationHTTP := notifications.NewHTTPHandler(notificationService, hub)
-	toolRuntime, err := ai.NewToolRuntime(database.SQL(), registry.Catalog().Tools, registry.IsEnabled)
+	tools := append(slices.Clone(registry.Catalog().Tools), notificationAITools(notificationService)...)
+	toolRuntime, err := ai.NewToolRuntime(database.SQL(), tools, enabled)
 	if err != nil {
 		_ = scheduled.Shutdown(context.Background())
 		return nil, err

@@ -1,1 +1,0 @@
-import{Q as e}from"./Notice-CT7L2NZ-.js";var t=e();function n({title:e,description:n,action:r}){return(0,t.jsxs)(`header`,{className:`page-header`,children:[(0,t.jsxs)(`div`,{className:`page-header-main`,children:[(0,t.jsx)(`h1`,{children:e}),n?(0,t.jsx)(`p`,{children:n}):null]}),r&&(0,t.jsx)(`div`,{className:`page-header-action`,children:r})]})}export{n as t};

@@ -6,6 +6,7 @@ const tones = {
   success: "bg-[var(--success-soft)] text-[var(--success)]",
   warning: "bg-[var(--warning-soft)] text-[var(--warning)]",
   danger: "bg-[var(--danger-soft)] text-[var(--danger)]",
+  info: "bg-[var(--brand-soft)] text-[var(--brand)]",
 };
 
 export function Badge({ tone = "neutral", className, ...props }: HTMLAttributes<HTMLSpanElement> & { tone?: keyof typeof tones }) {

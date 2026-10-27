@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"workbench/internal/contracts"
 	"workbench/internal/foundation/identity"
@@ -20,6 +21,8 @@ type Task struct {
 	Description string     `json:"description"`
 	DueAt       *time.Time `json:"dueAt,omitempty"`
 	CompletedAt *time.Time `json:"completedAt,omitempty"`
+	Priority    string     `json:"priority"`
+	Category    string     `json:"category,omitempty"`
 	CreatedAt   time.Time  `json:"createdAt"`
 	UpdatedAt   time.Time  `json:"updatedAt"`
 }
@@ -28,14 +31,19 @@ type CreateTask struct {
 	Title       string     `json:"title"`
 	Description string     `json:"description"`
 	DueAt       *time.Time `json:"dueAt"`
+	Priority    string     `json:"priority"`
+	Category    string     `json:"category"`
 }
 
 type UpdateTask struct {
-	Title       *string    `json:"title"`
-	Description *string    `json:"description"`
-	DueAt       *time.Time `json:"dueAt"`
-	ClearDueAt  bool       `json:"clearDueAt"`
-	Completed   *bool      `json:"completed"`
+	Title         *string    `json:"title"`
+	Description   *string    `json:"description"`
+	DueAt         *time.Time `json:"dueAt"`
+	ClearDueAt    bool       `json:"clearDueAt"`
+	Completed     *bool      `json:"completed"`
+	Priority      *string    `json:"priority"`
+	Category      *string    `json:"category"`
+	ClearCategory bool       `json:"clearCategory"`
 }
 
 func (m *Module) Create(ctx context.Context, input CreateTask) (Task, error) {
@@ -70,19 +78,41 @@ func validateTaskContent(title, description string) (string, error) {
 	return title, nil
 }
 
+func normalizeTaskMetadata(priority, category string) (string, string, error) {
+	priority = strings.TrimSpace(priority)
+	if priority == "" {
+		priority = "none"
+	}
+	switch priority {
+	case "none", "low", "medium", "high":
+	default:
+		return "", "", errors.New("priority must be none, low, medium, or high")
+	}
+	category = strings.TrimSpace(category)
+	if utf8.RuneCountInString(category) > 40 {
+		return "", "", errors.New("category exceeds 40 characters")
+	}
+	return priority, category, nil
+}
+
 func (m *Module) createTaskTx(ctx context.Context, tx *sql.Tx, id string, input CreateTask, now time.Time) (Task, error) {
 	title, err := validateTaskContent(input.Title, input.Description)
 	if err != nil {
 		return Task{}, err
 	}
+	priority, category, err := normalizeTaskMetadata(input.Priority, input.Category)
+	if err != nil {
+		return Task{}, err
+	}
 	err = m.queries.WithTx(tx).CreateTask(ctx, todosqlc.CreateTaskParams{
 		ID: id, Title: title, Description: input.Description,
-		DueAt: toNullTime(input.DueAt), CreatedAt: now.UnixMilli(), UpdatedAt: now.UnixMilli(),
+		DueAt: toNullTime(input.DueAt), Priority: priority, Category: toNullString(category),
+		CreatedAt: now.UnixMilli(), UpdatedAt: now.UnixMilli(),
 	})
 	if err != nil {
 		return Task{}, fmt.Errorf("insert task: %w", err)
 	}
-	task := Task{ID: id, Title: title, Description: input.Description, DueAt: input.DueAt, CreatedAt: now, UpdatedAt: now}
+	task := Task{ID: id, Title: title, Description: input.Description, DueAt: input.DueAt, Priority: priority, Category: category, CreatedAt: now, UpdatedAt: now}
 	if err := m.publishTaskTx(ctx, tx, task, "todo.task.created"); err != nil {
 		return Task{}, err
 	}
@@ -112,6 +142,14 @@ func (m *Module) update(ctx context.Context, id string, input UpdateTask) (Task,
 		due := input.DueAt.UTC()
 		task.DueAt = &due
 	}
+	if input.Priority != nil {
+		task.Priority = *input.Priority
+	}
+	if input.ClearCategory {
+		task.Category = ""
+	} else if input.Category != nil {
+		task.Category = *input.Category
+	}
 	topic := "todo.task.updated"
 	if input.Completed != nil {
 		if *input.Completed && task.CompletedAt == nil {
@@ -139,9 +177,14 @@ func (m *Module) updateTaskTx(ctx context.Context, tx *sql.Tx, task Task, topic 
 		return Task{}, err
 	}
 	task.Title = title
+	task.Priority, task.Category, err = normalizeTaskMetadata(task.Priority, task.Category)
+	if err != nil {
+		return Task{}, err
+	}
 	err = m.queries.WithTx(tx).UpdateTask(ctx, todosqlc.UpdateTaskParams{
 		Title: task.Title, Description: task.Description, DueAt: toNullTime(task.DueAt),
-		CompletedAt: toNullTime(task.CompletedAt), UpdatedAt: task.UpdatedAt.UnixMilli(), ID: task.ID,
+		CompletedAt: toNullTime(task.CompletedAt), Priority: task.Priority, Category: toNullString(task.Category),
+		UpdatedAt: task.UpdatedAt.UnixMilli(), ID: task.ID,
 	})
 	if err != nil {
 		return Task{}, err
@@ -168,8 +211,20 @@ func taskFromRow(row todosqlc.TodoTask) Task {
 	return Task{
 		ID: row.ID, Title: row.Title, Description: row.Description,
 		DueAt: nullableTime(row.DueAt), CompletedAt: nullableTime(row.CompletedAt),
+		Priority: row.Priority, Category: nullableString(row.Category),
 		CreatedAt: time.UnixMilli(row.CreatedAt).UTC(), UpdatedAt: time.UnixMilli(row.UpdatedAt).UTC(),
 	}
+}
+
+func nullableString(value sql.NullString) string {
+	if !value.Valid {
+		return ""
+	}
+	return value.String
+}
+
+func toNullString(value string) sql.NullString {
+	return sql.NullString{String: value, Valid: value != ""}
 }
 
 func nullableTime(value sql.NullInt64) *time.Time {

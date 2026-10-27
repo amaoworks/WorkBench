@@ -6,7 +6,7 @@ import { cn } from "../../shared/cn";
 const variants = cva("ui-button focus-ring disabled:pointer-events-none", {
   variants: {
     variant: {
-      primary: "bg-[var(--brand)] text-[var(--on-brand)] hover:opacity-85",
+      primary: "bg-[var(--cta)] text-[var(--on-cta)] hover:opacity-85",
       secondary: "border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--soft)]",
       ghost: "hover:bg-[var(--soft)]",
       danger: "bg-[var(--danger-soft)] text-[var(--danger)] hover:opacity-85",

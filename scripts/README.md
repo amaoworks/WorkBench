@@ -408,6 +408,21 @@ WORKBENCH_BROWSER_TEST=1 \
   go test -race ./internal/modules/investment -run '^TestSchwabOAuthBrowser$' -v
 ```
 
+## 前端改版回归
+
+构建当前前端和测试二进制，再运行专项回归。脚本自行创建并清理临时工作空间，券商与通知响应使用夹具。
+
+```bash
+npm run build --prefix web
+go build -o /tmp/workbench-redesign-test ./cmd/workbench
+WORKBENCH_BIN=/tmp/workbench-redesign-test \
+  PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
+  CHROMIUM_PATH=/usr/bin/chromium \
+  node scripts/frontend-redesign.e2e.cjs
+```
+
+覆盖顶部导航的鼠标、键盘与触屏操作，业务设置重复直达和草稿关闭确认，通知来源与未读组合筛选，持仓与订单直达及错误状态，净值曲线分段与账户切换，以及桌面/360px、浅深主题和 default/claude 配色的布局。截图写入 `/tmp/workbench-redesign-<theme>-<width>.png`。
+
 ## 日志设置验证
 
 后端测试覆盖动态等级过滤、共享子 Logger、并发切换、配置持久化、CSRF、非法输入、保存失败、认证拒绝日志和 panic 恢复。`deployment-smoke.py` 同时验证未登录不能改等级，以及二进制/Compose 重启后保留等级并覆盖环境初始值。

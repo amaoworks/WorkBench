@@ -2,6 +2,8 @@ package conversation
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -192,5 +194,77 @@ func TestConversationHistorySurvivesDatabaseReopen(t *testing.T) {
 		if capture.request.Messages[index].Role != role {
 			t.Fatalf("restored history roles = %+v, want %v", capture.request.Messages, wantRoles)
 		}
+	}
+}
+
+func TestPageContextIsValidatedAndNotPersisted(t *testing.T) {
+	database, err := workbenchdb.Open(context.Background(), workbenchdb.Config{Path: filepath.Join(t.TempDir(), "data.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := database.MigrateCore(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := ai.NewToolRuntime(database.SQL(), nil, func(contracts.ModuleID) bool { return true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &capturingConversationProvider{}
+	gateway, err := ai.NewGateway(provider, runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(database.SQL(), gateway)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	response, err := service.Chat(context.Background(), ChatRequest{
+		Message: "summarize what I should do", Context: &PageContext{Route: "/todo?view=today", Label: "待办 · 今日"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.request.Messages) != 2 || provider.request.Messages[0].Role != "system" || provider.request.Messages[1].Role != "user" {
+		t.Fatalf("provider messages = %+v, want temporary system context followed by user message", provider.request.Messages)
+	}
+	var systemText string
+	if err := json.Unmarshal(provider.request.Messages[0].Content, &systemText); err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"待办 · 今日", "/todo?view=today", "Do not claim to have read page data"} {
+		if !strings.Contains(systemText, expected) {
+			t.Fatalf("system context does not contain %q: %s", expected, systemText)
+		}
+	}
+	var stored string
+	if err := database.SQL().QueryRow(
+		"SELECT content_json FROM ai_messages WHERE conversation_id = ? AND role = 'user'", response.ConversationID,
+	).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != `"summarize what I should do"` {
+		t.Fatalf("stored user message = %s, want original message only", stored)
+	}
+
+	if _, err := service.Chat(context.Background(), ChatRequest{
+		Message: "hello", Context: &PageContext{Route: "https://example.com/todo", Label: "待办"},
+	}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("absolute context route error = %v, want ErrInvalidRequest", err)
+	}
+}
+
+func TestHTTPRejectsInvalidPageContext(t *testing.T) {
+	service, _ := openConversationService(t)
+	handler := NewHTTPHandler(service)
+	request := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(
+		`{"message":"hello","context":{"route":"//example.com/todo","label":"待办"}}`,
+	))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.Chat(recorder, request)
+	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), `"code":"invalid_request"`) {
+		t.Fatalf("invalid context response = %d %s", recorder.Code, recorder.Body.String())
 	}
 }

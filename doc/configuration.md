@@ -86,7 +86,7 @@ export WORKBENCH_DATA='./data/data.db'
 - AI 配置：开关、端点、模型、密钥，支持测试连接与保存。端点须兼容 Responses API；测试会发送简短请求，可能产生费用。保存后新请求使用新 Provider。
 - 通知推送：Telegram Bot Token、Chat ID、启停、测试发送和投递状态，见 [Telegram 通知](notifications.md)。
 - 账户安全：验证当前密码后修改密码，已有登录全部失效。
-- 外观：日光、夜幕、跟随系统，以及减少动态效果；自动保存。
+- 外观：风格可选 TradingView（默认）或暖陶（Claude），主题可选浅色、深色或跟随系统（默认），并可减少动态效果；自动保存。头像菜单中的主题切换写入同一设置。
 - 数据与运行：切换日志等级，查看数据库类型和部署参数；SQLite 可创建在线备份，PostgreSQL 显示外部备份提示。
 
 切换设置标签会保留当前页面内的表单草稿；刷新或离开页面不会持久化未保存输入。AI、Wallos、Schwab 和 Telegram 密钥只写入、不回显，留空通常保留已有值；更换端点、App Key 或回调须重新提供密钥。详细边界见[安全说明](security.md)。

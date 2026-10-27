@@ -38,12 +38,12 @@ internal/
     news/                      RSS/Atom、关注规则、翻译摘要、简报
   webui/dist/                  已检入的前端生产资源
 web/src/
-  app/                         登录、应用外壳、导航、主题
+  app/                         登录、顶部导航外壳（TopNav、navigation.ts）、路由兜底、主题
   features/                    AI 面板、总览、通知、平台设置
   modules/
-    registry.ts                编译期业务界面注册表
+    registry.ts                编译期业务界面注册表（pages、widgets、icons、settings、menu、subpages）
     todo/                      Todo 页面、Widget、设置、查询、schema
-    investment/                行情页面、Widget、Schwab 设置、查询、schema
+    investment/                行情页面、持仓与订单子页面、Widget、Schwab 设置、查询、schema
     news/                      资讯、来源、规则、简报、设置、查询、schema
   components/ui/               Button、Card、PageHeader、ConfirmDialog、Skeleton、Switch、Badge、Notice、Field、EmptyState、useConfirmDelete
   shared/                      HTTP 客户端、平台共享 schema、工具

@@ -1,6 +1,6 @@
 # Investment 投资
 
-模块 ID 为 `investment`，显示名称为“投资”，页面为 `/investment`。后端在 [internal/modules/investment](../../internal/modules/investment)，前端在 [web/src/modules/investment](../../web/src/modules/investment)。模块随 Workbench 主程序运行，内部按配置、授权、连接、订阅和历史行情分文件，见[代码导航](../../internal/modules/investment/README.md)。
+模块 ID 为 `investment`，显示名称为“投资”，页面为 `/investment`，子页面为 `/investment/positions`（持仓）和 `/investment/orders`（订单）。后端在 [internal/modules/investment](../../internal/modules/investment)，前端在 [web/src/modules/investment](../../web/src/modules/investment)。模块随 Workbench 主程序运行，内部按配置、授权、连接、订阅和历史行情分文件，见[代码导航](../../internal/modules/investment/README.md)。
 
 模块在工作台进程内接入 Charles Schwab Trader API：Go 负责 OAuth、REST、Streamer WebSocket 和后台价格监控，TradingView 终端负责行情、持仓与订单界面。投资页可切换「交易终端」和「价格监控」。行情及提醒均使用真实券商数据。
 
@@ -135,7 +135,25 @@ Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后
 | GET | `/investment/terminal`、`/investment/terminal/*` | 终端 HTML 与适配器 |
 | GET/HEAD | `/charting_library/*` | 图表库静态文件代理 |
 
-导航 pageKey 和 Widget kind 保留 `investment.overview`，使已有布局兼容。Widget 改为展示 Schwab 连接状态及终端入口，数据路由使用配置状态接口。Vite 同时代理终端资源和 `/api` WebSocket。
+导航 pageKey 和 Widget kind 保留 `investment.overview`，使已有布局兼容。
+
+### 持仓与订单子页面
+
+前端 `investment.module.ts` 通过 `subpages` 注册了两个页面，入口在顶部导航「投资」的下拉菜单中，菜单项包括 交易终端（`?tab=terminal`）、价格监控（`?tab=monitor`）、持仓、订单、券商连接。`/investment` 页面和 TradingView 终端的结构没有改动，只换了外壳和主题变量。
+
+- `/investment/positions`（`PositionsPage`）：显示账户总值、持仓市值、现金、今日盈亏和持仓盈亏，下面是持仓表，列出代码、数量、均价、现价、市值、今日盈亏、持仓盈亏和占比。有多个账户时可以切换账户。点击代码会在交易终端中打开对应标的。每 30 秒刷新一次。
+- `/investment/orders`（`OrdersPage`）：按最近 1、7、30、90 天（`?range=`）和 全部/working/filled/canceled（`?status=`）筛选委托。条件单和组合单会按 `childOrderStrategies` 展开。页面只读，改单和撤单仍在交易终端中操作。
+- 两个页面分别读取 `/api/modules/investment/positions` 和 `/api/modules/investment/orders?days=1|7|30|90&status=all|working|filled|canceled&tz=`，使用模块的 Zod schema 校验。`BrokerGate` 处理未配置、读取失败和需要重新授权的状态；页面提供手动刷新、重试和最近更新时间。
+- 持仓现价来自行情报价，缺失数值返回 `null` 并显示 `—`；账户标识使用 Schwab 哈希，界面仅显示掩码标签。订单达到 500 条时按时间拆分读取并去重，无法完整读取时返回错误。多腿订单按买卖方向、腿比例和实际成交计算净价，同时展示每腿委托数量、成交数量与均价；成交比例不匹配时不显示组合净价。止损限价单同时显示限价和触发价。
+- 子页面不能命名为 `terminal`，因为后端已经占用 `/investment/terminal*`。Widget 改为展示 Schwab 连接状态及终端入口，数据路由使用配置状态接口。Vite 同时代理终端资源和 `/api` WebSocket。
+
+### 净值历史
+
+资产快照展示 1 个月、3 个月、1 年或全部净值记录，并支持选择账户。`GET /api/modules/investment/networth?range=1m|3m|1y|all&account=` 返回 USD 日快照；日期按 `America/New_York` 计算。
+
+启动、重新启用业务及每个工作日美东时间 16:15 采集账户净值、现金、持仓市值和当日盈亏，同一账户同一天覆盖更新。仅保存字段完整的账户，部分账户缺值时保留其他账户记录并报告失败。数据存放于 `investment_networth_snapshots`，当前授权可见账户由 `investment_networth_account_scopes` 限定。切换授权后保留历史存储，并按新授权账户范围读取。
+
+曲线在缺记录或账户集合变化时断开，避免将账户范围变动显示为投资收益。每日明细提供对应日期、账户数与净值；尚无记录时显示空态。接口及验证说明见[前端改版实现](../frontend-redesign-backend-requirements.md)。
 
 ## 数据、验证与参考
 

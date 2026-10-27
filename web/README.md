@@ -5,7 +5,7 @@ React + TypeScript 前端，使用 Vite、Tailwind CSS、Radix UI、Lucide、Rea
 ## 目录与归属
 
 ```text
-src/app/                 登录、应用装配、导航外壳、主题
+src/app/                 登录、应用装配、顶部导航外壳、路由兜底、主题
 src/features/ai/         平台 AI 对话面板
 src/features/dashboard/ 总览及布局配置
 src/features/notifications/ 通知列表与 SSE
@@ -21,7 +21,7 @@ src/styles.css          主题变量和共享样式
 
 ## 模块注册和缓存
 
-`src/modules/<id>/<id>.module.ts` 声明 pages、widgets、可选 icons 和 settings。Registry 自动收集声明，组件按需加载。后端 `pageKey/widgetKind` 只映射到已编译的本地注册项；Shell 和总览不包含业务组件实现。外部模块不进入该注册表，页面为 `/apps/{id}/{pageName}`，由通用 iframe 容器加载 `/modules/{id}/ui/*` 与设置 `/modules/{id}/settings/*`。未知图标回退到宿主默认图标。
+`src/modules/<id>/<id>.module.ts` 声明 pages、widgets，以及可选的 icons、settings、`menu`（顶部导航下拉项）和 `subpages`（挂在 `${route}/${path}` 下的子页面）。平台页面的菜单放在 `src/app/navigation.ts`。Registry 自动收集声明，组件按需加载。后端 `pageKey/widgetKind` 只映射到已编译的本地注册项；Shell 和总览不包含业务组件实现。外部模块不进入该注册表，页面为 `/apps/{id}/{pageName}`，由通用 iframe 容器加载 `/modules/{id}/ui/*` 与设置 `/modules/{id}/settings/*`。未知图标回退到宿主默认图标。
 
 模块设置接收 `{ enabled: boolean }`，停用时不发起业务查询。设置弹窗由平台管理，没有设置组件的模块展示暂无配置内容。
 
@@ -32,7 +32,8 @@ src/styles.css          主题变量和共享样式
 完整的组件选型、状态、可达性与响应式要求见[前端界面规范](../doc/frontend-guidelines.md)。
 
 - 图标使用 Lucide。标题使用 PageHeader，卡片和按钮使用共享 Card、Button；按钮形式的站内跳转使用 ButtonLink。
-- 配色读取 `styles.css` 的语义变量，兼容明暗主题，尊重系统及工作空间的减少动态效果设置。
+- 配色读取 `styles.css` 的语义变量，兼容明暗主题，尊重系统及工作空间的减少动态效果设置。默认 palette 为 TradingView 风格，可选 `claude`（暖陶）；主题默认跟随系统。
+- 外壳是顶部导航，不使用侧栏和页脚。`Ctrl+J`（macOS 上是 `⌘J`）打开或关闭 AI 面板，头像菜单提供主题切换。
 - 删除确认使用共享 ConfirmDialog 与 useConfirmDelete，支持键盘操作，并按操作结果恢复焦点。
 - 设置页面有六个标签：业务模块、AI 配置、通知推送、账户安全、外观、数据与运行。切换时保留当前页面内的表单草稿；支持方向键、Home/End。`/settings?tab=modules|ai|notifications|security|appearance|data` 可定位标签。
 - 业务设置弹窗最大宽度 480px，支持 Escape、遮罩及关闭按钮，接入 `useReportDirty` 拦截未保存草稿关闭，并将焦点还给触发按钮。
