@@ -39,11 +39,9 @@ export default function PositionsPage() {
     <div className="page positions-page">
       <PageHeader
         title="持仓"
+        description={positions.data?.updatedAt ? `更新于 ${formatDateTime(positions.data.updatedAt, { seconds: true })}` : undefined}
         action={<Button variant="secondary" size="sm" disabled={positions.isFetching} onClick={() => positions.refetch()}>刷新</Button>}
       />
-      {positions.data?.updatedAt && (
-        <p className="mb-4 text-xs text-[var(--muted)]">更新于 {formatDateTime(positions.data.updatedAt, { seconds: true })}</p>
-      )}
       {positions.isPending ? <Skeleton className="h-64" /> : positions.isError ? (
         <Notice tone="danger" title="持仓加载失败" action={retry}>{positions.error.message}</Notice>
       ) : (

@@ -1,13 +1,11 @@
 import { useContext, useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Maximize, Maximize2, Minimize, Minimize2 } from "lucide-react";
-import { Link, Navigate, useSearchParams } from "react-router-dom";
+import { Navigate, useSearchParams } from "react-router-dom";
 import { Button, ButtonLink } from "../../components/ui/Button";
 import { Notice } from "../../components/ui/Notice";
 import { Skeleton } from "../../components/ui/States";
 import { ThemeContext, type Theme } from "../../shared/theme";
-import { refreshSchwabToken, useInvestmentView, useRefreshInvestment, useSchwabSettings } from "./queries";
-import { APIError } from "../../shared/api";
+import { refreshSchwabToken, useRefreshInvestment, useSchwabSettings } from "./queries";
 import { moduleQueryKey } from "../../shared/queryKeys";
 
 export default function InvestmentPage() {
@@ -24,80 +22,18 @@ export default function InvestmentPage() {
 }
 
 function InvestmentChart() {
-  const viewSettings = useInvestmentView();
-  if (viewSettings.query.isPending)
-    return (
-      <div className="investment-page">
-        <Skeleton className="investment-view" />
-      </div>
-    );
-  if (viewSettings.query.isError)
-    return (
-      <div className="investment-page">
-        <div className="investment-view investment-gate">
-          <Notice tone="danger" title="投资设置加载失败" action={<Button onClick={() => viewSettings.query.refetch()}>重新加载</Button>}>
-            {viewSettings.query.error.message}
-          </Notice>
-        </div>
-      </div>
-    );
-  return <InvestmentContent viewSettings={viewSettings} />;
-}
-
-function InvestmentContent({ viewSettings }: { viewSettings: ReturnType<typeof useInvestmentView> }) {
   const schwab = useSchwabSettings(true);
   const refresh = useRefreshInvestment();
   const retry = useMutation({
     mutationFn: refreshSchwabToken,
     onSettled: refresh,
   });
-  const [searchParams, setSearchParams] = useSearchParams();
-  const restoredView = useRef(false);
-  const expanded = searchParams.get("view") === "terminal";
+  const [searchParams] = useSearchParams();
   const requestedSymbol = searchParams.get("symbol")?.trim().toUpperCase() ?? "";
   const symbol = /^[A-Z$/][A-Z0-9./-]{0,14}$/.test(requestedSymbol) ? requestedSymbol : undefined;
-  const terminal = useRef<HTMLElement>(null);
-  const [fullscreen, setFullscreen] = useState(false);
-  const [fullscreenError, setFullscreenError] = useState("");
   const theme = useContext(ThemeContext);
   const connected = schwab.data?.connected === true;
   const reauthorizationRequired = schwab.data?.reauthorizationRequired === true;
-
-  useEffect(() => {
-    if (restoredView.current) return;
-    restoredView.current = true;
-    if (searchParams.has("view") || !viewSettings.view?.expanded) return;
-    const next = new URLSearchParams(searchParams);
-    next.set("view", "terminal");
-    setSearchParams(next, { replace: true });
-  }, [searchParams, setSearchParams, viewSettings.view]);
-
-  useEffect(() => {
-    const update = () => setFullscreen(Boolean(terminal.current && document.fullscreenElement === terminal.current));
-    document.addEventListener("fullscreenchange", update);
-    return () => document.removeEventListener("fullscreenchange", update);
-  }, []);
-
-  async function toggleExpanded() {
-    if (document.fullscreenElement) await document.exitFullscreen();
-    // The preference schema keeps `tab`; the chart is the only view on this page.
-    viewSettings.setView({ tab: "terminal", expanded: !expanded });
-    const next = new URLSearchParams(searchParams);
-    next.delete("tab");
-    if (expanded) next.delete("view");
-    else next.set("view", "terminal");
-    setSearchParams(next);
-  }
-
-  async function toggleFullscreen() {
-    setFullscreenError("");
-    try {
-      if (document.fullscreenElement) await document.exitFullscreen();
-      else await terminal.current?.requestFullscreen();
-    } catch {
-      setFullscreenError("浏览器未能进入全屏，可改用页面铺满。");
-    }
-  }
 
   const login = schwab.data?.hasAppSecret && schwab.data.callbackUrl.startsWith("https://") && (
     <Button
@@ -108,29 +44,7 @@ function InvestmentContent({ viewSettings }: { viewSettings: ReturnType<typeof u
       登录 Schwab
     </Button>
   );
-  const banner = viewSettings.save.isError ? (
-    <Notice
-      tone="warning"
-      title="投资视图尚未保存"
-      action={
-        <Button
-          variant="secondary"
-          onClick={() => {
-            if (viewSettings.save.error instanceof APIError && viewSettings.save.error.status === 409) window.location.reload();
-            else if (viewSettings.save.variables) viewSettings.save.mutate(viewSettings.save.variables);
-          }}
-        >
-          {viewSettings.save.error instanceof APIError && viewSettings.save.error.status === 409 ? "重新加载" : "重试保存"}
-        </Button>
-      }
-    >
-      {viewSettings.save.error.message}
-    </Notice>
-  ) : fullscreenError ? (
-    <Notice tone="warning" title="全屏不可用">
-      {fullscreenError}
-    </Notice>
-  ) : connected && schwab.data?.lastError ? (
+  const banner = connected && schwab.data?.lastError ? (
     <Notice
       tone="danger"
       title="Schwab 连接异常"
@@ -145,9 +59,9 @@ function InvestmentContent({ viewSettings }: { viewSettings: ReturnType<typeof u
   ) : null;
 
   return (
-    <div className="investment-page" data-expanded={expanded}>
+    <div className="investment-page">
       <h1 className="sr-only">投资</h1>
-      <section ref={terminal} className="investment-view" aria-label="投资终端">
+      <section className="investment-view" aria-label="投资终端">
         {schwab.isPending && <Skeleton className="investment-terminal" />}
         {schwab.isError && (
           <div className="investment-gate">
@@ -202,64 +116,66 @@ function InvestmentContent({ viewSettings }: { viewSettings: ReturnType<typeof u
         )}
         {connected && <InvestmentTerminal theme={theme} symbol={symbol} />}
         {banner && <div className="investment-banner">{banner}</div>}
-        <div className="investment-float" role="toolbar" aria-label="图表窗口">
-          <button
-            type="button"
-            className="investment-float-button focus-ring"
-            title={expanded ? "返回工作台" : "页面铺满"}
-            aria-label={expanded ? "返回工作台" : "页面铺满"}
-            aria-pressed={expanded}
-            onClick={() => {
-              void toggleExpanded();
-            }}
-          >
-            {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-          </button>
-          <button
-            type="button"
-            className="investment-float-button focus-ring"
-            title={fullscreen ? "退出全屏" : "全屏"}
-            aria-label={fullscreen ? "退出全屏" : "全屏"}
-            aria-pressed={fullscreen}
-            disabled={!document.fullscreenEnabled}
-            onClick={() => {
-              void toggleFullscreen();
-            }}
-          >
-            {fullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
-          </button>
-          <Link
-            className="investment-float-button focus-ring"
-            to={`/investment?view=terminal${symbol ? `&symbol=${encodeURIComponent(symbol)}` : ""}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            title="新窗口"
-            aria-label="新窗口"
-          >
-            <ExternalLink size={15} />
-          </Link>
-        </div>
       </section>
     </div>
   );
 }
 
+/** Parent-side limits: they hold even when the terminal document never runs its own loading script. */
+const TERMINAL_SLOW_MS = 20_000;
+const TERMINAL_STALL_MS = 90_000;
+type TerminalLoad = "loading" | "slow" | "stalled" | "ready" | "failed";
+
 function InvestmentTerminal({ theme, symbol }: { theme: Theme; symbol?: string }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const client = useQueryClient();
+  const themeRef = useRef(theme);
   // Keep the chart document and its selected symbol/interval across theme changes.
   const [src] = useState(() => `/investment/terminal?theme=${theme}${symbol ? `&symbol=${encodeURIComponent(symbol)}` : ""}`);
+  const [attempt, setAttempt] = useState(0);
+  const [load, setLoad] = useState<TerminalLoad>("loading");
+  const heardFromTerminal = useRef(false);
+  const lastProgress = useRef(0);
   useEffect(() => {
+    themeRef.current = theme;
     frame.current?.contentWindow?.postMessage({ type: "workbench.theme", theme }, window.location.origin);
   }, [theme]);
   useEffect(() => {
+    // Restart the watchdog for every mounted frame, including a retry.
+    heardFromTerminal.current = false;
+    lastProgress.current = Date.now();
+    const timer = window.setInterval(() => {
+      setLoad((current) => {
+        if (current === "ready" || current === "failed" || current === "stalled") return current;
+        const idle = Date.now() - lastProgress.current;
+        if (idle >= TERMINAL_STALL_MS) return "stalled";
+        // The terminal shows its own "still loading" state; only cover for a silent frame.
+        if (!heardFromTerminal.current && idle >= TERMINAL_SLOW_MS) return "slow";
+        return current;
+      });
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [attempt]);
+  useEffect(() => {
     const onMessage = (event: MessageEvent) => {
-      if (
-        event.origin !== window.location.origin ||
-        event.source !== frame.current?.contentWindow ||
-        event.data?.type !== "workbench.schwab.status_changed"
-      )
+      if (event.origin !== window.location.origin || event.source !== frame.current?.contentWindow) return;
+      const type: unknown = event.data?.type;
+      if (type === "workbench.terminal.progress" || type === "workbench.terminal.slow") {
+        heardFromTerminal.current = true;
+        if (type === "workbench.terminal.progress") lastProgress.current = Date.now();
+        setLoad((current) => (current === "slow" ? "loading" : current));
         return;
+      }
+      if (type === "workbench.terminal.ready") {
+        setLoad("ready");
+        return;
+      }
+      if (type === "workbench.terminal.failed") {
+        heardFromTerminal.current = true;
+        setLoad("failed");
+        return;
+      }
+      if (type !== "workbench.schwab.status_changed") return;
       void client.invalidateQueries({
         queryKey: moduleQueryKey("investment", "schwab"),
       });
@@ -271,15 +187,30 @@ function InvestmentTerminal({ theme, symbol }: { theme: Theme; symbol?: string }
     return () => window.removeEventListener("message", onMessage);
   }, [client]);
   return (
-    <iframe
-      ref={frame}
-      title="TradingView 投资终端"
-      className="investment-terminal"
-      allowFullScreen
-      src={src}
-      onLoad={() => {
-        frame.current?.contentWindow?.postMessage({ type: "workbench.theme", theme }, window.location.origin);
-      }}
-    />
+    <div className="investment-terminal-shell">
+      <iframe
+        key={attempt}
+        ref={frame}
+        title="TradingView 投资终端"
+        className="investment-terminal"
+        allowFullScreen
+        src={src}
+        onLoad={() => {
+          frame.current?.contentWindow?.postMessage({ type: "workbench.theme", theme: themeRef.current }, window.location.origin);
+        }}
+      />
+      {(load === "slow" || load === "stalled") && (
+        <div className="investment-terminal-cover" role={load === "stalled" ? "alert" : "status"}>
+          <strong>{load === "stalled" ? "图表加载失败" : "还在加载图表…"}</strong>
+          <p>{load === "stalled" ? "图表超过 90 秒没有任何进展。" : "首次打开可能较慢，可以继续等待，或重新加载。"}</p>
+          <Button variant={load === "stalled" ? "primary" : "secondary"} size="sm" onClick={() => {
+            setLoad("loading");
+            setAttempt((value) => value + 1);
+          }}>
+            重新加载
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }

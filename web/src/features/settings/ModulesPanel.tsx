@@ -63,7 +63,7 @@ export function ModulesPanel() {
           <div>
             <h3>{module.name}</h3>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-[var(--muted)]">
-              <Badge tone={module.lastError ? "danger" : module.pending ? "warning" : module.observedEnabled ? "success" : "neutral"}>
+              <Badge tone={module.lastError ? "danger" : module.pending ? "warning" : module.observedEnabled ? "info" : "neutral"}>
                 {moduleStatus(module)}
               </Badge>
             </div>

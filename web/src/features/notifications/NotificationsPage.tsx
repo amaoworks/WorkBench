@@ -1,8 +1,8 @@
-import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { Archive, Bell, CheckCheck } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
-import { api } from "../../shared/api";
-import { notificationsPageSchema, type Notification } from "../../shared/schema";
+import { api, apiValidated } from "../../shared/api";
+import { notificationsPageSchema, unreadCountSchema, type Notification } from "../../shared/schema";
 import { Button, ButtonLink } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
 import { Skeleton } from "../../components/ui/States";
@@ -37,6 +37,12 @@ export default function NotificationsPage() {
   });
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["notifications"] });
   const onError = (error: Error) => toast.error(error.message);
+  // Shares the top-bar badge query; 「全部已读」 is only actionable while something is unread anywhere.
+  const unread = useQuery({
+    queryKey: ["notifications", "count"],
+    queryFn: () => apiValidated("/api/notifications/unread-count", unreadCountSchema),
+  });
+  const unreadCount = unread.data?.count ?? items0Unread(notifications.data);
   const markAll = useMutation({
     mutationFn: () => api("/api/notifications/read-all", { method: "PUT", body: "{}" }),
     onSuccess: refresh,
@@ -81,11 +87,13 @@ export default function NotificationsPage() {
     <div className="page notifications-page">
       <PageHeader
         title="通知"
+        description={unread.data ? `${unreadCount > 0 ? `${unreadCount} 条未读` : "没有未读通知"} · 待办、资讯、投资与系统消息` : undefined}
         action={
           <Button
             variant="secondary"
             size="sm"
-            disabled={markAll.isPending || !items.some((item) => !item.readAt)}
+            disabled={markAll.isPending || unreadCount === 0}
+            title={unreadCount === 0 ? "没有未读通知" : undefined}
             onClick={() => markAll.mutate()}
           >
             <CheckCheck size={15} />
@@ -94,11 +102,11 @@ export default function NotificationsPage() {
         }
       />
       <div className="mb-5 flex flex-wrap items-center gap-3">
-        <nav className="pill-tabs" aria-label="通知筛选">
-          <Link to={link({ filter: null })} className={cn("pill-tab focus-ring", !unreadOnly && "is-active")} aria-current={!unreadOnly ? "page" : undefined}>
+        <nav className="rtabs" aria-label="通知筛选">
+          <Link to={link({ filter: null })} className={cn("rtab sm focus-ring", !unreadOnly && "is-active")} aria-current={!unreadOnly ? "page" : undefined}>
             全部
           </Link>
-          <Link to={link({ filter: "unread" })} className={cn("pill-tab focus-ring", unreadOnly && "is-active")} aria-current={unreadOnly ? "page" : undefined}>
+          <Link to={link({ filter: "unread" })} className={cn("rtab sm focus-ring", unreadOnly && "is-active")} aria-current={unreadOnly ? "page" : undefined}>
             未读
           </Link>
         </nav>
@@ -159,7 +167,7 @@ export default function NotificationsPage() {
               {group.label}
               <span>{group.items.length}</span>
             </h2>
-            <Card className="divide-y divide-[var(--border)]">
+            <Card className="divide-y divide-[var(--hair)]">
               {group.items.map((item) => (
                 <NotificationRow
                   key={item.id}
@@ -226,3 +234,8 @@ function NotificationRow({ item, source, onRead, onArchive }: { item: Notificati
 }
 
 const severityClass = { info: "status-info", success: "status-success", warning: "status-warning", error: "status-error" };
+
+/** Fallback before the unread-count query answers: unread rows among what is loaded. */
+function items0Unread(data: InfiniteData<{ items: Notification[] }> | undefined) {
+  return data?.pages.reduce((sum, page) => sum + page.items.filter((item) => !item.readAt).length, 0) ?? 0;
+}

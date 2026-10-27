@@ -23,10 +23,10 @@ export function NetWorthHistory() {
     <section className="mt-5 min-w-0 border-t border-[var(--border)] pt-4" aria-labelledby={id}>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <h3 id={id} className="font-medium">净值历史</h3>
-        <div className="pill-tabs" role="group" aria-label="净值时间范围">
+        <div className="rtabs" role="group" aria-label="净值时间范围">
           {RANGES.map((item) => (
             <button
-              key={item.id} type="button" className={cn("pill-tab focus-ring", range === item.id && "is-active")}
+              key={item.id} type="button" className={cn("rtab sm focus-ring", range === item.id && "is-active")}
               aria-pressed={range === item.id} onClick={() => setRange(item.id)}
             >{item.label}</button>
           ))}

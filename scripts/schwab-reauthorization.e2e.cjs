@@ -73,11 +73,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     await page.getByRole("button", { name: "重新授权", exact: true }).waitFor();
     assert.equal(await iframe.count(), 0);
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByRole("button", { name: "页面铺满", exact: true }).click();
     assert.equal(await page.getByRole("button", { name: "重新授权", exact: true }).isVisible(), true);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await page.screenshot({ path: join(tmpdir(), "workbench-schwab-reauthorization-mobile.png"), fullPage: true });
-    await page.getByRole("button", { name: "返回工作台", exact: true }).click();
 
     await page.getByRole("link", { name: "设置", exact: true }).click();
     await page.getByRole("button", { name: "投资设置", exact: true }).click();
@@ -99,7 +97,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     assert.equal(authorizations, 1);
     assert.equal(await page.getByRole("button", { name: "重新授权", exact: true }).count(), 0);
     assert.deepEqual(errors, []);
-    console.log("PASS: transient retry, immediate authorization failure, reload persistence, mobile/expanded prompt, settings and dashboard actions, OAuth return and terminal recovery; mocked accounts only.");
+    console.log("PASS: transient retry, immediate authorization failure, reload persistence, mobile prompt, settings and dashboard actions, OAuth return and terminal recovery; mocked accounts only.");
   } finally {
     await browser?.close();
     if (app && app.exitCode === null && app.pid) {

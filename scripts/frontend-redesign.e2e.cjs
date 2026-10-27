@@ -230,13 +230,14 @@ async function openModuleMenu(page, label) {
     await aiPanel.waitFor({ state: "detached" });
 
     // Desktop pointer and keyboard navigation.
-    let nav = await openModuleMenu(page, "待办");
-    await nav.menu.getByRole("menuitem", { name: /今天/ }).waitFor();
+    // Only 投资 declares a dropdown; the other top-level entries are plain links.
+    let nav = await openModuleMenu(page, "投资");
+    await nav.menu.getByRole("menuitem", { name: /价格监控/ }).waitFor();
     await page.mouse.move(0, 400);
     await nav.menu.waitFor({ state: "detached" });
     await nav.trigger.focus();
     await nav.trigger.press("ArrowDown");
-    nav = { trigger: nav.trigger, menu: page.getByRole("menu", { name: "待办", exact: true }) };
+    nav = { trigger: nav.trigger, menu: page.getByRole("menu", { name: "投资", exact: true }) };
     await nav.menu.waitFor();
     assert.equal(await nav.menu.getByRole("menuitem").first().evaluate((node) => node === document.activeElement), true);
     await nav.menu.getByRole("menuitem").first().press("End");
@@ -247,12 +248,11 @@ async function openModuleMenu(page, label) {
     await nav.menu.waitFor({ state: "detached" });
     assert.equal(await nav.trigger.evaluate((node) => node === document.activeElement), true, "Escape must restore top-nav focus");
 
-    // Settings is already mounted before module settings is entered repeatedly through a business menu.
+    // Settings is already mounted before module settings is opened repeatedly from the module list.
     await page.goto(`${baseURL}/settings?tab=modules`);
     await page.getByRole("heading", { name: "业务", exact: true }).waitFor();
     for (let attempt = 0; attempt < 2; attempt++) {
-      const { menu } = await openModuleMenu(page, "待办");
-      await menu.getByRole("menuitem", { name: /Wallos 续费/ }).click();
+      await page.getByRole("button", { name: "待办设置", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "待办设置", exact: true });
       await dialog.getByLabel("Wallos 地址", { exact: true }).waitFor();
       await expectURL(page, "/settings", { tab: "modules", module: "todo" });
@@ -283,8 +283,22 @@ async function openModuleMenu(page, label) {
     await page.getByText("改版回归通知", { exact: true }).waitFor();
     assert.equal(new URL(page.url()).searchParams.get("filter"), "unread", "clearing source must retain the unread filter");
 
-    // Priority/category fields create real tasks and remain queryable after a view change.
+    // The agenda includes overdue tasks, keeps its full total, and shows eight cards.
+    const overdueTasks = [];
+    for (let index = 0; index < 10; index++) {
+      overdueTasks.push(await api(page, "/api/modules/todo/tasks", "POST", {
+        title: `逾期日程 ${index + 1}`,
+        dueAt: new Date(Date.now() - (index + 1) * 86_400_000).toISOString(),
+      }));
+    }
     await page.goto(`${baseURL}/todo`);
+    await page.getByText("今天及逾期 10 项待完成", { exact: true }).waitFor();
+    assert.equal(await page.locator(".todo-page .cal-grid .cal").count(), 8,
+      "the agenda must show eight cards without truncating its total");
+    for (const task of overdueTasks) await api(page, `/api/modules/todo/tasks/${task.id}`, "DELETE");
+    await page.reload();
+
+    // Priority/category fields create real tasks and remain queryable after a view change.
     await page.getByLabel("待办标题", { exact: true }).fill("改版高优先级待办");
     await page.getByLabel("优先级", { exact: true }).click();
     await page.getByRole("option", { name: "高优先级", exact: true }).click();
@@ -343,17 +357,18 @@ async function openModuleMenu(page, label) {
     await failurePage.getByText("模拟业务列表失败", { exact: true }).waitFor();
     await failurePage.close();
 
-    // Touch uses first tap to open a desktop dropdown and second tap to navigate.
+    // Touch: the first tap opens the desktop dropdown without navigating; tapping an item navigates.
     const touchContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, hasTouch: true });
     const touchPage = await touchContext.newPage();
     await installFixtures(touchPage, state);
     await touchPage.goto(baseURL);
-    const touchTodo = touchPage.getByRole("link", { name: "待办", exact: true });
-    await touchTodo.tap();
-    await touchPage.getByRole("menu", { name: "待办", exact: true }).waitFor();
+    const touchInvestment = touchPage.getByRole("link", { name: "投资", exact: true });
+    await touchInvestment.tap();
+    const touchMenu = touchPage.getByRole("menu", { name: "投资", exact: true });
+    await touchMenu.waitFor();
     assert.equal(new URL(touchPage.url()).pathname, "/");
-    await touchTodo.tap();
-    await expectURL(touchPage, "/todo");
+    await touchMenu.getByRole("menuitem", { name: /持仓/ }).tap();
+    await expectURL(touchPage, "/investment/positions");
     await touchContext.close();
 
     const macContext = await browser.newContext({

@@ -2,6 +2,7 @@ package todo
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -61,5 +62,33 @@ func TestAgendaListsOverdueAndTodayOnly(t *testing.T) {
 	}
 	if !agenda.Wallos || len(agenda.Renewals) != 1 || agenda.Renewals[0].Name != "Netflix" || agenda.Renewals[0].Amount != "¥68.00" || agenda.Renewals[0].PaymentDate != "2026-10-29" {
 		t.Fatalf("renewals %+v", agenda.Renewals)
+	}
+}
+
+func TestAgendaLimitsItemsAndKeepsTotal(t *testing.T) {
+	module, _ := openTodoModule(t)
+	ctx := context.Background()
+	now := time.Date(2026, 10, 26, 8, 0, 0, 0, time.UTC)
+	module.now = func() time.Time { return now }
+
+	for i := range 10 {
+		due := now.Add(time.Duration(i+1) * time.Hour)
+		if _, err := module.Create(ctx, CreateTask{Title: fmt.Sprintf("task-%02d", i), DueAt: &due}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	agenda, err := module.agenda(ctx, "UTC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agenda.Total != 10 {
+		t.Fatalf("total = %d, want 10", agenda.Total)
+	}
+	if len(agenda.Items) != agendaTaskLimit {
+		t.Fatalf("items = %d, want %d", len(agenda.Items), agendaTaskLimit)
+	}
+	if agenda.Items[0].Title != "task-00" || agenda.Items[7].Title != "task-07" {
+		t.Fatalf("items are not the earliest eight tasks: %+v", agenda.Items)
 	}
 }

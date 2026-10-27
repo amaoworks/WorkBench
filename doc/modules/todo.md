@@ -4,7 +4,7 @@
 
 ## 功能和数据
 
-待办支持创建、修改标题/说明/提醒时间/优先级/分类、完成与恢复、删除、分页，以及未完成/逾期/已完成概览。页面提供创建、完成切换、删除和加载更多；完整修改字段由后端 API 提供。页面按 已逾期/今天/本周/以后/无截止时间/已完成 分组，用 `?view=all|today|week|later|done` 切换视图，`?new=1` 会聚焦创建输入框。视图筛选和标签计数由服务端对完整数据集计算，优先级与分类筛选同样作用于服务端分页和计数。Wallos 生成的任务使用 `category = "renewal"`，页面据此显示「续费」标记。
+待办支持创建、修改标题/说明/提醒时间/优先级/分类、完成与恢复、删除、分页，以及未完成/逾期/已完成概览。页面顶部为一行概况（今天及逾期待完成、本周剩余、今天已完成，来自 `widget/today` 与计数接口），随后「今天」日程卡显示今天到期与逾期的待办（最多 8 张，包含优先级、分类、备注），再是「全部待办」：视图标签带服务端计数，可按优先级、分类筛选，快速输入支持截止时间、优先级和分类。页面提供创建、完成切换、删除和加载更多；完整修改字段由后端 API 提供。列表按 已逾期/今天/本周/以后/无截止时间/已完成 分组，用 `?view=all|today|week|later|done` 切换视图，`?new=1` 会聚焦创建输入框。视图筛选和标签计数由服务端对完整数据集计算，优先级与分类筛选同样作用于服务端分页和计数。Wallos 生成的任务使用 `category = "renewal"`，页面据此显示「续费」标记。
 
 标题去除首尾空白后须为 1–300 字节，说明最多 10000 字节，分类去除首尾空白后最多 40 个字符。优先级为 `none|low|medium|high`，默认 `none`。提醒时间、完成时间和分类可以为空，业务时间以 UTC 保存并通过 JSON 时间字符串返回。
 
@@ -24,7 +24,7 @@
 | PATCH | `/api/modules/todo/tasks/{id}` | 可提交 title、description、dueAt、clearDueAt、completed、priority、category、clearCategory |
 | DELETE | `/api/modules/todo/tasks/{id}` | 删除，成功为 204 |
 | GET | `/api/modules/todo/widget/summary` | `{ open, overdue, completed }` |
-| GET | `/api/modules/todo/widget/today` | 今日到期/逾期任务与续费；`completedToday` 按 `tz` 统计当日完成数 |
+| GET | `/api/modules/todo/widget/today` | 今日到期/逾期任务最多 8 条，续费最多 5 条；`total` 为今日到期与逾期待办全量计数，`completedToday` 按 `tz` 统计当日完成数 |
 
 任务不存在时，修改和删除返回 404。所有入口受平台鉴权、请求保护和模块开关控制。
 

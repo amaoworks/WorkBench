@@ -1,9 +1,9 @@
 import { useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { ExternalLink, Send } from "lucide-react";
+import { ExternalLink, Send, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "../../components/ui/Button";
-import { Card, CardHeader } from "../../components/ui/Card";
+import { cn } from "../../shared/cn";
 import { Badge } from "../../components/ui/Badge";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { Field } from "../../components/ui/Field";
@@ -44,10 +44,13 @@ export default function DigestsTab() {
     create.mutate();
   }
 
+  const [latest, ...older] = items;
+
   return (
-    <div className="space-y-4">
-      <Card className="p-4">
-        <form onSubmit={submit} className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(10rem,1fr)_9rem_9rem_auto]">
+    <>
+      <section className="sec" aria-labelledby="news-digest-new">
+        <h2 id="news-digest-new" className="sec-title">生成简报</h2>
+        <form onSubmit={submit} className="inline-form news-digest-form">
           <Field label="主题">
             <input value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="全部主题" />
           </Field>
@@ -57,47 +60,56 @@ export default function DigestsTab() {
           <Field label="最多条数">
             <input type="number" min={1} max={30} required value={maxItems} onChange={(event) => setMaxItems(event.target.valueAsNumber)} />
           </Field>
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="mb-2 flex items-center gap-2 text-sm">
+          <div className="news-digest-submit">
+            <label className="inline-switch">
               <Switch label="提交推送" checked={push} onChange={setPush} />
-              提交推送
-            </div>
-            <Button disabled={create.isPending}>{create.isPending ? "生成中…" : "生成简报"}</Button>
+              <span aria-hidden="true">提交推送</span>
+            </label>
+            <Button disabled={create.isPending}>
+              <Sparkles size={15} />
+              {create.isPending ? "生成中…" : "生成简报"}
+            </Button>
           </div>
         </form>
-      </Card>
-      <Card>
-        <CardHeader title="历史简报" description={digests.data ? `${items.length} 份` : "正在读取"} />
+      </section>
+      <section className="sec" aria-labelledby="news-digest-history">
+        <h2 id="news-digest-history" className="sec-title">
+          历史简报
+          {digests.data && <span className="sec-count">{items.length}</span>}
+        </h2>
         {digests.isPending && (
-          <div className="space-y-3 p-4">
-            <Skeleton className="h-32" />
-            <Skeleton className="h-32" />
+          <div className="space-y-3">
+            <Skeleton className="h-32 rounded-2xl" />
+            <Skeleton className="h-32 rounded-2xl" />
           </div>
         )}
         {digests.isError && (
-          <Notice className="m-4" tone="danger" title="简报读取失败">
+          <Notice className="mb-4" tone="danger" title="简报读取失败">
             {digests.error.message}
           </Notice>
         )}
         {digests.data && items.length === 0 && <EmptyState title="暂无简报" description="选择范围后生成第一份简报。" />}
-        <div className="divide-y divide-[var(--border)]">
-          {items.map((digest) => (
-            <DigestRow key={digest.id} digest={digest} />
-          ))}
-        </div>
+        {latest && <DigestRow digest={latest} featured />}
+        {older.length > 0 && (
+          <div className="news-digest-list">
+            {older.map((digest) => (
+              <DigestRow key={digest.id} digest={digest} />
+            ))}
+          </div>
+        )}
         {digests.hasNextPage && (
-          <div className="p-4">
+          <div className="mt-4 flex justify-center">
             <Button variant="secondary" disabled={digests.isFetchingNextPage} onClick={() => digests.fetchNextPage()}>
               {digests.isFetchingNextPage ? "加载中…" : "加载更多"}
             </Button>
           </div>
         )}
-      </Card>
-    </div>
+      </section>
+    </>
   );
 }
 
-function DigestRow({ digest }: { digest: Digest }) {
+function DigestRow({ digest, featured = false }: { digest: Digest; featured?: boolean }) {
   const refresh = useRefreshNews();
   const push = useMutation({
     mutationFn: () => pushDigest(digest.id),
@@ -108,42 +120,47 @@ function DigestRow({ digest }: { digest: Digest }) {
     onError: (error) => toast.error(error.message),
   });
   return (
-    <article className="min-w-0 space-y-3 p-4">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
+    <article className={cn("news-digest", featured && "news-brief")}>
+      <div className="news-brief-head">
+        {featured && (
+          <span className="news-brief-mark" aria-hidden="true">
+            <Sparkles size={16} />
+          </span>
+        )}
         <div className="min-w-0 flex-1">
-          <h3 className="break-words font-medium">{digest.title}</h3>
-          <p className="mt-1 text-xs text-[var(--muted)]">
+          <b className="block break-words">{digest.title}</b>
+          <span>
             {digest.topic || "全部主题"} · {formatDateTime(digest.createdAt, { seconds: false })} · {digest.aiUsed ? "AI 简报" : "普通简报"}
-          </p>
+          </span>
         </div>
-        <div className="flex items-center gap-2">
-          {digest.notificationId && <Badge tone="success">推送已提交</Badge>}
+        <div className="flex shrink-0 items-center gap-2">
+          {digest.notificationId && <Badge tone="info">推送已提交</Badge>}
           <Button size="sm" variant="secondary" disabled={push.isPending} onClick={() => push.mutate()}>
             <Send size={14} />
             {push.isPending ? "提交中…" : "发送推送"}
           </Button>
         </div>
       </div>
-      <p className="whitespace-pre-wrap break-words text-sm">{digest.content}</p>
+      {digest.content && (digest.aiUsed || digest.items.length === 0) && <p className="news-brief-text">{digest.content}</p>}
       {digest.items.length > 0 && (
-        <ul className="space-y-1 text-sm">
+        <ol className="news-brief-list">
           {digest.items.map((item) => {
             const href = safeExternalURL(item.url);
             return (
               <li key={item.id} className="break-words">
-                <span className="text-[var(--muted)]">{item.sourceName} · </span>
                 {href ? (
-                  <a className="text-[var(--brand)] hover:underline" href={href} target="_blank" rel="noopener noreferrer">
+                  <a href={href} target="_blank" rel="noopener noreferrer">
                     {item.title}
-                    <ExternalLink className="ml-1 inline" size={13} />
+                    <ExternalLink className="ml-1 inline" size={12} aria-hidden="true" />
                   </a>
                 ) : (
                   item.title
                 )}
+                <span className="news-note"> · {item.sourceName}</span>
               </li>
             );
           })}
-        </ul>
+        </ol>
       )}
     </article>
   );

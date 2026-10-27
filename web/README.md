@@ -15,6 +15,7 @@ src/modules/<id>/       业务页面、Widget、模块设置、queries.ts、sche
 src/components/ui/      通用界面组件
 src/shared/             HTTP 客户端、平台共享 schema、工具
 src/styles.css          主题变量和共享样式
+src/assets/fonts/       本地打包的 Outfit 标题字体（woff2 与 SIL OFL 许可证）
 ```
 
 业务前端与 `internal/modules/<id>/` 一一对应。业务接口函数、查询 hooks 和缓存刷新放模块内 `queries.ts`，数据校验和推导类型放 `schema.ts`。共享 `api` 返回 `unknown`，读取字段前调用 `apiValidated` 或 schema 的 `parse`；设置类型也由 `features/settings/schema.ts` 推导。页面保留表单与交互状态；平台 shared 不存放 Task 等业务专属模型。业务之间不直接导入彼此实现。
@@ -32,7 +33,7 @@ src/styles.css          主题变量和共享样式
 完整的组件选型、状态、可达性与响应式要求见[前端界面规范](../doc/frontend-guidelines.md)。
 
 - 图标使用 Lucide。标题使用 PageHeader，卡片和按钮使用共享 Card、Button；按钮形式的站内跳转使用 ButtonLink。
-- 配色读取 `styles.css` 的语义变量，兼容明暗主题，尊重系统及工作空间的减少动态效果设置。默认 palette 为 TradingView 风格，可选 `claude`（暖陶）；主题默认跟随系统。
+- 配色读取 `styles.css` 的语义变量，兼容明暗主题，尊重系统及工作空间的减少动态效果设置。默认 palette 为 TradingView 风格，可选 `claude`（暖陶）；主题默认跟随系统。标题字体 Outfit 随构建打包，不访问外部字体 CDN。
 - 外壳是顶部导航，不使用侧栏和页脚。`Ctrl+J`（macOS 上是 `⌘J`）打开或关闭 AI 面板，头像菜单提供主题切换。
 - 删除确认使用共享 ConfirmDialog 与 useConfirmDelete，支持键盘操作，并按操作结果恢复焦点。
 - 设置是单页：左侧吸顶分类导航，右侧依次是 外观、业务模块、AI、通知推送、账户安全、数据与运行 分区卡片，行内左侧名称、右侧控件。`/settings?tab=modules|ai|notifications|security|appearance|data` 滚动到对应分区，`?module=<id>` 打开业务设置弹窗。

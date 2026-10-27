@@ -81,13 +81,24 @@ const { chromium, webkit, devices } = require(process.env.PLAYWRIGHT_MODULE || "
     await page.evaluate(() => window.dispatchEvent(new ErrorEvent("error", { message: "ResizeObserver loop completed with undelivered notifications." })));
     assert.equal(await panel.getAttribute("role"), "status", "a deferred resize must not be reported as a failed chart");
     assert.equal(await retry.isVisible(), false);
-    await page.clock.fastForward(31000);
-    await page.getByRole("alert").filter({ hasText: "图表加载时间较长" }).waitFor();
+    assert.match(await page.locator("#terminal-loading-step").textContent(), /初始化图表/, "the cover names the current startup step");
+    // A slow start is not a failure: after ~20 s the cover offers a reload but keeps waiting.
+    await page.clock.fastForward(21000);
+    await page.locator("#terminal-loading-message").filter({ hasText: "还在加载" }).waitFor();
+    assert.equal(await panel.getAttribute("role"), "status", "a slow start must not be reported as a failure");
+    assert.equal(await retry.isVisible(), true);
+    await page.evaluate(() => window.resolveFixtureChart());
+    await panel.waitFor({ state: "hidden" });
+    // Only ~90 s without any startup progress fails the chart; a late success still recovers.
+    await page.goto("https://workbench.test/investment/terminal");
+    await page.waitForFunction(() => !!window.resolveFixtureChart);
+    await page.clock.fastForward(91000);
+    await page.getByRole("alert").filter({ hasText: "图表加载失败" }).filter({ hasText: "没有进展" }).waitFor();
     assert.equal(await retry.isVisible(), true);
     await page.evaluate(() => window.resolveFixtureChart());
     await panel.waitFor({ state: "hidden" });
     assert.deepEqual(unexpected, []);
-    console.log(`PASS (${useWebKit ? "WebKit" : "Chromium"}): module failure, initialization exception, retry recovery, chart timeout after stream readiness and late chart recovery; no trades.`);
+    console.log(`PASS (${useWebKit ? "WebKit" : "Chromium"}): module failure, initialization exception, retry recovery, slow-start hint after stream readiness, no-progress failure at 90 s and late chart recovery; no trades.`);
   } finally {
     await browser.close();
   }

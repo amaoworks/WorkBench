@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as 
 import { Link, NavLink, useLocation } from "react-router-dom";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Aperture, Check, ChevronDown, Menu, Monitor, Moon, Paintbrush, Fingerprint, Sparkles, Sun, UserRound, X } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "../shared/cn";
 import { aiShortcut } from "../shared/keyboard";
 import { matchesLocation, type NavEntry } from "./navigation";
@@ -36,7 +37,7 @@ export function TopNav({
           <ul>
             {entries.map((entry) => (
               <li key={entry.key}>
-                <NavDropdown entry={entry} />
+                {entry.status ? <NavPlaceholder entry={entry} /> : <NavDropdown entry={entry} />}
               </li>
             ))}
           </ul>
@@ -88,6 +89,31 @@ function menuKeys(event: ReactKeyboardEvent, menu: HTMLElement | null, close: ()
   else return;
   event.preventDefault();
   event.stopPropagation();
+}
+
+/** An enabled module that is not serving yet: grey, with a pulsing dot; a click only explains the state. */
+function NavPlaceholder({ entry, drawer = false }: { entry: NavEntry; drawer?: boolean }) {
+  if (entry.status === "skeleton")
+    return <span className={cn(drawer ? "workspace-drawer-link" : "workspace-nav-link", "is-placeholder is-skeleton")} aria-hidden="true" />;
+  const Icon = entry.icon;
+  return (
+    <button
+      type="button"
+      className={cn(drawer ? "workspace-drawer-link" : "workspace-nav-link", "is-placeholder focus-ring")}
+      data-status={entry.status}
+      aria-disabled="true"
+      title={entry.statusText}
+      aria-label={`${entry.label}（${entry.status === "error" ? "运行异常" : "启动中"}）`}
+      onClick={() => {
+        if (entry.status === "error") toast.error(entry.statusText ?? `${entry.label}运行异常`);
+        else toast(entry.statusText ?? `${entry.label}启动中`);
+      }}
+    >
+      {drawer && <Icon size={18} />}
+      <span className={drawer ? "flex-1 text-left" : undefined}>{entry.label}</span>
+      <span className="workspace-nav-pending" aria-hidden="true" />
+    </button>
+  );
 }
 
 /** Top-level link with a hover/click/keyboard dropdown. Touch: the first tap opens the menu, the second follows the link. */
@@ -298,7 +324,11 @@ function MobileNav({ entries }: { entries: NavEntry[] }) {
             </Dialog.Close>
           </div>
           <nav aria-label="主导航" className="workspace-drawer-body">
-            {entries.map((entry) => (
+            {entries.map((entry) => entry.status ? (
+              <section key={entry.key}>
+                <NavPlaceholder entry={entry} drawer />
+              </section>
+            ) : (
               <section key={entry.key}>
                 <NavLink
                   to={entry.to} end={entry.to === "/"}

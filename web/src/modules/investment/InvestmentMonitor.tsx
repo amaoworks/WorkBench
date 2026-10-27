@@ -143,7 +143,7 @@ export function InvestmentMonitor() {
           </div>
         )}
         {data?.items.length === 0 && <EmptyState title="暂无监控规则" description="添加股票或 ETF，例如 AAPL、SPY。" />}
-        <div className="divide-y divide-[var(--border)]">
+        <div className="divide-y divide-[var(--hair)] hover-rows">
           {data?.items.map((rule) => (
             <div key={rule.id} className="p-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -227,7 +227,7 @@ export function InvestmentMonitor() {
           </Notice>
         )}
         {history.data?.pages[0]?.items.length === 0 && <EmptyState title="暂无触发记录" description="达到规则阈值后会记录在这里。" />}
-        <div className="divide-y divide-[var(--border)]">
+        <div className="divide-y divide-[var(--hair)] hover-rows">
           {history.data?.pages
             .flatMap((page) => page.items)
             .map((item) => (

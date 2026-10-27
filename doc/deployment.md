@@ -183,7 +183,7 @@ sudo chmod 700 data
 
 `WORKBENCH_PUBLIC_URL` 的 Host（包括非标准端口）自动加入允许列表。应用不根据 `Forwarded` 或 `X-Forwarded-*` 判断安全来源，也不读取这些头来改变 Cookie 属性；无需配置可信代理 CIDR。后端的访问隔离由 loopback 监听、Compose 端口映射或专用容器网络保证，不应把 HTTP 后端直接发布到公网。
 
-- **Nginx**：参考 `deploy/nginx.conf.example`，替换域名、证书路径和后端端口。示例保留 Host，配置 WebSocket Upgrade，并关闭 SSE 响应缓冲。`map` 应放在 `http` 上下文。先执行 `nginx -t`，通过后重新加载配置。[WebSocket 代理说明](https://nginx.org/en/docs/http/websocket.html)
+- **Nginx**：参考 `deploy/nginx.conf.example`，替换域名、证书路径和后端端口。示例使用 Nginx 1.25.1+ 的 `http2 on;`，需要构建时启用 `ngx_http_v2_module`；旧版本使用 `listen 443 ssl http2;` 并删除 `http2 on;`。示例保留 Host，配置 WebSocket Upgrade，关闭 SSE 响应缓冲，代理读写超时均为 3600 秒。`map` 应放在 `http` 上下文。先执行 `nginx -t`，通过后重新加载配置。[HTTP/2 配置](https://nginx.org/en/docs/http/ngx_http_v2_module.html)、[WebSocket 代理说明](https://nginx.org/en/docs/http/websocket.html)
 - **Caddy**：参考 `deploy/Caddyfile.example`。宿主机 Caddy 代理到 `127.0.0.1:8080`；容器 Caddy 代理到 `workbench:8080`。域名与 DNS、80/443 入口配置正确时，由 Caddy 管理外部 HTTPS。[reverse_proxy 说明](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy)
 
 Schwab 的回调地址填写 `https://实际域名/oauth/schwab`，与 Developer Portal 登记完全一致；从同一个 HTTPS 入口开始授权。回调流程及排查见[配置与运行](configuration.md)。

@@ -227,7 +227,7 @@ test('account activity updates rows without clearing the account manager', async
     assert.equal(positionsFull, before.positionsFull);
 });
 
-test('old GTC orders remain visible and capped result windows are split', async t => {
+test('the initial order range covers 180 days and capped result windows are split', async t => {
     let rangeCalls = 0;
     const { broker } = await setup(t, path => {
         if (!path.includes('/orders?')) return;
@@ -235,7 +235,7 @@ test('old GTC orders remain visible and capped result windows are split', async 
         const params = new URL(path, 'http://localhost').searchParams;
         assert.equal(params.get('maxResults'), '3000');
         if (rangeCalls === 1) {
-            assert.ok(Date.parse(params.get('toEnteredTime')) - Date.parse(params.get('fromEnteredTime')) > 300 * 86400000);
+            assert.ok(Date.parse(params.get('toEnteredTime')) - Date.parse(params.get('fromEnteredTime')) >= 180 * 86400000 - 1000);
             return json(Array(3000).fill(rawOrder));
         }
         return json([{ ...rawOrder, orderId: rangeCalls === 2 ? 42 : 43 }]);
@@ -246,7 +246,7 @@ test('old GTC orders remain visible and capped result windows are split', async 
     assert.equal(rangeCalls, 3);
 });
 
-test('startup shares one full-year order read and the poll waits until it finishes', async t => {
+test('startup shares one 180-day order read and the poll waits until it finishes', async t => {
     let release;
     let holdFirst = true;
     let current = [rawOrder];
@@ -521,4 +521,31 @@ test('positions show Chinese asset types with a raw fallback and Chinese column 
     const titles = [...info.positionColumns, ...info.orderColumns].map(column => column.label);
     for (const title of titles) assert.doesNotMatch(title, /[A-Za-z]/, title);
     assert.deepEqual(info.positionColumns.map(column => column.label), ['标的', '方向', '数量', '均价', '现价', '已实现盈亏', '未实现盈亏', '当日盈亏', '类型']);
+});
+
+test('polls read recent orders and older working orders only, merged into the startup snapshot', async t => {
+    const day = 86400000;
+    const now = Date.now();
+    const oldFilled = { ...rawOrder, orderId: 1, status: 'FILLED', enteredTime: new Date(now - 100 * day).toISOString() };
+    const oldWorking = { ...rawOrder, orderId: 2, enteredTime: new Date(now - 20 * day).toISOString() };
+    const ranges = [];
+    let current = [oldFilled, oldWorking];
+    const { broker, updates } = await setup(t, path => {
+        if (!path.includes('/orders?')) return;
+        const params = new URL(path, 'http://localhost').searchParams;
+        ranges.push(Date.parse(params.get('toEnteredTime')) - Date.parse(params.get('fromEnteredTime')));
+        return json(current);
+    });
+    assert.equal((await broker.ordersHistory()).length, 1);
+    assert.ok(ranges[0] >= 179 * day, 'startup reads the full working-order window');
+    current = [{ ...oldWorking, status: 'FILLED' }];
+    await broker._refresh();
+    assert.ok(ranges[1] > 19 * day && ranges[1] < 22 * day, `poll range covers the oldest working order: ${ranges[1] / day}`);
+    assert.deepEqual((await broker.ordersHistory()).map(order => order.id).sort(), ['1', '2']);
+    assert.deepEqual(await broker.orders(), []);
+    assert.deepEqual(updates.map(order => [order.id, order.status]), [['2', 2]]);
+    current = [];
+    await broker._refresh();
+    assert.ok(ranges[2] <= 3 * day + 5000, 'without working orders only recent days are read');
+    assert.equal((await broker.ordersHistory()).length, 2);
 });

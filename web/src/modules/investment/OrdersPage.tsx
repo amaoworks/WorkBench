@@ -45,7 +45,7 @@ export default function OrdersPage() {
     <div className="page orders-page">
       <PageHeader
         title="订单"
-        description="只读的 Schwab 订单记录；下单、改单与撤单请在交易终端中操作。"
+        description="只读记录；下单、改单与撤单请在交易终端中操作。"
         action={
           <ButtonLink to="/investment" variant="secondary" size="sm">
             打开交易终端
@@ -76,13 +76,13 @@ function Orders() {
   return (
     <>
       <div className="mb-5 flex flex-wrap items-center gap-3">
-        <div className="pill-tabs" role="group" aria-label="时间范围">
+        <div className="rtabs" role="group" aria-label="时间范围">
           {RANGES.map((item) => (
             <button
               key={item.id}
               type="button"
               aria-pressed={item.id === range.id}
-              className={cn("pill-tab focus-ring", item.id === range.id && "is-active")}
+              className={cn("rtab sm focus-ring", item.id === range.id && "is-active")}
               onClick={() => update("range", item.id, RANGES[1].id)}
             >
               {item.label}

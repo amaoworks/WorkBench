@@ -25,6 +25,31 @@ import { ExternalPage } from "./ExternalPage";
 
 const available = (item: WorkbenchModule) =>
   item.enabled && (item.kind === "external" || (item.observedEnabled === true && !item.pending && !item.lastError));
+/** Enabled but not serving yet: shown as a grey placeholder instead of disappearing from the nav. */
+const moduleNavStatus = (item: WorkbenchModule): NavEntry["status"] =>
+  available(item) ? undefined : item.lastError ? "error" : "starting";
+
+type CachedNav = { pageKey: string; label: string; route: string; icon: string; moduleId: string; order: number };
+const NAV_CACHE_KEY = "workbench.nav.v1";
+function readNavCache(): CachedNav[] | null {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(NAV_CACHE_KEY) ?? "null");
+    if (!Array.isArray(value)) return null;
+    return value.filter(
+      (item): item is CachedNav =>
+        typeof item === "object" && item !== null && ["pageKey", "label", "route", "icon", "moduleId"].every((key) => typeof (item as Record<string, unknown>)[key] === "string"),
+    );
+  } catch {
+    return null;
+  }
+}
+function writeNavCache(items: CachedNav[]) {
+  try {
+    localStorage.setItem(NAV_CACHE_KEY, JSON.stringify(items));
+  } catch {
+    /* Private mode or a full quota only loses the first-paint hint. */
+  }
+}
 
 export function Layout() {
   const modules = useModules();
@@ -76,29 +101,53 @@ export function Layout() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
-  const navigation = useMemo(
+  const [navCache] = useState(readNavCache);
+  // Every enabled module keeps its slot; only the ready ones get routes.
+  const moduleNav = useMemo(
     () =>
       modules.data?.items
-        .filter(available)
-        .flatMap((item) => item.navigation.map((nav) => ({ ...nav, icon: item.icon, moduleId: item.id })))
+        .filter((item) => item.enabled)
+        .flatMap((item) =>
+          item.navigation.map((nav) => ({ ...nav, icon: item.icon, moduleId: item.id, moduleName: item.name, status: moduleNavStatus(item), error: item.lastError })),
+        )
         .sort((a, b) => a.order - b.order) ?? [],
     [modules.data],
   );
-  const entries = useMemo<NavEntry[]>(
-    () => [
+  const navigation = useMemo(() => moduleNav.filter((item) => !item.status), [moduleNav]);
+  useEffect(() => {
+    if (!modules.data) return;
+    writeNavCache(moduleNav.map(({ pageKey, label, route, icon, moduleId, order }) => ({ pageKey, label, route, icon, moduleId, order })));
+  }, [modules.data, moduleNav]);
+  const entries = useMemo<NavEntry[]>(() => {
+    const moduleEntries: NavEntry[] = modules.data
+      ? moduleNav.map((item) => ({
+          key: item.pageKey,
+          label: item.label,
+          to: item.route,
+          icon: iconRegistry[item.icon] ?? CheckSquare2,
+          menu: item.status ? [] : (menuRegistry[item.moduleId] ?? []),
+          status: item.status,
+          statusText: item.status === "error" ? `${item.moduleName}运行异常${item.error ? `：${item.error}` : ""}` : item.status ? `${item.moduleName}正在启动，稍后可用` : undefined,
+        }))
+      : navCache && navCache.length > 0
+        ? // Before the first /api/modules response: last known modules, in grey, until it arrives.
+          navCache.map((item) => ({
+            key: item.pageKey,
+            label: item.label,
+            to: item.route,
+            icon: iconRegistry[item.icon] ?? CheckSquare2,
+            menu: [],
+            status: "loading" as const,
+            statusText: "正在读取业务模块…",
+          }))
+        : [1, 2, 3].map((index) => ({ key: `skeleton-${index}`, label: "", to: "/", icon: CheckSquare2, menu: [], status: "skeleton" as const }));
+    return [
       { key: "overview", label: "总览", to: "/", icon: LayoutDashboard, menu: [] },
-      ...navigation.map((item) => ({
-        key: item.pageKey,
-        label: item.label,
-        to: item.route,
-        icon: iconRegistry[item.icon] ?? CheckSquare2,
-        menu: menuRegistry[item.moduleId] ?? [],
-      })),
+      ...moduleEntries,
       { key: "notifications", label: "通知", to: "/notifications", icon: Bell, badge: unread.data?.count, menu: [] },
       { key: "settings", label: "设置", to: "/settings", icon: settingsIcon, menu: [] },
-    ],
-    [navigation, unread.data?.count],
-  );
+    ];
+  }, [modules.data, moduleNav, navCache, unread.data?.count]);
   const context = pageContext(entries, location.pathname, location.search);
   return (
     <ThemeContext.Provider value={dark ? "dark" : "light"}>
@@ -143,7 +192,7 @@ export function Layout() {
 }
 
 function pageContext(entries: NavEntry[], pathname: string, search: string) {
-  const entry = [...entries].reverse().find((item) => (item.to === "/" ? pathname === "/" : pathname === item.to || pathname.startsWith(`${item.to}/`)));
+  const entry = entries.filter((item) => !item.status).reverse().find((item) => (item.to === "/" ? pathname === "/" : pathname === item.to || pathname.startsWith(`${item.to}/`)));
   if (!entry) return undefined;
   const sub = entry.menu.find((item) => matchesLocation(item.to, pathname, search));
   return sub && sub.label !== entry.label ? `${entry.label} · ${sub.label}` : entry.label;

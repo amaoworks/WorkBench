@@ -297,7 +297,7 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 
 `investment-terminal.e2e.cjs` 在 Chromium 中加载仓库内的终端代码和实际 TradingView 库，验证主题、账户和下单面板，以及完整图表实例保留。增加 `--night` 会运行 Night 与 24H 时段回归；`--24h` 可单独运行全天行情回归。时段回归检查图表顶栏恰有常规、扩展、夜盘、全天四个选项且无说明项，并验证首次从日线常规切到扩展会自动进入 5 分钟并载入非空行情；Night 只用非空 Futu K 线，24H 使用非空虚构 Schwab/Futu K 线并检查 04:00/20:00 ET 边界过滤、跨午夜合并、真实可见图表数据、缓存会话切回、1/5/15/30 分钟及不支持周期回退、夜盘关闭和非正股门控、主题及图表高度。另检查 10 分钟周期已移除；桌面详情面板验证盘前/盘后相对常规收盘的涨跌、夜盘零涨跌、缺失成交时间和日统计不被夜盘替换。库分包补丁与生产代理读取同一兼容规则，Go 测试另覆盖压缩、磁盘资源和 ETag。`--night --mobile`、`--night --webkit` 另外覆盖 320/390/844px 窄屏、横屏和菜单可达性。券商与 Futu API 均由脚本拦截为虚构响应；不读取凭据、不连接真实账户、不提交交易。
 
-`--app --preferences` 使用临时工作空间的真实数据库，验证标的、周期、行情时段、指标、画线、自选表、交易账户、TradingView 偏好和页面铺满在空白浏览器环境中的恢复；之后修改、删除并刷新，检查服务端保存的新内容。`--state` 检查图表选择的服务端保存和恢复。
+`--app --preferences` 使用临时工作空间的真实数据库，验证标的、周期、行情时段、指标、画线、自选表、交易账户和 TradingView 偏好在空白浏览器环境中的恢复；之后修改、删除并刷新，检查服务端保存的新内容。`--state` 检查图表选择的服务端保存和恢复。
 
 ```bash
 GOCACHE=/tmp/workbench-go-cache go build -o /tmp/workbench-investment-preferences-test ./cmd/workbench
@@ -346,7 +346,7 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
   node scripts/investment-terminal.e2e.cjs --webkit
 ```
 
-添加 `--app` 会在端口 18140 启动临时工作台，通过完整 React 投资页加载真实图表，并检查普通布局、页面铺满与恢复时的图表保留。该模式本地使用 HTTP，独立的手机 iframe 模式覆盖 HTTPS。`WORKBENCH_BIN` 可指定测试程序，默认 `/tmp/workbench-investment-terminal-test`；退出后清理临时数据库和进程。先构建最新程序：
+添加 `--app` 会在端口 18140 启动临时工作台，通过完整 React 投资页加载真实图表，并检查图表区域尺寸和窄屏切换时的图表保留。该模式本地使用 HTTP，独立的手机 iframe 模式覆盖 HTTPS。`WORKBENCH_BIN` 可指定测试程序，默认 `/tmp/workbench-investment-terminal-test`；退出后清理临时数据库和进程。先构建最新程序：
 
 ```bash
 go build -o /tmp/workbench-investment-terminal-test ./cmd/workbench
@@ -366,7 +366,9 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 
 设置 `WORKBENCH_TEST_FUTU_DELAY_MS=5000` 可模拟富途设置检查耗时五秒，比较修改前后的首屏等待。它只延迟 `/futu` 设置接口，轻量夜盘开关接口仍即时返回。
 
-`investment-loading.e2e.cjs` 使用真实终端文档和适配器，模拟外部图表模块加载失败、初始化异常、行情已连接但图表超时，验证失败提示、点击重试和迟到的加载成功。无需启动工作台或访问券商；图表库就绪过程使用可控 fixture。支持 `--webkit`：
+`WORKBENCH_TEST_LATENCY_MS`（0–2000）通过浏览器网络模拟设置延迟，`WORKBENCH_TEST_ACCOUNT_DELAY_MS`（0–10000）只延迟账户、持仓和订单接口，用来比较账户读取延后到图表就绪之后的效果。就绪判断等待总览标题「今天，一目了然」后再重开图表。
+
+`investment-loading.e2e.cjs` 使用真实终端文档和适配器，模拟外部图表模块加载失败、初始化异常和长时间没有进展，验证加载屏显示当前步骤、约 20 秒后的「还在加载」提示和重新加载入口（此时不判定失败）、约 90 秒没有任何进展才失败、点击重试，以及提示后迟到的加载成功。无需启动工作台或访问券商；图表库就绪过程使用可控 fixture。支持 `--webkit`：
 
 ```bash
 PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
@@ -374,7 +376,7 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
   node scripts/investment-loading.e2e.cjs
 ```
 
-`investment-page.e2e.cjs` 自行启动使用临时数据库的工作台，模拟已连接的 Schwab 设置并嵌入带状态标记的测试终端。它验证连续切换主题、图表加载中切换和跟随系统时的颜色同步，以及页面铺满/恢复、浏览器全屏/退出、新窗口、手机尺寸和全屏失败后的恢复，并确认主题和显示模式切换不重建图表。使用端口 18138，无需券商凭据；截图写入 `/tmp/workbench-investment-expanded-mobile.png`。
+`investment-page.e2e.cjs` 自行启动使用临时数据库的工作台，模拟已连接的 Schwab 设置并嵌入带状态标记的测试终端。它验证连续切换主题、图表加载中切换和跟随系统时的颜色同步，以及图表铺满导航下方区域、没有悬浮窗口按钮、手机尺寸和旧 `?tab=monitor` 链接跳转，并确认主题切换不重建图表。使用端口 18138，无需券商凭据；截图写入 `/tmp/workbench-investment-mobile.png`。
 
 ```bash
 go build -o /tmp/workbench-investment-page-test ./cmd/workbench
@@ -387,7 +389,7 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 
 ### Schwab 跨站 OAuth 返回
 
-`schwab-reauthorization.e2e.cjs` 自行启动端口 18139 的临时工作空间，模拟连接故障、授权失效和 OAuth 页面，验证连接错误可重试、失效提示及时出现且刷新后保留、手机铺满布局、设置及总览入口，以及重新授权后恢复投资终端。无需券商账号；后端失效分类、持久状态、401 刷新和不重放交易由 `schwab_auth_test.go` 使用本机模拟服务验证。
+`schwab-reauthorization.e2e.cjs` 自行启动端口 18139 的临时工作空间，模拟连接故障、授权失效和 OAuth 页面，验证连接错误可重试、失效提示及时出现且刷新后保留、手机布局、设置及总览入口，以及重新授权后恢复投资终端。无需券商账号；后端失效分类、持久状态、401 刷新和不重放交易由 `schwab_auth_test.go` 使用本机模拟服务验证。
 
 ```bash
 npm --prefix web run build

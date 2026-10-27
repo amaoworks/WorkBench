@@ -2,11 +2,9 @@ import { useRef, useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
-import { Card, CardHeader } from "../../components/ui/Card";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
-import { EmptyState } from "../../components/ui/EmptyState";
+import { cn } from "../../shared/cn";
 import { Field } from "../../components/ui/Field";
 import { Notice } from "../../components/ui/Notice";
 import { Skeleton } from "../../components/ui/States";
@@ -23,6 +21,8 @@ const SOURCE_KINDS = [
   { value: "google", label: "Google 新闻" },
   { value: "yahoo", label: "Yahoo 财经" },
 ];
+
+const SOURCE_LABEL: Record<string, string> = Object.fromEntries(SOURCE_KINDS.map((kind) => [kind.value, kind.label]));
 
 const blank: SourceInput = { name: "", kind: "rss", url: "", query: "", topic: "", enabled: true, intervalMinutes: 60 };
 
@@ -80,23 +80,17 @@ export default function SourcesTab({ startAdding = false }: { startAdding?: bool
   const items = sources.data?.items ?? [];
 
   return (
-    <Card>
-      <CardHeader
-        title="订阅源"
-        description={sources.data ? `${items.length} 个订阅源` : "正在读取"}
-        action={
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="secondary" disabled={allRefresh.isPending} onClick={() => allRefresh.mutate()}>
-              <RefreshCw size={15} />
-              {allRefresh.isPending ? "刷新中…" : "全部刷新"}
-            </Button>
-            <Button ref={addButton} size="sm" onClick={() => setEditing("new")}>
-              <Plus size={15} />
-              添加订阅源
-            </Button>
-          </div>
-        }
-      />
+    <section className="sec news-sources" aria-labelledby="news-sources-title">
+      <h2 id="news-sources-title" className="sec-title">
+        订阅源
+        {sources.data && <span className="sec-count">{items.length}</span>}
+        <span className="sec-action">
+          <Button size="sm" variant="secondary" disabled={allRefresh.isPending} onClick={() => allRefresh.mutate()}>
+            <RefreshCw size={15} />
+            {allRefresh.isPending ? "刷新中…" : "全部刷新"}
+          </Button>
+        </span>
+      </h2>
       {editing && (
         <SourceForm
           key={editing === "new" ? "new" : editing.id}
@@ -107,75 +101,82 @@ export default function SourcesTab({ startAdding = false }: { startAdding?: bool
           onSave={(input) => save.mutate(input)}
         />
       )}
-      {sources.isPending && (
-        <div className="space-y-3 p-4">
-          <Skeleton className="h-20" />
-          <Skeleton className="h-20" />
-        </div>
-      )}
       {sources.isError && (
-        <Notice className="m-4" tone="danger" title="订阅源读取失败">
+        <Notice className="mb-4" tone="danger" title="订阅源读取失败">
           {sources.error.message}
         </Notice>
       )}
-      {sources.data && items.length === 0 && !editing && <EmptyState title="暂无订阅源" description="添加 RSS 或新闻搜索订阅源。" />}
-      <div className="divide-y divide-[var(--border)]">
+      <div className="feeds">
+        {sources.isPending && (
+          <>
+            <Skeleton className="h-[84px] rounded-2xl" />
+            <Skeleton className="h-[84px] rounded-2xl" />
+          </>
+        )}
+        {sources.data && items.length === 0 && (
+          <div className="feed feed-empty">
+            <div className="fd-t">
+              <b>暂无订阅源</b>
+              <span>添加 RSS 或新闻搜索订阅源。</span>
+            </div>
+          </div>
+        )}
         {items.map((source) => (
-          <div key={source.id} className="flex min-w-0 flex-col gap-3 p-4 sm:flex-row sm:items-center">
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="font-medium">{source.name}</h3>
-                <Badge>{source.kind.toUpperCase()}</Badge>
-                {!source.enabled && <Badge>已停用</Badge>}
-              </div>
-              <p className="mt-1 break-all text-xs text-[var(--muted)]">
-                {source.topic || "未分类"} · {source.itemCount} 条 · 每 {source.intervalMinutes} 分钟
-              </p>
-              {(source.query || source.url) && <p className="mt-1 truncate text-xs text-[var(--muted)]">{source.query || source.url}</p>}
-              {source.lastFetchedAt && (
-                <p className="mt-1 text-xs text-[var(--muted)]">最近刷新：{formatDateTime(source.lastFetchedAt)}</p>
-              )}
-              {source.lastError && (
-                <Notice className="mt-2" tone="danger" title="订阅源刷新失败">
-                  {source.lastError}
-                </Notice>
+          <div key={source.id} className={cn("feed news-source", !source.enabled && "is-off")}>
+            <span className="ic-circ" aria-hidden="true">{source.name.trim().slice(0, 1).toUpperCase() || "#"}</span>
+            <div className="fd-t">
+              <b>{source.name}</b>
+              <span>
+                {[source.topic || "未分类", `${source.itemCount} 条`, `每 ${source.intervalMinutes} 分钟`, SOURCE_LABEL[source.kind] ?? source.kind].join(" · ")}
+              </span>
+              {source.lastError ? (
+                <span className="fd-error" title={source.lastError}>刷新失败：{source.lastError}</span>
+              ) : (
+                source.lastFetchedAt && <span>最近刷新 {formatDateTime(source.lastFetchedAt, { seconds: false })}</span>
               )}
             </div>
-            <div className="flex flex-wrap gap-1">
-              <Button
-                size="sm"
-                variant="ghost"
+            <div className="feed-actions">
+              <Switch
+                label={`启用 ${source.name}`}
+                checked={source.enabled}
                 disabled={save.isPending}
-                onClick={() => save.mutate({ ...pickInput(source), enabled: !source.enabled, id: source.id })}
-              >
-                {source.enabled ? "停用" : "启用"}
-              </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                aria-label={`刷新 ${source.name}`}
-                disabled={singleRefresh.isPending}
-                onClick={() => singleRefresh.mutate(source.id)}
-              >
-                <RefreshCw size={16} />
-              </Button>
-              <Button size="icon" variant="ghost" aria-label={`编辑 ${source.name}`} onClick={() => setEditing(source)}>
-                <Pencil size={16} />
-              </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                aria-label={`删除 ${source.name}`}
-                onClick={(event) => deletion.request(source, event.currentTarget)}
-              >
-                <Trash2 size={16} />
-              </Button>
+                onChange={(enabled) => save.mutate({ ...pickInput(source), enabled, id: source.id })}
+              />
+              <div className="feed-tools">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  aria-label={`刷新 ${source.name}`}
+                  disabled={singleRefresh.isPending}
+                  onClick={() => singleRefresh.mutate(source.id)}
+                >
+                  <RefreshCw size={15} />
+                </Button>
+                <Button size="icon" variant="ghost" aria-label={`编辑 ${source.name}`} onClick={() => setEditing(source)}>
+                  <Pencil size={15} />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  aria-label={`删除 ${source.name}`}
+                  onClick={(event) => deletion.request(source, event.currentTarget)}
+                >
+                  <Trash2 size={15} />
+                </Button>
+              </div>
             </div>
           </div>
         ))}
+        <button ref={addButton} type="button" className="feed feed-add focus-ring" onClick={() => setEditing("new")}>
+          <Plus size={20} aria-hidden="true" />
+          <span className="fd-t">
+            <b>添加订阅源</b>
+            <span aria-hidden="true">RSS · RSSHub · Google 新闻 · Yahoo 财经</span>
+          </span>
+        </button>
       </div>
       <ConfirmDialog {...deletion.dialogProps} />
-    </Card>
+    </section>
   );
 }
 
@@ -208,7 +209,7 @@ function SourceForm({
     });
   }
   return (
-    <form onSubmit={submit} className="m-4 grid grid-cols-1 gap-3 rounded-lg border border-[var(--border)] p-4 sm:grid-cols-2">
+    <form onSubmit={submit} className="inline-form news-source-form">
       <Field label="名称">
         <input autoFocus required value={form.name} onChange={(event) => change({ name: event.target.value })} placeholder="订阅源名称" />
       </Field>

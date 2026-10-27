@@ -1,10 +1,9 @@
 import { useRef, useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Pencil, Plus, Target, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { Badge } from "../../components/ui/Badge";
+import { cn } from "../../shared/cn";
 import { Button } from "../../components/ui/Button";
-import { Card, CardHeader } from "../../components/ui/Card";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { Field } from "../../components/ui/Field";
@@ -49,18 +48,20 @@ export default function RulesTab() {
   });
   const items = rules.data?.items ?? [];
 
+  const sourceNames = new Map((sources.data?.items ?? []).map((source) => [source.id, source.name]));
+
   return (
-    <Card>
-      <CardHeader
-        title="关注规则"
-        description={rules.data ? `${items.length} 条规则` : "正在读取"}
-        action={
+    <section className="sec news-rules" aria-labelledby="news-rules-title">
+      <h2 id="news-rules-title" className="sec-title">
+        关注规则
+        {rules.data && <span className="sec-count">{items.length}</span>}
+        <span className="sec-action">
           <Button ref={addButton} size="sm" onClick={() => setEditing("new")}>
             <Plus size={15} />
             添加规则
           </Button>
-        }
-      />
+        </span>
+      </h2>
       {editing && (
         <RuleForm
           key={editing === "new" ? "new" : editing.id}
@@ -73,64 +74,68 @@ export default function RulesTab() {
         />
       )}
       {rules.isPending && (
-        <div className="space-y-3 p-4">
-          <Skeleton className="h-20" />
-          <Skeleton className="h-20" />
+        <div className="space-y-2">
+          <Skeleton className="h-16" />
+          <Skeleton className="h-16" />
         </div>
       )}
       {rules.isError && (
-        <Notice className="m-4" tone="danger" title="关注规则读取失败">
+        <Notice className="mb-4" tone="danger" title="关注规则读取失败">
           {rules.error.message}
         </Notice>
       )}
       {sources.isError && (
-        <Notice className="m-4" tone="danger" title="订阅源读取失败">
+        <Notice className="mb-4" tone="danger" title="订阅源读取失败">
           {sources.error.message}
         </Notice>
       )}
       {rules.data && items.length === 0 && !editing && <EmptyState title="暂无关注规则" description="按关键词、订阅源或主题筛选资讯。" />}
-      <div className="divide-y divide-[var(--border)]">
-        {items.map((rule) => (
-          <div key={rule.id} className="flex min-w-0 flex-col gap-3 p-4 sm:flex-row sm:items-center">
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="font-medium">{rule.name}</h3>
-                {!rule.enabled && <Badge>已停用</Badge>}
+      <div className="news-rule-list">
+        {items.map((rule) => {
+          const scope = rule.sourceIds.length
+            ? rule.sourceIds.map((sourceId) => sourceNames.get(sourceId) ?? "已删除的订阅源").join("、")
+            : "全部订阅源";
+          return (
+            <div key={rule.id} className={cn("trow news-rule", !rule.enabled && "is-off")}>
+              <span className="ic-circ" aria-hidden="true">
+                <Target size={18} strokeWidth={1.75} />
+              </span>
+              <div className="nm">
+                <b>{rule.name}</b>
+                <small>
+                  {[
+                    `关键词：${rule.includeKeywords.join("、") || "不限"}`,
+                    rule.excludeKeywords.length ? `排除：${rule.excludeKeywords.join("、")}` : "",
+                    `话题：${rule.topic || "全部"}`,
+                    scope,
+                  ].filter(Boolean).join(" · ")}
+                </small>
               </div>
-              <p className="mt-1 break-words text-xs text-[var(--muted)]">包含：{rule.includeKeywords.join("、") || "不限"}</p>
-              {rule.excludeKeywords.length > 0 && (
-                <p className="mt-1 break-words text-xs text-[var(--muted)]">排除：{rule.excludeKeywords.join("、")}</p>
-              )}
-              <p className="mt-1 text-xs text-[var(--muted)]">
-                {rule.topic || "全部主题"} · {rule.sourceIds.length ? `${rule.sourceIds.length} 个订阅源` : "全部订阅源"}
-              </p>
+              <div className="rt">
+                <Button size="icon" variant="ghost" aria-label={`编辑 ${rule.name}`} onClick={() => setEditing(rule)}>
+                  <Pencil size={15} />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  aria-label={`删除 ${rule.name}`}
+                  onClick={(event) => deletion.request(rule, event.currentTarget)}
+                >
+                  <Trash2 size={15} />
+                </Button>
+                <Switch
+                  label={`启用 ${rule.name}`}
+                  checked={rule.enabled}
+                  disabled={save.isPending}
+                  onChange={(enabled) => save.mutate({ ...pickInput(rule), enabled, id: rule.id })}
+                />
+              </div>
             </div>
-            <div className="flex gap-1">
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={save.isPending}
-                onClick={() => save.mutate({ ...pickInput(rule), enabled: !rule.enabled, id: rule.id })}
-              >
-                {rule.enabled ? "停用" : "启用"}
-              </Button>
-              <Button size="icon" variant="ghost" aria-label={`编辑 ${rule.name}`} onClick={() => setEditing(rule)}>
-                <Pencil size={16} />
-              </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                aria-label={`删除 ${rule.name}`}
-                onClick={(event) => deletion.request(rule, event.currentTarget)}
-              >
-                <Trash2 size={16} />
-              </Button>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
       <ConfirmDialog {...deletion.dialogProps} />
-    </Card>
+    </section>
   );
 }
 
@@ -168,7 +173,7 @@ function RuleForm({
     });
   }
   return (
-    <form onSubmit={submit} className="m-4 space-y-3 rounded-lg border border-[var(--border)] p-4">
+    <form onSubmit={submit} className="inline-form news-rule-form">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label="名称">
           <input autoFocus required value={name} onChange={(event) => setName(event.target.value)} placeholder="规则名称" />

@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	agendaTaskLimit    = 5
+	agendaTaskLimit    = 8
 	agendaRenewalLimit = 5
 	wallosTitlePrefix  = "Wallos续费提醒 - "
 )

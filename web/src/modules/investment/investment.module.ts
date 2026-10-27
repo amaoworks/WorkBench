@@ -1,5 +1,5 @@
 import { lazy } from "react";
-import { BellRing, CandlestickChart, ChartNoAxesCombined, ClipboardList, Link2, Wallet } from "lucide-react";
+import { BellRing, CandlestickChart, ChartNoAxesCombined, ClipboardList, Wallet } from "lucide-react";
 import type { ModuleUI } from "../registry";
 export default {
   id: "investment",
@@ -21,6 +21,5 @@ export default {
     { label: "价格监控", to: "/investment/monitor", description: "价格规则与触发记录", icon: BellRing },
     { label: "持仓", to: "/investment/positions", description: "账户净值与持仓明细", icon: Wallet },
     { label: "订单", to: "/investment/orders", description: "委托与成交记录", icon: ClipboardList },
-    { label: "券商连接", to: "/settings?tab=modules&module=investment", description: "Schwab、富途与夜盘行情", icon: Link2 },
   ],
 } satisfies ModuleUI;

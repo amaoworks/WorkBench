@@ -10,6 +10,12 @@ export type NavEntry = {
   badge?: number;
   /** Dropdown entries; empty for a plain link. Only modules that declare `menu` get one. */
   menu: ModuleMenuItem[];
+  /**
+   * Unset for a usable entry. `starting`/`error`: the module is enabled but not serving, so the slot stays as a grey
+   * placeholder. `loading`: last known module before the first /api/modules response. `skeleton`: no cache yet.
+   */
+  status?: "starting" | "error" | "loading" | "skeleton";
+  statusText?: string;
 };
 
 export const settingsIcon = SlidersHorizontal;

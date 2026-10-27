@@ -84,3 +84,13 @@ export function useRefreshTodo() {
   const client = useQueryClient();
   return () => client.invalidateQueries({ queryKey: todoKey() });
 }
+
+/** Today section of the todo page: the same agenda as the overview card (open tasks due today or overdue, completedToday). */
+export function useTodoAgenda() {
+  const tz = browserTimeZone();
+  return useQuery({
+    queryKey: todoKey("agenda", tz),
+    queryFn: () => apiValidated(`/api/modules/todo/widget/today?tz=${encodeURIComponent(tz)}`, todoTodaySchema),
+    refetchInterval: 30_000
+  });
+}

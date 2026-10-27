@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Check, Flag, Plus, Repeat, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { createTask, deleteTask, updateTask, useRefreshTodo, useTaskCounts, useTasks } from "./queries";
+import { createTask, deleteTask, updateTask, useRefreshTodo, useTaskCounts, useTasks, useTodoAgenda } from "./queries";
 import type { Task, TaskPriority } from "./schema";
 import { Button } from "../../components/ui/Button";
-import { Card } from "../../components/ui/Card";
 import { Skeleton } from "../../components/ui/States";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { Notice } from "../../components/ui/Notice";
@@ -16,7 +15,6 @@ import { TodoDeadline } from "./TodoDeadline";
 import { cn } from "../../shared/cn";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
-import { formatDateTime } from "../../shared/format";
 import { Select } from "../../components/ui/Select";
 
 const WALLOS_PREFIX = "Wallos续费提醒 - ";
@@ -25,6 +23,10 @@ const PRIORITIES: readonly { value: TaskPriority; label: string }[] = [
   { value: "medium", label: "中优先级" }, { value: "high", label: "高优先级" },
 ];
 const PRIORITY_FILTERS = [{ value: "", label: "全部优先级" }, ...PRIORITIES] as const;
+// Priority is a neutral, single-hue scale (solid / tint / grey) so todo never borrows the market's red/green.
+const PRIORITY_BADGE: Record<Exclude<TaskPriority, "none">, { label: string; tone: "solid" | "info" | "neutral" }> = {
+  high: { label: "高", tone: "solid" }, medium: { label: "中", tone: "info" }, low: { label: "低", tone: "neutral" },
+};
 
 type GroupId = "overdue" | "today" | "week" | "later" | "none" | "done";
 const GROUPS: { id: GroupId; title: string }[] = [
@@ -45,17 +47,31 @@ const VIEWS = [
 ] as const satisfies readonly { id: string; label: string; groups: readonly GroupId[] }[];
 type ViewId = (typeof VIEWS)[number]["id"];
 
+const startOfDay = (date: Date, offset = 0) => new Date(date.getFullYear(), date.getMonth(), date.getDate() + offset).getTime();
+
 function groupOf(task: Task, now: Date): GroupId {
   if (task.completedAt) return "done";
   if (!task.dueAt) return "none";
   const due = new Date(task.dueAt).getTime();
   if (due < now.getTime()) return "overdue";
-  const endToday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
-  if (due < endToday) return "today";
+  if (due < startOfDay(now, 1)) return "today";
   const daysUntilMonday = (8 - now.getDay()) % 7 || 7;
-  const endWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysUntilMonday).getTime();
-  if (due < endWeek) return "week";
+  if (due < startOfDay(now, daysUntilMonday)) return "week";
   return "later";
+}
+
+const pad = (value: number) => String(value).padStart(2, "0");
+const clock = (date: Date) => `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+const shortDate = (date: Date) => `${date.getMonth() + 1}/${pad(date.getDate())}`;
+
+/** Compact, relative date like the prototype's right column: 今天 16:30 · 明天 09:00 · 10/29. */
+function dayLabel(value: string, now: Date) {
+  const date = new Date(value);
+  const time = date.getTime();
+  if (time >= startOfDay(now) && time < startOfDay(now, 1)) return `今天 ${clock(date)}`;
+  if (time >= startOfDay(now, 1) && time < startOfDay(now, 2)) return `明天 ${clock(date)}`;
+  if (time >= startOfDay(now, -1) && time < startOfDay(now)) return `昨天 ${clock(date)}`;
+  return date.getFullYear() === now.getFullYear() ? shortDate(date) : `${date.getFullYear()}/${shortDate(date)}`;
 }
 
 function useCurrentTime() {
@@ -66,6 +82,9 @@ function useCurrentTime() {
   }, []);
   return now;
 }
+
+const displayTitle = (task: Task) =>
+  task.category === "renewal" && task.title.startsWith(WALLOS_PREFIX) ? task.title.slice(WALLOS_PREFIX.length) : task.title;
 
 export default function TodoPage() {
   const [params, setParams] = useSearchParams();
@@ -80,13 +99,13 @@ export default function TodoPage() {
   const categoryFilter = params.get("category")?.trim() ?? "";
   const [categoryDraft, setCategoryDraft] = useState(categoryFilter);
   const titleInput = useRef<HTMLInputElement>(null);
-  const filters = { view: view.id, priority: priorityFilter, category: categoryFilter };
-  const tasks = useTasks(filters);
+  const tasks = useTasks({ view: view.id, priority: priorityFilter, category: categoryFilter });
   const taskCounts = useTaskCounts({ priority: priorityFilter, category: categoryFilter });
+  const agenda = useTodoAgenda();
   const items = tasks.data?.pages.flatMap((page) => page.items) ?? [];
   const refresh = useRefreshTodo();
   const wantsNew = params.get("new") === "1";
-  // `?new=1` (e.g. from the AI panel or a bookmark) focuses the input every time it is followed.
+  // `?new=1` (e.g. from the AI panel or a bookmark) focuses the composer every time it is followed.
   useEffect(() => {
     if (wantsNew) titleInput.current?.focus();
   }, [wantsNew, location.key]);
@@ -121,6 +140,7 @@ export default function TodoPage() {
     event.preventDefault();
     if (title.trim()) create.mutate();
   }
+  const toggle = (task: Task) => update.mutate({ id: task.id, completed: !task.completedAt });
   const now = useCurrentTime();
   const grouped = new Map<GroupId, Task[]>();
   for (const task of items) {
@@ -136,7 +156,6 @@ export default function TodoPage() {
     done: groups.done,
   } : { all: 0, today: 0, week: 0, later: 0, done: 0 };
   const visible = GROUPS.filter((group) => (view.groups as readonly GroupId[]).includes(group.id) && grouped.get(group.id)?.length);
-  const open = groups ? groups.overdue + groups.today + groups.week + groups.later + groups.none : 0;
   const viewLink = (nextView: ViewId) => {
     const next = new URLSearchParams();
     if (nextView !== "all") next.set("view", nextView);
@@ -152,192 +171,252 @@ export default function TodoPage() {
     if (nextCategory.trim()) next.set("category", nextCategory.trim()); else next.delete("category");
     setParams(next);
   };
+  const filtered = !!(priorityFilter || categoryFilter);
+  const todayItems = agenda.data?.items ?? [];
+
   return (
     <div className="page todo-page">
-      <PageHeader title="待办" description={groups ? taskCount(counts.all, open) : undefined} />
-      <Card className="mb-5 p-4">
-        <form onSubmit={submit} className="task-create flex gap-3">
+      <PageHeader title="待办" description={summaryText(agenda.data?.total, groups?.week, agenda.data?.completedToday)} />
+
+      <section className="sec" aria-labelledby="todo-today">
+        <h2 id="todo-today" className="sec-title">今天</h2>
+        {agenda.isPending && (
+          <div className="cal-grid">
+            <Skeleton className="h-[146px] rounded-2xl" />
+            <Skeleton className="h-[146px] rounded-2xl" />
+          </div>
+        )}
+        {agenda.isError && <Notice tone="danger" title="今日待办加载失败">{agenda.error.message}</Notice>}
+        {agenda.data && todayItems.length === 0 && (
+          <div className="cal cal-empty">
+            <b>今天没有到期的待办</b>
+            <span>{agenda.data.completedToday ? `今天已完成 ${agenda.data.completedToday} 项。` : "在下方添加一项，或给待办设置截止时间。"}</span>
+          </div>
+        )}
+        {todayItems.length > 0 && (
+          <div className="cal-grid">
+            {todayItems.slice(0, 8).map((task) => (
+              <TodayCard key={task.id} task={task} overdue={task.overdue} now={now} onToggle={() => toggle(task)} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="sec" aria-labelledby="todo-all">
+        <h2 id="todo-all" className="sec-title">全部待办</h2>
+        <div className="toolbar">
+          <nav className="rtabs" aria-label="待办视图">
+            {VIEWS.map((item) => (
+              <Link
+                key={item.id}
+                to={viewLink(item.id)}
+                className={cn("rtab sm focus-ring", item.id === view.id && "is-active")}
+                aria-current={item.id === view.id ? "page" : undefined}
+              >
+                {item.label}
+                {groups && counts[item.id] > 0 && <span className="rtab-count">{counts[item.id]}</span>}
+              </Link>
+            ))}
+          </nav>
+          <form
+            className="todo-filter"
+            onSubmit={(event) => { event.preventDefault(); applyFilters(priorityFilter, categoryDraft); }}
+          >
+            <Select
+              aria-label="按优先级筛选"
+              className="todo-filter-priority"
+              value={priorityFilter}
+              onValueChange={(value) => applyFilters(value as "" | TaskPriority, categoryDraft)}
+              options={PRIORITY_FILTERS}
+            />
+            <input
+              aria-label="按分类筛选"
+              value={categoryDraft}
+              onChange={(event) => setCategoryDraft(event.target.value)}
+              maxLength={40}
+              placeholder="分类"
+              className="ui-input todo-filter-category"
+            />
+            <Button size="sm" variant="secondary">筛选</Button>
+            {filtered && (
+              <Button size="sm" type="button" variant="ghost" onClick={() => { setCategoryDraft(""); applyFilters("", ""); }}>清除</Button>
+            )}
+          </form>
+        </div>
+
+        <form onSubmit={submit} className="composer task-create">
+          <span className="ck" aria-hidden="true" />
           <input
             ref={titleInput}
             aria-label="待办标题"
             value={title}
             onChange={(event) => setTitle(event.target.value)}
-            placeholder="添加一项待办…"
-            className="ui-input min-w-0 flex-1"
+            placeholder="添加待办，回车保存"
+            className="composer-input"
           />
-          <TodoDeadline value={dueAt} onChange={setDueAt} />
-          <Select aria-label="优先级" value={priority} onValueChange={(value) => setPriority(value as TaskPriority)} options={PRIORITIES} />
-          <input
-            aria-label="分类"
-            value={category}
-            onChange={(event) => setCategory(event.target.value)}
-            maxLength={40}
-            placeholder="分类"
-            className="ui-input min-w-0 flex-1"
-          />
-          <Button disabled={create.isPending || !title.trim()}>
-            <Plus size={17} />
-            添加
-          </Button>
+          <div className="composer-opts">
+            <TodoDeadline value={dueAt} onChange={setDueAt} />
+            <Select aria-label="优先级" className="composer-select" value={priority} onValueChange={(value) => setPriority(value as TaskPriority)} options={PRIORITIES} />
+            <input
+              aria-label="分类"
+              value={category}
+              onChange={(event) => setCategory(event.target.value)}
+              maxLength={40}
+              placeholder="分类"
+              className="ui-input composer-category"
+            />
+            <Button size="sm" disabled={create.isPending || !title.trim()}>
+              <Plus size={15} />
+              添加
+            </Button>
+          </div>
         </form>
-      </Card>
-      <Card className="mb-5 p-4">
-        <form
-          className="flex flex-wrap gap-3"
-          onSubmit={(event) => { event.preventDefault(); applyFilters(priorityFilter, categoryDraft); }}
-        >
-          <Select
-            aria-label="按优先级筛选"
-            value={priorityFilter}
-            onValueChange={(value) => applyFilters(value as "" | TaskPriority, categoryDraft)}
-            options={PRIORITY_FILTERS}
-          />
-          <input
-            aria-label="按分类筛选"
-            value={categoryDraft}
-            onChange={(event) => setCategoryDraft(event.target.value)}
-            maxLength={40}
-            placeholder="筛选分类"
-            className="ui-input min-w-0 flex-1"
-          />
-          <Button variant="secondary">筛选</Button>
-          {(priorityFilter || categoryFilter) && (
-            <Button type="button" variant="ghost" onClick={() => { setCategoryDraft(""); applyFilters("", ""); }}>清除</Button>
-          )}
-        </form>
-      </Card>
-      <nav className="pill-tabs mb-5" aria-label="待办视图">
-        {VIEWS.map((item) => (
-          <Link
-            key={item.id}
-            to={viewLink(item.id)}
-            className={cn("pill-tab focus-ring", item.id === view.id && "is-active")}
-            aria-current={item.id === view.id ? "page" : undefined}
-          >
-            {item.label}
-            {taskCounts.data && counts[item.id] > 0 && <span className="pill-tab-count">{counts[item.id]}</span>}
-          </Link>
-        ))}
-      </nav>
-      {tasks.isLoading && (
-        <Card className="space-y-3 p-4">
-          <Skeleton className="h-14" />
-          <Skeleton className="h-14" />
-          <Skeleton className="h-14" />
-        </Card>
-      )}
-      {tasks.isError && (
-        <Notice tone="danger" title="待办加载失败">
-          {tasks.error.message}
-        </Notice>
-      )}
-      {tasks.data && items.length === 0 && (
-        <Card>
+
+        {tasks.isLoading && (
+          <div className="mt-2 space-y-2">
+            <Skeleton className="h-14" />
+            <Skeleton className="h-14" />
+            <Skeleton className="h-14" />
+          </div>
+        )}
+        {tasks.isError && (
+          <Notice tone="danger" title="待办加载失败">
+            {tasks.error.message}
+          </Notice>
+        )}
+        {tasks.data && items.length === 0 && (
           <EmptyState
-            title={view.id === "all" && !priorityFilter && !categoryFilter ? "清单还是空的" : `「${view.label}」里没有待办`}
+            title={view.id === "all" && !filtered ? "清单还是空的" : `「${view.label}」里没有待办`}
             description="切换视图或筛选条件，或在上方添加一项。"
           />
-        </Card>
-      )}
-      <div className="todo-groups">
-        {visible.map((group) => (
-          <section key={group.id} className="todo-group" aria-labelledby={`todo-group-${group.id}`} data-group={group.id}>
-            <h2 id={`todo-group-${group.id}`} className="todo-group-title">
-              {group.title}
-              <span>{grouped.get(group.id)?.length}</span>
-            </h2>
-            <Card className="divide-y divide-[var(--border)]">
+        )}
+        <div className="todo-groups">
+          {visible.map((group) => (
+            <section key={group.id} className="todo-group" aria-labelledby={`todo-group-${group.id}`} data-group={group.id}>
+              <h3 id={`todo-group-${group.id}`} className="todo-group-title">
+                {group.title}
+                <span>{grouped.get(group.id)?.length}</span>
+              </h3>
               {grouped.get(group.id)?.map((task) => (
                 <TaskRow
                   key={task.id}
                   task={task}
+                  now={now}
                   overdue={group.id === "overdue"}
-                  onToggle={() => update.mutate({ id: task.id, completed: !task.completedAt })}
+                  onToggle={() => toggle(task)}
                   onDelete={(element) => deletion.request(task, element)}
                 />
               ))}
-            </Card>
-          </section>
-        ))}
-      </div>
-      {tasks.hasNextPage && (
-        <div className="mt-4">
-          <Button variant="secondary" disabled={tasks.isFetchingNextPage} onClick={() => tasks.fetchNextPage()}>
-            {tasks.isFetchingNextPage ? "加载中…" : "加载更多"}
-          </Button>
+            </section>
+          ))}
         </div>
-      )}
+        {tasks.hasNextPage && (
+          <div className="mt-4 flex justify-center">
+            <Button variant="secondary" disabled={tasks.isFetchingNextPage} onClick={() => tasks.fetchNextPage()}>
+              {tasks.isFetchingNextPage ? "加载中…" : "加载更多"}
+            </Button>
+          </div>
+        )}
+      </section>
       <ConfirmDialog {...deletion.dialogProps} />
     </div>
   );
 }
 
+function CheckButton({ task, onToggle, className }: { task: Task; onToggle: () => void; className?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      role="checkbox"
+      aria-checked={!!task.completedAt}
+      aria-label={`${task.completedAt ? "标记为未完成" : "标记为完成"}：${task.title}`}
+      className={cn("ck focus-ring", task.completedAt && "done", className)}
+    />
+  );
+}
+
+function PriorityBadge({ priority }: { priority: TaskPriority }) {
+  if (priority === "none") return null;
+  const badge = PRIORITY_BADGE[priority];
+  return <Badge tone={badge.tone} aria-label={`${badge.label}优先级`}>{badge.label}</Badge>;
+}
+
+function TodayCard({ task, overdue, now, onToggle }: { task: Task; overdue: boolean; now: Date; onToggle: () => void }) {
+  const note = task.description.split("\n")[0]?.trim();
+  return (
+    <article className="cal todo-card">
+      <div className="cal-top">
+        <Badge tone={overdue ? "warning" : "info"}>
+          {overdue ? `已逾期 · ${task.dueAt ? dayLabel(task.dueAt, now) : ""}` : task.dueAt ? dayLabel(task.dueAt, now) : "今天"}
+        </Badge>
+        <CheckButton task={task} onToggle={onToggle} />
+      </div>
+      <h3 className="cal-title">{displayTitle(task)}</h3>
+      <dl className="kvs">
+        <div>
+          <dt>优先级</dt>
+          <dd>{task.priority === "none" ? "—" : <PriorityBadge priority={task.priority} />}</dd>
+        </div>
+        <div>
+          <dt>分类</dt>
+          <dd>{task.category === "renewal" ? "续费" : task.category || "—"}</dd>
+        </div>
+        <div className="min-w-0">
+          <dt>备注</dt>
+          <dd className="truncate">{note || "—"}</dd>
+        </div>
+      </dl>
+    </article>
+  );
+}
+
 function TaskRow({
   task,
+  now,
   overdue,
   onToggle,
   onDelete,
 }: {
   task: Task;
+  now: Date;
   overdue: boolean;
   onToggle: () => void;
   onDelete: (element: HTMLElement) => void;
 }) {
   const wallos = task.category === "renewal";
-  const title = wallos && task.title.startsWith(WALLOS_PREFIX) ? task.title.slice(WALLOS_PREFIX.length) : task.title;
+  const meta = [wallos ? "续费" : task.category, task.description.replace(/\s+/g, " ").trim()].filter(Boolean).join(" · ");
+  const when = task.completedAt
+    ? `完成 ${dayLabel(task.completedAt, now)}`
+    : task.dueAt ? `${overdue ? "逾期 " : ""}${dayLabel(task.dueAt, now)}` : "";
   return (
-    <div className="task-row group flex items-center gap-3 px-5 py-4">
-      <button
-        onClick={onToggle}
-        role="checkbox"
-        aria-checked={!!task.completedAt}
-        aria-label={`${task.completedAt ? "标记为未完成" : "标记为完成"}：${task.title}`}
-        className="task-check focus-ring"
-      >
-        {task.completedAt && <Check size={14} />}
-      </button>
-      <div className="min-w-0 flex-1">
-        <p className={cn("flex min-w-0 items-center gap-2 font-medium", task.completedAt && "text-[var(--muted)] line-through")}>
-          <span className="truncate">{title}</span>
-          {wallos && (
-            <Badge>
-              <Repeat size={11} />
-              续费
-            </Badge>
-          )}
-          {!wallos && task.category && <Badge>{task.category}</Badge>}
-          {task.priority !== "none" && (
-            <Badge tone={task.priority === "high" ? "danger" : task.priority === "medium" ? "warning" : "neutral"}>
-              <Flag size={11} />
-              {PRIORITIES.find((item) => item.value === task.priority)?.label}
-            </Badge>
-          )}
-        </p>
-        {task.description && <p className="mt-1 whitespace-pre-line break-words text-xs text-[var(--muted)]">{task.description}</p>}
-        {(task.dueAt || task.completedAt) && (
-          <p className={cn("mt-1 text-xs text-[var(--muted)]", overdue && "text-warning")}>
-            {task.completedAt
-              ? `完成于 ${formatDateTime(task.completedAt, { seconds: false })}`
-              : task.dueAt && `${overdue ? "已逾期 · " : ""}${formatDateTime(task.dueAt, { seconds: false })}`}
-          </p>
-        )}
+    <div className={cn("trow task-row", task.completedAt && "is-done")}>
+      <CheckButton task={task} onToggle={onToggle} />
+      <div className="nm">
+        <b>{displayTitle(task)}</b>
+        {meta && <small>{meta}</small>}
       </div>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="task-delete text-[var(--muted)] hover:text-[var(--danger)] focus-visible:text-[var(--danger)]"
-        onClick={(event) => onDelete(event.currentTarget)}
-        aria-label={`删除 ${task.title}`}
-      >
-        <Trash2 size={16} />
-      </Button>
+      <div className="rt">
+        <PriorityBadge priority={task.priority} />
+        {when && <span className={cn("task-when", overdue && "is-overdue")}>{when}</span>}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="task-delete text-[var(--muted)] hover:text-[var(--danger)] focus-visible:text-[var(--danger)]"
+          onClick={(event) => onDelete(event.currentTarget)}
+          aria-label={`删除 ${task.title}`}
+        >
+          <Trash2 size={16} />
+        </Button>
+      </div>
     </div>
   );
 }
 
-function taskCount(total: number, open: number) {
-  if (total === 0) return undefined;
-  if (open === total) return `${total} 项未完成`;
-  if (open === 0) return `${total} 项 · 全部完成`;
-  return `${total} 项 · ${open} 项未完成`;
+function summaryText(dueThroughToday?: number, week?: number, completedToday?: number) {
+  if (dueThroughToday == null) return undefined;
+  const parts = [dueThroughToday ? `今天及逾期 ${dueThroughToday} 项待完成` : "今天没有到期的待办"];
+  if (week) parts.push(`本周还有 ${week} 项`);
+  if (completedToday) parts.push(`今天已完成 ${completedToday} 项`);
+  return parts.join(" · ");
 }

@@ -83,7 +83,7 @@ function WallosForm({ initial }: { initial: Settings }) {
             placeholder="https://wallos.example.com"
           />
         </Field>
-        <Field label="API Key" meta={initial.hasApiKey ? <Badge tone="success">已保存 · 留空保留</Badge> : undefined}>
+        <Field label="API Key" meta={initial.hasApiKey ? <Badge tone="neutral">已保存 · 留空保留</Badge> : undefined}>
           <input
             type="password"
             autoComplete="new-password"
@@ -123,7 +123,7 @@ function WallosForm({ initial }: { initial: Settings }) {
           />
         </Field>
       </fieldset>
-      {initial.lastSync && <Badge tone="success">最近同步：{formatDateTime(initial.lastSync)}</Badge>}
+      {initial.lastSync && <Badge tone="neutral">最近同步：{formatDateTime(initial.lastSync)}</Badge>}
       {initial.lastError && (
         <Notice tone="danger" title="最近同步失败">
           {initial.lastError}

@@ -1,4 +1,5 @@
-# Install in the nginx http context; replace the domain and certificate paths.
+# nginx 1.25.1+ with ngx_http_v2_module; install in the http context.
+# Replace the domain and certificate paths.
 map $http_upgrade $workbench_connection_upgrade {
     default upgrade;
     '' close;
@@ -12,6 +13,7 @@ server {
 
 server {
     listen 443 ssl;
+    http2 on;
     server_name workbench.example.com;
     ssl_certificate /etc/letsencrypt/live/workbench.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/workbench.example.com/privkey.pem;

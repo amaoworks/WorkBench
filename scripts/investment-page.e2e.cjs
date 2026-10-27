@@ -7,6 +7,14 @@ const { join } = require("node:path");
 const { spawn } = require("node:child_process");
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 
+// Theme choices live in the top-bar account menu; pick the opposite of the current theme.
+async function toggleTheme(page) {
+  const dark = await page.evaluate(() => document.documentElement.classList.contains("dark"));
+  await page.getByRole("button", { name: "账户菜单", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: dark ? "浅色" : "深色", exact: true }).click();
+  await page.keyboard.press("Escape");
+}
+
 (async () => {
   const directory = await mkdtemp(join(tmpdir(), "workbench-investment-page-"));
   const baseURL = "http://127.0.0.1:18138";
@@ -59,7 +67,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     let loadingTheme;
     for (let i = 0; i < 3; i++) {
       loadingTheme = await page.evaluate(() => document.documentElement.classList.contains("dark") ? "light" : "dark");
-      await page.getByRole("button", { name: "切换主题", exact: true }).click();
+      await toggleTheme(page);
       await page.waitForFunction(expected => document.documentElement.classList.contains("dark") === (expected === "dark"), loadingTheme);
     }
     releaseFirstTerminal();
@@ -79,56 +87,31 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     await checkTheme(loadingTheme);
     for (let i = 0; i < 8; i++) {
       const next = await page.evaluate(() => document.documentElement.classList.contains("dark") ? "light" : "dark");
-      await page.getByRole("button", { name: "切换主题", exact: true }).click();
+      await toggleTheme(page);
       await checkTheme(next);
     }
     assert.equal(loads, 1, "changing theme must preserve the chart document and selected interval");
 
-    const checkExpandedBounds = async target => {
-      const bounds = await target.getByRole("region", { name: "投资终端", exact: true }).boundingBox();
-      const viewport = target.viewportSize();
-      assert.equal(bounds.x, 0); assert.equal(bounds.y, 0);
-      assert.equal(bounds.width, viewport.width); assert.equal(bounds.height, viewport.height);
-      assert.equal(await target.getByRole("navigation", { name: "主导航" }).isVisible(), false);
-      assert.equal(await target.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-      const chartBounds = await target.locator("iframe").boundingBox();
-      assert(Math.abs(chartBounds.y + chartBounds.height - viewport.height) < 2);
+    // The chart fills everything below the top nav; no Workbench controls float over it.
+    const checkChartBounds = async () => {
+      const nav = await page.locator(".workspace-topbar").boundingBox();
+      const bounds = await page.getByRole("region", { name: "投资终端", exact: true }).boundingBox();
+      const viewport = page.viewportSize();
+      assert(nav && bounds, "top bar and chart region must be visible");
+      assert.equal(bounds.x, 0);
+      assert.equal(bounds.width, viewport.width);
+      assert(bounds.y >= nav.y + nav.height - 1, "chart must start below the top nav");
+      assert(Math.abs(bounds.y + bounds.height - viewport.height) < 2, "chart must reach the bottom of the viewport");
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      assert.equal(await page.getByRole("toolbar", { name: "图表窗口" }).count(), 0, "the floating chart toolbar was removed");
+      for (const name of ["页面铺满", "全屏", "新窗口"]) assert.equal(await page.getByRole("button", { name, exact: true }).count() + await page.getByRole("link", { name, exact: true }).count(), 0);
     };
-    await page.getByRole("button", { name: "页面铺满", exact: true }).click();
-    await page.getByRole("button", { name: "返回工作台", exact: true }).waitFor();
-    await checkExpandedBounds(page);
-    await checkChartPreserved();
-
-    await page.getByRole("button", { name: "全屏", exact: true }).click();
-    await page.waitForFunction(() => document.fullscreenElement?.classList.contains("investment-view"));
-    await page.getByRole("button", { name: "退出全屏", exact: true }).waitFor();
-    await checkChartPreserved();
-    await page.evaluate(() => document.exitFullscreen());
-    await page.getByRole("button", { name: "全屏", exact: true }).waitFor();
-
-    const [popup] = await Promise.all([context.waitForEvent("page"), page.getByRole("link", { name: "新窗口", exact: true }).click()]);
-    await popup.frameLocator("iframe").getByText("终端布局测试").waitFor();
-    assert.equal(new URL(popup.url()).searchParams.get("view"), "terminal");
-    assert.equal(await popup.evaluate(() => window.opener), null);
-    await checkExpandedBounds(popup);
-    await checkChartPreserved();
-    await popup.close();
-    assert.equal(loads, 2, "expanding and fullscreen must not reload the existing chart");
-
-    await page.getByRole("button", { name: "返回工作台", exact: true }).click();
-    await page.getByRole("heading", { name: "投资", exact: true }).waitFor();
-    assert.equal(await page.getByRole("navigation", { name: "主导航" }).isVisible(), true);
-    await checkChartPreserved();
+    await checkChartBounds();
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByRole("button", { name: "页面铺满", exact: true }).click();
-    await checkExpandedBounds(page);
+    await checkChartBounds();
     await checkChartPreserved();
-    await page.screenshot({ path: join(tmpdir(), "workbench-investment-expanded-mobile.png"), fullPage: true });
-
-    await page.getByRole("region", { name: "投资终端", exact: true }).evaluate(element => { element.requestFullscreen = () => Promise.reject(new Error("fullscreen unavailable")); });
-    await page.getByRole("button", { name: "全屏", exact: true }).click();
-    await page.getByRole("alert").filter({ hasText: "浏览器未能进入全屏" }).waitFor();
-    await page.getByRole("button", { name: "返回工作台", exact: true }).click();
+    await page.screenshot({ path: join(tmpdir(), "workbench-investment-mobile.png"), fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 1000 });
     // System appearance changes must propagate without navigating or reloading the chart.
     await page.getByRole("link", { name: "设置", exact: true }).click();
     await page.getByRole("link", { name: "外观", exact: true }).click();
@@ -152,11 +135,11 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     assert.equal(new URL(page.url()).pathname, '/investment/monitor');
     assert.equal(new URL(page.url()).searchParams.get('tab'), null);
     assert.equal(await page.getByRole('region', { name: '投资终端', exact: true }).count(), 0);
-    await page.getByRole("link", { name: "总览", exact: true }).click();
-    await page.getByRole("heading", { name: "总览", exact: true }).waitFor();
+    await page.getByRole("link", { name: "Workbench 总览", exact: true }).click();
+    await page.getByRole("heading", { name: "今天，一目了然", exact: true }).waitFor();
     assert.notEqual(await page.evaluate(() => getComputedStyle(document.body).overflow), "hidden");
     assert.deepEqual(errors, []);
-    console.log("PASS: repeated and system theme changes, expanded/normal layout, native fullscreen, new window, mobile sizing, chart preservation, fullscreen failure recovery and legacy monitor link redirect; no trades.");
+    console.log("PASS: repeated and system theme changes, chart-only layout without floating controls, mobile sizing, chart preservation and legacy monitor link redirect; no trades.");
   } finally {
     await browser?.close();
     if (app && app.exitCode === null && app.pid) {

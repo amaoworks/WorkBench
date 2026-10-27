@@ -10,8 +10,15 @@ const { tmpdir } = require("node:os");
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 
 const warmReopens = 3;
+// The overview hero title; the nav link keeps the short label 总览.
+const OVERVIEW_HEADING = "今天，一目了然";
 const startupTimeout = Number(process.env.WORKBENCH_STARTUP_TIMEOUT_MS) || 90000;
 const futuDelayMs = Math.max(0, Math.min(30000, Number(process.env.WORKBENCH_TEST_FUTU_DELAY_MS) || 0));
+// Optional live-like conditions: per-request network latency for everything the
+// browser loads, and a delay on the Schwab account reads (live: ~0.8–1.9 s).
+const latencyMs = Math.max(0, Math.min(2000, Number(process.env.WORKBENCH_TEST_LATENCY_MS) || 0));
+const accountDelayMs = Math.max(0, Math.min(10000, Number(process.env.WORKBENCH_TEST_ACCOUNT_DELAY_MS) || 0));
+const accountDelay = () => accountDelayMs ? new Promise(resolve => setTimeout(resolve, accountDelayMs)) : undefined;
 const fixtureErrors = [];
 const browserErrors = [];
 const requestFailures = [];
@@ -100,15 +107,19 @@ async function fixtureInvestmentAPI(route) {
       return await route.continue();
     }
     if (path === "/api/modules/investment/schwab/trader/v1/accounts/accountNumbers" && method === "GET") {
+      await accountDelay();
       return await route.fulfill({ json: [{ accountNumber: "111", hashValue: "STARTUP" }] });
     }
     if (/\/schwab\/trader\/v1\/accounts\/STARTUP$/.test(path) && method === "GET") {
+      await accountDelay();
       return await route.fulfill({ json: { securitiesAccount: { positions: [] } } });
     }
     if (/\/schwab\/trader\/v1\/accounts\/STARTUP\/orders$/.test(path) && method === "GET") {
+      await accountDelay();
       return await route.fulfill({ json: [] });
     }
     if (/\/schwab\/trader\/v1\/accounts\/STARTUP\/transactions$/.test(path) && method === "GET") {
+      await accountDelay();
       return await route.fulfill({ json: [] });
     }
     if (path === "/api/modules/investment/schwab/marketdata/v1/pricehistory" && method === "GET") {
@@ -199,6 +210,11 @@ async function run() {
     browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH || undefined, args: ["--no-sandbox"] });
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
     const page = await context.newPage();
+    if (latencyMs) {
+      const cdp = await context.newCDPSession(page);
+      await cdp.send("Network.enable");
+      await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: latencyMs, downloadThroughput: -1, uploadThroughput: -1 });
+    }
     await page.addInitScript(() => {
       if (window === window.top) {
         window.__startupResourceTimings = [];
@@ -243,7 +259,7 @@ async function run() {
     });
 
     await page.goto(origin, { waitUntil: "domcontentloaded" });
-    await page.getByRole("heading", { name: "总览", exact: true }).waitFor({ timeout: startupTimeout });
+    await page.getByRole("heading", { name: OVERVIEW_HEADING, exact: true }).waitFor({ timeout: startupTimeout });
 
     const results = [];
     const fullResourceTimings = [];
@@ -291,7 +307,7 @@ async function run() {
 
     async function goHome() {
       await page.getByRole("link", { name: "总览", exact: true }).click();
-      await page.getByRole("heading", { name: "总览", exact: true }).waitFor({ timeout: startupTimeout });
+      await page.getByRole("heading", { name: OVERVIEW_HEADING, exact: true }).waitFor({ timeout: startupTimeout });
       await page.locator("iframe[title='TradingView 投资终端']").waitFor({ state: "detached", timeout: 10000 });
     }
 
@@ -312,7 +328,7 @@ async function run() {
     await page.getByRole("link", { name: "投资", exact: true }).click();
     await terminalRequest;
     await page.getByRole("link", { name: "总览", exact: true }).click();
-    await page.getByRole("heading", { name: "总览", exact: true }).waitFor({ timeout: startupTimeout });
+    await page.getByRole("heading", { name: OVERVIEW_HEADING, exact: true }).waitFor({ timeout: startupTimeout });
     await page.locator("iframe[title='TradingView 投资终端']").waitFor({ state: "detached", timeout: 10000 });
     fullResourceTimings.push({ visit: "quick-abandon", resources: await visitResourceTimings(page, "quick-abandon") });
     await openInvestment("quick-reopen", "快速离开后重开");
@@ -333,7 +349,7 @@ async function run() {
       return summary;
     }, { statuses: {}, loader: 0, sameOrigin: 0, bundles: 0 });
     await writeFile(reportPath, JSON.stringify({
-      binary, origin, futuDelayMs, results,
+      binary, origin, futuDelayMs, latencyMs, accountDelayMs, results,
       chartResourceTimings: fullResourceTimings,
       historyRequests: historyResults,
       futuSettingsRequests,

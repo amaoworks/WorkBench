@@ -13,6 +13,7 @@
     #terminal-loading { position: fixed; inset: 0; z-index: 20000; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box; text-align: center; font: 14px/1.6 system-ui, sans-serif; background: var(--terminal-background, Canvas); color: CanvasText; }
     #terminal-loading[hidden] { display: none; }
     #terminal-loading-title { margin: 0; font-size: 18px; }
+    #terminal-loading-step { margin: 4px 0 12px; font-size: 13px; opacity: .8; font-variant-numeric: tabular-nums; }
     #terminal-retry { padding: 10px 18px; border: 1px solid currentColor; border-radius: 6px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
     #watchlist-status, #preferences-status { position: fixed; bottom: 12px; left: 12px; right: 12px; z-index: 21000; padding: 10px 14px; background: #fff3cd; color: #664d03; border-radius: 6px; font: 14px/1.6 system-ui, sans-serif; }
     #preferences-status { bottom: 70px; }
@@ -50,6 +51,7 @@
   <div id="terminal-loading" role="status" aria-live="polite">
     <h1 id="terminal-loading-title">正在加载图表…</h1>
     <p id="terminal-loading-message">首次打开可能需要一些时间。</p>
+    <p id="terminal-loading-step">当前步骤：加载图表库…</p>
     <div id="terminal-loading-actions" hidden><button id="terminal-retry" type="button">重新加载</button></div>
   </div>
   <div id="stream-status" role="status" style="position:fixed;top:0;left:0;right:0;z-index:10000;background:#fff3cd;color:#664d03;padding:8px;text-align:center">正在连接 Schwab，实时行情与订单状态等待更新…</div>
@@ -72,6 +74,7 @@
     import { bindChartLayout } from "/investment/terminal/chart-layout.js";
 
     async function startTerminal() {
+    window.terminalLoad.step('preferences');
     const params = new URLSearchParams(location.search);
     const theme = params.get("theme") === "dark" ? "dark" : "light";
     let preferences;
@@ -205,6 +208,62 @@
         for (let i = 0; i < widget.chartsCount(); i++) widget.chart(i).resetData();
       }).catch(() => { status.hidden = false; });
     } });
+    // Startup steps and per-step limits for the first symbol lookup and first
+    // bars request. Slowness inside a step is fine until its own limit; the
+    // generic no-progress limit in loading.js still covers every other step.
+    const FIRST_SYMBOL_TIMEOUT_MS = 45000;
+    const FIRST_BARS_TIMEOUT_MS = 75000;
+    let firstSymbol = true, firstBars = true;
+    const resolveSymbol = datafeed.resolveSymbol.bind(datafeed);
+    datafeed.resolveSymbol = (symbolName, onResolve, onError, extension) => {
+      if (!firstSymbol) return resolveSymbol(symbolName, onResolve, onError, extension);
+      firstSymbol = false;
+      window.terminalLoad.step('symbol');
+      const timer = setTimeout(() => window.terminalLoad.fail(`查询标的 ${symbolName} 超时，请重新加载。`), FIRST_SYMBOL_TIMEOUT_MS);
+      return resolveSymbol(symbolName, info => {
+        clearTimeout(timer);
+        window.terminalLoad.step('bars');
+        onResolve(info);
+      }, reason => {
+        clearTimeout(timer);
+        window.terminalLoad.fail(`查询标的 ${symbolName} 失败：${reason}`);
+        onError(reason);
+      }, extension);
+    };
+    const loadBars = datafeed.getBars.bind(datafeed);
+    const extendedSessions = new Set(['night', EQUITY_24H_SESSION]);
+    datafeed.getBars = (symbolInfo, resolution, periodParams, onResult, onError) => {
+      const first = firstBars && periodParams?.firstDataRequest !== false;
+      if (first) firstBars = false;
+      const session = symbolInfo?.subsession_id || 'regular';
+      const timer = first ? setTimeout(() => {
+        if (!extendedSessions.has(session)) window.terminalLoad.fail(`读取 ${symbolInfo?.name || ''} K 线数据超时，请重新加载。`);
+      }, FIRST_BARS_TIMEOUT_MS) : undefined;
+      if (first) window.terminalLoad.step('bars');
+      return loadBars(symbolInfo, resolution, periodParams, (...result) => {
+        clearTimeout(timer);
+        if (first) window.terminalLoad.step('render');
+        onResult(...result);
+      }, reason => {
+        clearTimeout(timer);
+        onError(reason);
+        if (extendedSessions.has(session) && periodParams?.firstDataRequest !== false) {
+          // Night/24H data comes from an extra source. Its failure must not leave
+          // an empty chart: fall back to regular hours, which Schwab serves alone.
+          setTimeout(() => {
+            if (disposed || !widget) return;
+            pendingSession = null;
+            resolvedSession = 'regular';
+            sessionMenu?.setResolvedSession('regular', latestSessionResolution?.nightAvailable, latestSessionResolution?.fullDayAvailable);
+            widget.applyOverrides({ 'mainSeriesProperties.sessionId': 'regular' });
+            showSessionToast(`${session === 'night' ? '夜盘' : '全天'}数据读取失败，已切回常规时段`);
+            persistChartState();
+          }, 0);
+        } else if (first) {
+          window.terminalLoad.fail(`读取 ${symbolInfo?.name || ''} K 线数据失败：${reason}`);
+        }
+      });
+    };
     window.addEventListener('pagehide', () => {
       persistChartState();
       const capturedLayout = layoutSync?.dispose();
@@ -240,6 +299,14 @@
       }, 200);
     };
 
+    // Account data is not needed to draw the first chart. Start it once the
+    // chart is ready, or after a short cap in case the library waits on it.
+    const BROKER_START_CAP_MS = 15000;
+    let releaseBroker;
+    const brokerStart = new Promise(resolve => {
+      releaseBroker = resolve;
+      setTimeout(resolve, BROKER_START_CAP_MS);
+    });
     const pad2 = value => String(value).padStart(2, "0");
     widget = new tvWidget({
       datafeed,
@@ -284,6 +351,7 @@
       widgetbar: { details: true, watchlist: true, news: false, datawindow: true },
       broker_factory: function (host) {
         broker = new Broker(host, {
+          startAfter: brokerStart,
           preferredAccount: preferences.get('account') || '',
           onAccountChanged: account => preferences.set('account', account),
         });
@@ -305,6 +373,7 @@
         }
       }
     });
+    window.terminalLoad.step('chart');
     sessionMenu = createSessionMenu(widget, {
       onSelect: selectSession,
       onError: error => console.error('创建行情时段菜单失败', error),
@@ -317,6 +386,7 @@
       document.getElementById('watchlist-message').textContent = message;
     };
     widget.chartReady().then(async () => {
+      releaseBroker();
       if (disposed) return;
       // A saved layout includes its interval and session. Keep the separately
       // saved selections authoritative, including a newer URL symbol.

@@ -170,7 +170,7 @@ async function visitWithoutOverflow(page, url, label, ready) {
     await deadlineDialog.getByRole("button", { name: "确定", exact: true }).click();
     await titleInput.fill("日期持久化验证");
     await titleInput.press("Enter");
-    await page.getByText("日期持久化验证", { exact: true }).waitFor();
+    await page.locator(".todo-groups").getByText("日期持久化验证", { exact: true }).waitFor();
     const datedTask = await page.evaluate(async () => {
       const response = await fetch("/api/modules/todo/tasks?limit=50");
       const data = await response.json();
@@ -316,13 +316,13 @@ async function visitWithoutOverflow(page, url, label, ready) {
       const prefix = `${scenario.theme} ${scenario.width}px`;
       await expectNoOverflow(page, `Appearance settings at ${prefix}`);
       await visitWithoutOverflow(page, baseURL, `Dashboard at ${prefix}`, async () => {
-        await page.getByRole("heading", { name: "总览", exact: true }).waitFor();
-        await page.getByRole("region", { name: "待办概览", exact: true }).waitFor();
-        await page.getByRole("region", { name: "投资", exact: true }).waitFor();
+        await page.getByRole("heading", { name: "今天，一目了然", exact: true }).waitFor();
+        // Overview cards are titled by their widget definitions; the 今日概况 tiles are always present.
+        await page.getByRole("list", { name: "今日概况", exact: true }).waitFor();
       });
       await visitWithoutOverflow(page, `${baseURL}/todo`, `Todo at ${prefix}`, async () => {
         await page.getByLabel("待办标题", { exact: true }).waitFor();
-        await page.getByText("日期持久化验证", { exact: true }).waitFor();
+        await page.locator(".todo-groups").getByText("日期持久化验证", { exact: true }).waitFor();
       });
       await visitWithoutOverflow(page, `${baseURL}/investment`, `Investment terminal at ${prefix}`, async () => {
         await page.getByRole("region", { name: "投资终端", exact: true }).waitFor();
@@ -369,7 +369,7 @@ async function visitWithoutOverflow(page, url, label, ready) {
         {
           module: "资讯",
           ready: () => page.getByRole("switch", { name: "自动分析新资讯", exact: true }).waitFor(),
-          field: () => page.getByLabel("主题", { exact: true }),
+          field: () => page.getByRole("dialog", { name: "资讯设置", exact: true }).getByLabel("主题", { exact: true }),
           draft: "未保存主题",
           saved: "科技",
           savedToast: "资讯设置已保存"

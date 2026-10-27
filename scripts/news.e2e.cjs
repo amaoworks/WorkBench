@@ -39,8 +39,8 @@ function rssFeed(origin) {
 
 function atomFeed(origin) {
   return `<?xml version="1.0" encoding="UTF-8"?><feed xmlns="http://www.w3.org/2005/Atom"><title>Browser Atom</title><id>${origin}/atom</id>
-    <entry><id>atom-01</id><title>Browser Atom Markets</title><link href="${origin}/articles/atom-01"/><updated>${new Date().toISOString()}</updated><content type="text">Atom market fixture content.</content></entry>
-    <entry><id>atom-02</id><title>Browser Atom Science</title><link href="${origin}/articles/atom-02"/><updated>${new Date(Date.now() - 120_000).toISOString()}</updated><content type="text">Atom science fixture content.</content></entry>
+    <entry><id>atom-01</id><title>Browser Atom Markets</title><link href="${origin}/articles/atom-01"/><updated>${new Date(Date.now() - 7_200_000).toISOString()}</updated><content type="text">Atom market fixture content.</content></entry>
+    <entry><id>atom-02</id><title>Browser Atom Science</title><link href="${origin}/articles/atom-02"/><updated>${new Date(Date.now() - 7_320_000).toISOString()}</updated><content type="text">Atom science fixture content.</content></entry>
   </feed>`;
 }
 
@@ -289,11 +289,13 @@ async function expectFormControlStyles(page, reference, label) {
 
     await page.getByRole("button", { name: "订阅源", exact: true }).click();
     for (const name of ["浏览器 RSS", "浏览器 Atom"]) {
-      const row = page.getByText(name, { exact: true }).locator("xpath=ancestor::div[contains(@class, 'sm:flex-row')][1]");
+      // Source cards toggle with a per-source switch (prototype feed card), not 启用/停用 buttons.
+      const toggle = page.getByRole("switch", { name: `启用 ${name}`, exact: true });
+      assert.equal(await toggle.getAttribute("aria-checked"), "false");
       const enabled = page.waitForResponse((response) => /\/api\/modules\/news\/sources\/[^/]+$/.test(response.url()) && response.request().method() === "PUT");
-      await row.getByRole("button", { name: "启用", exact: true }).click();
+      await toggle.click();
       assert.equal((await enabled).status(), 200);
-      await row.getByRole("button", { name: "停用", exact: true }).waitFor();
+      await page.waitForFunction((label) => document.querySelector(`[role="switch"][aria-label="${label}"]`)?.getAttribute("aria-checked") === "true", `启用 ${name}`);
     }
     for (let attempt = 0; attempt < 2; attempt++) {
       const refreshed = page.waitForResponse((response) => response.url().endsWith("/api/modules/news/refresh") && response.request().method() === "POST");
@@ -306,20 +308,43 @@ async function expectFormControlStyles(page, reference, label) {
     assert.equal(stats.articles, 37, "repeat refresh must not duplicate articles");
 
     await page.getByRole("button", { name: "文章", exact: true }).click();
-    await page.getByText("Quantum Browser Story", { exact: true }).waitFor();
+    // The latest grid and brief repeat headlines; scope list assertions to article rows.
+    const rows = page.locator("article");
+    await rows.getByText("Quantum Browser Story", { exact: true }).waitFor();
+    await page.waitForFunction(() => document.querySelectorAll("article").length === 30);
+    const filterChips = page.getByRole("group", { name: "筛选文章" });
+    assert.equal(await filterChips.getByRole("button", { name: "市场", exact: true }).count(), 0,
+      "the older topic must be absent from the first page's shortcut chips");
+    const topic = page.getByLabel("文章话题", { exact: true });
+    await topic.fill(" 市场 ");
+    const topicFiltered = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname === "/api/modules/news/articles" && url.searchParams.get("topic") === "市场";
+    });
+    await page.getByRole("button", { name: "搜索", exact: true }).click();
+    assert.equal((await topicFiltered).status(), 200);
+    await rows.getByText("Browser Atom Science", { exact: true }).waitFor();
+    assert.equal(await rows.count(), 2, "typed topics must filter articles beyond the loaded page");
+    await topic.fill("");
+    await page.getByRole("button", { name: "搜索", exact: true }).click();
+    await rows.getByText("Quantum Browser Story", { exact: true }).waitFor();
     await page.getByRole("button", { name: "加载更多", exact: true }).click();
-    await page.getByText("Browser Atom Science", { exact: true }).waitFor();
+    await rows.getByText("Browser Atom Science", { exact: true }).waitFor();
+    await page.waitForFunction(() => document.querySelectorAll("article").length === 37, null, { timeout: 10_000 }).catch(() => {});
     assert.equal(await page.locator("article").count(), 37, "article cursor should load the second page");
 
     const search = page.getByPlaceholder("搜索标题或内容", { exact: true });
     await search.fill("Quantum Browser Story");
-    await page.getByRole("button", { name: "筛选", exact: true }).click();
-    await page.getByText("Quantum Browser Story", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "搜索", exact: true }).click();
+    await page.waitForFunction(() => document.querySelectorAll("article").length === 1);
+    await rows.getByText("Quantum Browser Story", { exact: true }).waitFor();
     assert.equal(await page.locator("article").count(), 1);
     await search.fill("");
-    await page.getByLabel("已匹配", { exact: true }).check();
-    await page.getByRole("button", { name: "筛选", exact: true }).click();
-    await page.getByText("Quantum Browser Story", { exact: true }).waitFor();
+    const matchedChip = page.getByRole("group", { name: "筛选文章" }).getByRole("button", { name: "已匹配", exact: true });
+    await matchedChip.click();
+    assert.equal(await matchedChip.getAttribute("aria-pressed"), "true");
+    await page.getByRole("button", { name: "搜索", exact: true }).click();
+    await rows.getByText("Quantum Browser Story", { exact: true }).waitFor();
     assert.equal(await page.locator("article").count(), 1, "matched filter should apply the saved rule");
 
     const quantum = page.locator("article", { hasText: "Quantum Browser Story" });
@@ -362,14 +387,17 @@ async function expectFormControlStyles(page, reference, label) {
     assert.equal(telegramAfterPush.hasBotToken, false);
 
     await page.getByRole("button", { name: "文章", exact: true }).click();
-    await page.getByLabel("已匹配", { exact: true }).uncheck();
-    await page.getByRole("button", { name: "筛选", exact: true }).click();
+    await page.getByRole("group", { name: "筛选文章" }).getByRole("button", { name: "已匹配", exact: true }).click();
+    await page.getByRole("button", { name: "搜索", exact: true }).click();
     for (const width of [1440, 390, 360]) {
       await page.setViewportSize({ width, height: width < 600 ? 844 : 1000 });
-      if (width < 600) await page.waitForFunction(() => document.querySelector(".workspace-sidebar")?.getBoundingClientRect().width <= 65);
+      if (width < 600) await page.getByRole("button", { name: "打开导航", exact: true }).waitFor();
       for (const dark of [false, true]) {
         if (await page.evaluate(() => document.documentElement.classList.contains("dark")) !== dark) {
-          await page.getByRole("button", { name: "切换主题", exact: true }).click();
+          // Theme choices live in the account menu of the top bar.
+          await page.getByRole("button", { name: "账户菜单", exact: true }).click();
+          await page.getByRole("menuitemradio", { name: dark ? "深色" : "浅色", exact: true }).click();
+          await page.keyboard.press("Escape");
           await page.waitForFunction((expected) => document.documentElement.classList.contains("dark") === expected, dark);
         }
         for (const text of ["", "搜索标题或内容"]) {

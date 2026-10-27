@@ -16,12 +16,12 @@ import type { TodoToday } from "./schema";
 type Item = TodoToday["items"][number];
 const DAY = 86_400_000;
 
-function dueLabel(item: Item): { text: string; tone: "danger" | "warning" } | null {
+function dueLabel(item: Item): { text: string; tone: "info" | "warning" } | null {
   if (!item.dueAt) return null;
   const due = new Date(item.dueAt);
-  if (!item.overdue) return { text: `今天 ${formatClock(due)}`, tone: "warning" };
+  if (!item.overdue) return { text: `今天 ${formatClock(due)}`, tone: "info" };
   const days = Math.floor((Date.now() - due.getTime()) / DAY);
-  return { text: days >= 1 ? `逾期 ${days} 天` : `已逾期 · ${formatClock(due)}`, tone: "danger" };
+  return { text: days >= 1 ? `逾期 ${days} 天` : `已逾期 · ${formatClock(due)}`, tone: "warning" };
 }
 
 function renewalDays(paymentDate: string) {

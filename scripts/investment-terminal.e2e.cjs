@@ -220,6 +220,7 @@ async function pollUntil(check, message, timeout = 30000) {
             // all host callbacks still run through the actual TradingView library.
             const brokerFactory = `      broker_factory: function (host) {
         broker = new Broker(host, {
+          startAfter: brokerStart,
           preferredAccount: preferences.get('account') || '',
           onAccountChanged: account => preferences.set('account', account),
         });
@@ -232,6 +233,7 @@ async function pollUntil(check, message, timeout = 30000) {
         const update = host.orderUpdate.bind(host);
         host.orderUpdate = order => { window.__orderUpdates.push(order); update(order); };
         broker = new Broker(host, {
+          startAfter: brokerStart,
           preferredAccount: preferences.get('account') || '',
           onAccountChanged: account => preferences.set('account', account),
         });
@@ -408,8 +410,6 @@ async function pollUntil(check, message, timeout = 30000) {
       }
     };
     if (testPreferences) {
-      await page.getByRole('button', { name: '页面铺满', exact: true }).click();
-      await page.getByRole('button', { name: '返回工作台', exact: true }).waitFor();
       const sessionButton = label => chart.getByRole('button', { name: new RegExp(`^行情时段：${label}。`) });
       const chooseSession = async (label, title, nextLabel) => {
         await sessionButton(label).click();
@@ -457,7 +457,7 @@ async function pollUntil(check, message, timeout = 30000) {
         const savedLayout = JSON.stringify(entries.layout?.value);
         return entries.chart?.value?.symbol === 'AAPL' && entries.chart.value.resolution === '5' && entries.chart.value.session === 'regular' &&
           entries.layout?.value?.charts?.length && savedLayout.includes(String(created.studyId)) && savedLayout.includes(String(created.shapeId)) &&
-          entries.account?.value === 'B' && entries.view?.value?.tab === 'terminal' && entries.view.value.expanded === true &&
+          entries.account?.value === 'B' &&
           values.includes('dd-MM-yyyy') && values.includes('12-hours');
       }, 'created chart objects and preferences were not saved');
       const firstEntries = await readPreferences();
@@ -471,12 +471,9 @@ async function pollUntil(check, message, timeout = 30000) {
       page = await context.newPage();
       await installPageRoutes(context, page);
       await page.goto(`${origin}/investment`);
-      await page.getByRole('button', { name: '返回工作台', exact: true }).waitFor();
-      assert.equal(await page.locator('.investment-page').getAttribute('data-expanded'), 'true', 'the server-saved expanded view must restore in a clean context');
       await page.locator("iframe[title='TradingView 投资终端']").waitFor();
       terminal = await (await page.locator("iframe[title='TradingView 投资终端']").elementHandle()).contentFrame();
       await terminal.waitForFunction(() => window.__broker?.connectionStatus() === 1, null, { timeout: 30000 });
-      assert.deepEqual((await readPreferences()).view.value, { tab: 'terminal', expanded: true }, 'clean-context expansion must come from the server view preference');
       await terminal.evaluate(() => window.__widget.chartReady());
       await terminal.locator('#terminal-loading').waitFor({ state: 'hidden' });
       chart = terminal.childFrames()[0];
@@ -558,7 +555,6 @@ async function pollUntil(check, message, timeout = 30000) {
       return;
     }
     if (testChartState) {
-      if (useApp) await page.getByRole('button', { name: '页面铺满', exact: true }).click();
       const sessionButton = label => chart.getByRole('button', { name: new RegExp(`^行情时段：${label}。`) });
       const chooseSession = async (label, title, nextLabel) => {
         await sessionButton(label).click();
@@ -859,7 +855,6 @@ async function pollUntil(check, message, timeout = 30000) {
       await terminal.evaluate(() => { window.__originalWidget = window.__widget; });
       if (useApp) {
         await page.screenshot({ path: join(tmpdir(), `workbench-investment-app-${useWebKit ? "webkit" : "chromium"}.png`), animations: "disabled", fullPage: true, scale: "css" });
-        await page.getByRole("button", { name: "页面铺满", exact: true }).click();
       }
       for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }, { width: 320, height: 568 }]) {
         await page.setViewportSize(viewport);
@@ -879,7 +874,6 @@ async function pollUntil(check, message, timeout = 30000) {
         await page.screenshot({ path: join(tmpdir(), `workbench-investment-chart-mobile-${useWebKit ? "webkit-" : ""}${viewport.width}.png`), animations: "disabled", scale: "css" });
       }
       if (useApp) {
-        await page.getByRole("button", { name: "返回工作台", exact: true }).click();
         await page.getByRole("heading", { name: "投资", exact: true }).waitFor();
         assert.equal(await terminal.evaluate(() => window.__widget === window.__originalWidget), true);
         assert.equal(await terminal.locator("#terminal-loading").isHidden(), true);
