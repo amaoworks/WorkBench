@@ -65,7 +65,7 @@ export function InvestmentMonitor() {
             ) : (
               <h2 className="flex items-center gap-2 font-medium">
                 <Bell size={18} />
-                价格监控
+                监控状态
                 <Badge
                   tone={
                     data?.status === "error" || data?.status === "stale" ? "danger" : data?.status === "monitoring" ? "success" : "neutral"

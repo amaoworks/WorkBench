@@ -1,10 +1,10 @@
 import { aiTestSchema, backupSchema } from "./schema";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Save,
-  AudioLines,
+  Blocks,
   Check,
   Database,
   Fingerprint,
@@ -15,7 +15,6 @@ import {
   Bot,
   Paintbrush,
   Radio,
-  ShieldCheck,
   Sun,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -27,36 +26,28 @@ import { TelegramPanel } from "./TelegramPanel";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
-import { CardHeader } from "../../components/ui/Card";
 import { Field } from "../../components/ui/Field";
 import { Notice } from "../../components/ui/Notice";
 import { Skeleton } from "../../components/ui/States";
 import { Switch } from "../../components/ui/Switch";
+import { cn } from "../../shared/cn";
 
 const sections = [
-  { id: "modules", title: "业务", icon: Database },
-  { id: "ai", title: "AI 配置", icon: Bot },
+  { id: "appearance", title: "外观", icon: Paintbrush },
+  { id: "modules", title: "业务模块", icon: Blocks },
+  { id: "ai", title: "AI", icon: Bot },
   { id: "notifications", title: "通知推送", icon: Radio },
   { id: "security", title: "账户安全", icon: Fingerprint },
-  { id: "appearance", title: "外观", icon: Paintbrush },
   { id: "data", title: "数据与运行", icon: Database },
-];
+] as const;
+type SectionId = (typeof sections)[number]["id"];
+const sectionId = (id: string) => `settings-${id}`;
+const isSection = (id: string | null): id is SectionId => sections.some((section) => section.id === id);
+// Just below the sticky 64px top bar (and the chip strip on narrow screens).
+const SPY_OFFSET = 140;
 
 export default function SettingsPage() {
   const settings = useSettings();
-  const [params, setParams] = useSearchParams();
-  const selected = params.get("tab");
-  const active = sections.some((section) => section.id === selected) ? selected : "modules";
-  function selectTab(id: string) {
-    setParams(
-      (current) => {
-        const next = new URLSearchParams(current);
-        next.set("tab", id);
-        return next;
-      },
-      { replace: true, preventScrollReset: true },
-    );
-  }
   if (settings.isPending)
     return (
       <div className="page space-y-4">
@@ -70,72 +61,138 @@ export default function SettingsPage() {
         {settings.error.message}
       </Notice>
     );
-  const data = settings.data;
+  return <SettingsContent data={settings.data} />;
+}
+
+function scrollToSection(id: SectionId, smooth: boolean) {
+  const reduced = document.documentElement.dataset.motion === "reduced" || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  document.getElementById(sectionId(id))?.scrollIntoView({ block: "start", behavior: smooth && !reduced ? "smooth" : "auto" });
+}
+
+function SettingsContent({ data }: { data: Settings }) {
+  const [params, setParams] = useSearchParams();
+  const requested = params.get("tab");
+  const [current, setCurrent] = useState<SectionId>(isSection(requested) ? requested : "appearance");
+  const nav = useRef<HTMLElement>(null);
+  const firstScroll = useRef(true);
+
+  // `?tab=` (old links, module dialogs, the AI panel) scrolls to its section.
+  useEffect(() => {
+    if (!isSection(requested)) return;
+    scrollToSection(requested, !firstScroll.current);
+    firstScroll.current = false;
+  }, [requested]);
+
+  // Highlight the section under the top bar while the page scrolls.
+  useEffect(() => {
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      let next: SectionId = "appearance";
+      for (const section of sections) {
+        const element = document.getElementById(sectionId(section.id));
+        if (element && element.getBoundingClientRect().top <= SPY_OFFSET) next = section.id;
+      }
+      if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2) next = "data";
+      setCurrent(next);
+    };
+    const onScroll = () => {
+      if (!frame) frame = requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, []);
+
+  // Keep the active chip visible when the nav is a horizontal strip.
+  useEffect(() => {
+    const strip = nav.current;
+    const chip = strip?.querySelector<HTMLElement>(`[data-section="${current}"]`);
+    if (strip && chip && strip.scrollWidth > strip.clientWidth) strip.scrollTo({ left: chip.offsetLeft - 16 });
+  }, [current]);
+
+  function select(id: SectionId) {
+    setCurrent(id);
+    scrollToSection(id, true);
+    setParams(
+      (value) => {
+        const next = new URLSearchParams(value);
+        next.set("tab", id);
+        return next;
+      },
+      { replace: true, preventScrollReset: true },
+    );
+  }
+
   return (
     <div className="page settings-page">
       <PageHeader title="设置" />
-      <div className="settings-tabs" role="tablist" aria-label="设置分类">
-        {sections.map(({ id, title, icon: Icon }, index) => (
-          <button
-            key={id}
-            id={`tab-${id}`}
-            type="button"
-            role="tab"
-            aria-selected={active === id}
-            aria-controls={`panel-${id}`}
-            tabIndex={active === id ? 0 : -1}
-            onClick={() => selectTab(id)}
-            onKeyDown={(event) => {
-              let next: number;
-              if (event.key === "ArrowRight") next = (index + 1) % sections.length;
-              else if (event.key === "ArrowLeft") next = (index + sections.length - 1) % sections.length;
-              else if (event.key === "Home") next = 0;
-              else if (event.key === "End") next = sections.length - 1;
-              else return;
-              event.preventDefault();
-              const nextSection = sections[next];
-              if (nextSection) {
-                selectTab(nextSection.id);
-                document.getElementById(`tab-${nextSection.id}`)?.focus();
-              }
-            }}
-          >
-            <Icon size={17} />
-            <span>{title}</span>
-          </button>
-        ))}
+      <div className="settings-layout">
+        <nav ref={nav} className="settings-nav" aria-label="设置分类">
+          {sections.map(({ id, title, icon: Icon }) => (
+            <a
+              key={id}
+              href={`?tab=${id}`}
+              data-section={id}
+              className={cn("settings-nav-link focus-ring", current === id && "is-active")}
+              aria-current={current === id ? "true" : undefined}
+              onClick={(event) => {
+                event.preventDefault();
+                select(id);
+              }}
+            >
+              <Icon size={18} />
+              <span>{title}</span>
+            </a>
+          ))}
+        </nav>
+        <div className="settings-sections">
+          <SettingsSection id="appearance">
+            <AppearanceForm value={data} />
+          </SettingsSection>
+          <SettingsSection id="modules">
+            <ModulesPanel />
+          </SettingsSection>
+          <SettingsSection id="ai">
+            <AIForm key={JSON.stringify(data.ai)} value={data.ai} />
+          </SettingsSection>
+          <SettingsSection id="notifications">
+            <TelegramPanel />
+          </SettingsSection>
+          <SettingsSection id="security">
+            <PasswordForm mode={data.deployment.authMode} />
+          </SettingsSection>
+          <SettingsSection id="data">
+            <DataPanel value={data} />
+            <LoggingPanel key={data.logging.level} value={data.logging} />
+          </SettingsSection>
+        </div>
       </div>
-      <div className="settings-panel" role="tabpanel" id="panel-modules" aria-labelledby="tab-modules" hidden={active !== "modules"}>
-        <ModulesPanel />
-      </div>
-      <div className="settings-panel" role="tabpanel" id="panel-ai" aria-labelledby="tab-ai" hidden={active !== "ai"}>
-        <AIForm key={JSON.stringify(data.ai)} value={data.ai} />
-      </div>
-      <div
-        className="settings-panel"
-        role="tabpanel"
-        id="panel-notifications"
-        aria-labelledby="tab-notifications"
-        hidden={active !== "notifications"}
-      >
-        <TelegramPanel />
-      </div>
-      <div className="settings-panel" role="tabpanel" id="panel-security" aria-labelledby="tab-security" hidden={active !== "security"}>
-        <PasswordForm mode={data.deployment.authMode} />
-      </div>
-      <div
-        className="settings-panel"
-        role="tabpanel"
-        id="panel-appearance"
-        aria-labelledby="tab-appearance"
-        hidden={active !== "appearance"}
-      >
-        <AppearanceForm value={data} />
-      </div>
-      <div className="settings-panel" role="tabpanel" id="panel-data" aria-labelledby="tab-data" hidden={active !== "data"}>
-        <LoggingPanel key={data.logging.level} value={data.logging} />
-        <DataPanel value={data} />
-      </div>
+    </div>
+  );
+}
+
+function SettingsSection({ id, children }: { id: SectionId; children: ReactNode }) {
+  const title = sections.find((section) => section.id === id)?.title;
+  return (
+    <section id={sectionId(id)} className="settings-section" aria-labelledby={`${sectionId(id)}-title`}>
+      <h2 id={`${sectionId(id)}-title`}>{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+/** Label on the left, control on the right. */
+function SettingsRow({ label, children }: { label: ReactNode; children: ReactNode }) {
+  return (
+    <div className="settings-row">
+      <div className="settings-row-label">{label}</div>
+      <div className="settings-row-control">{children}</div>
     </div>
   );
 }
@@ -208,7 +265,7 @@ function AIForm({ value }: { value: AISettings }) {
           />
         </Field>
         {value.hasApiKey && (
-          <div className="flex items-center justify-between gap-3 text-sm">
+          <div className="settings-line">
             <span>清除密钥并停用</span>
             <Switch
               label="清除密钥并停用"
@@ -279,10 +336,9 @@ function PasswordForm({ mode }: { mode: string }) {
   };
   if (mode === "local")
     return (
-      <div className="local-mode">
-        <ShieldCheck size={32} strokeWidth={1.3} />
-        <h3>本机免登录模式</h3>
-      </div>
+      <SettingsRow label="登录方式">
+        <Badge>本机免登录</Badge>
+      </SettingsRow>
     );
   return (
     <form className="studio-form" onSubmit={submit}>
@@ -290,7 +346,6 @@ function PasswordForm({ mode }: { mode: string }) {
         <div>
           <h3>修改登录密码</h3>
         </div>
-        <ShieldCheck size={24} className="muted-icon" />
       </div>
       <fieldset className="form-fields" disabled={change.isPending}>
         <Field label="当前密码">
@@ -343,86 +398,51 @@ function AppearanceForm({ value }: { value: Settings }) {
   const save = useAppearance();
   const { theme, motion, palette = "default" } = value.appearance;
   const palettes = [
-    { id: "default", title: "TradingView（默认）", description: "纯白与纯黑底色，蓝色强调", color: "#2962ff" },
-    { id: "claude", title: "暖陶（Claude）", description: "暖象牙纸底与焦糖赤陶色", color: "#cc785c" },
+    { id: "default", title: "TradingView（默认）", color: "#2962ff" },
+    { id: "claude", title: "暖陶（Claude）", color: "#cc785c" },
   ] as const;
   const themes = [
     { id: "light", title: "浅色", icon: Sun },
     { id: "dark", title: "深色", icon: Moon },
     { id: "system", title: "跟随系统", icon: Monitor },
   ] as const;
+  const apply = (next: Settings["appearance"]) => save.mutate(next, { onError: (err) => toast.error(err.message) });
   return (
-    <div className="studio-form">
-      <div className="control-heading">
-        <h3>风格</h3>
-      </div>
-      <div className="palette-options" role="group" aria-label="风格">
-        {palettes.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            className={`palette-option focus-ring ${palette === item.id ? "selected" : ""}`}
-            aria-pressed={palette === item.id}
-            onClick={() => save.mutate({ theme, motion, palette: item.id }, { onError: (err) => toast.error(err.message) })}
-          >
-            <div className="palette-info">
+    <div className="settings-rows">
+      <SettingsRow label="风格">
+        <div className="settings-segment" role="group" aria-label="风格">
+          {palettes.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className="focus-ring"
+              aria-pressed={palette === item.id}
+              onClick={() => apply({ theme, motion, palette: item.id })}
+            >
               <span className="palette-swatch" style={{ background: item.color }} aria-hidden="true" />
-              <div>
-                <span className="text-sm font-medium">{item.title}</span>
-                <p className="mt-0.5 text-xs text-[var(--muted)]">{item.description}</p>
-              </div>
-            </div>
-            {palette === item.id && <Check size={16} className="shrink-0 text-brand" />}
-          </button>
-        ))}
-      </div>
-      <div className="control-heading">
-        <h3>模式</h3>
-      </div>
-      <div className="theme-options" role="group" aria-label="主题">
-        {themes.map(({ id, title, icon: Icon }) => (
-          <button
-            key={id}
-            type="button"
-            className={`theme-option focus-ring ${theme === id ? "selected" : ""}`}
-            aria-pressed={theme === id}
-            onClick={() => save.mutate({ theme: id, motion, palette }, { onError: (err) => toast.error(err.message) })}
-          >
-            <div className={`theme-preview preview-${id}`} aria-hidden="true">
-              <div className="preview-rail" />
-              <div className="preview-content">
-                <i />
-                <i />
-                <div>
-                  <b />
-                  <b />
-                </div>
-              </div>
-              <span>
-                <Icon size={18} />
-              </span>
-            </div>
-            <div className="theme-caption">
-              <span>{title}</span>
-              {theme === id && <Check size={16} />}
-            </div>
-          </button>
-        ))}
-      </div>
-      <div className="motion-control">
-        <div className="motion-label">
-          <AudioLines size={20} />
-          <h3>减少动态效果</h3>
+              {item.title}
+            </button>
+          ))}
         </div>
+      </SettingsRow>
+      <SettingsRow label="主题">
+        <div className="settings-segment" role="group" aria-label="主题">
+          {themes.map(({ id, title, icon: Icon }) => (
+            <button key={id} type="button" className="focus-ring" aria-pressed={theme === id} onClick={() => apply({ theme: id, motion, palette })}>
+              <Icon size={14} aria-hidden="true" />
+              {title}
+            </button>
+          ))}
+        </div>
+      </SettingsRow>
+      <SettingsRow label="减少动态效果">
         <Switch
           label="减少动态效果"
           checked={motion === "reduced"}
           disabled={save.isPending}
-          onChange={(checked) =>
-            save.mutate({ theme, motion: checked ? "reduced" : "full", palette }, { onError: (err) => toast.error(err.message) })
-          }
+          onChange={(checked) => apply({ theme, motion: checked ? "reduced" : "full", palette })}
         />
-      </div>
+      </SettingsRow>
     </div>
   );
 }
@@ -439,35 +459,32 @@ function DataPanel({ value }: { value: Settings }) {
   });
   const deployment = value.deployment;
   return (
-    <div className="space-y-4">
-      <div className="ui-card">
-        <CardHeader
-          title="数据备份"
-          action={
-            deployment.backupSupported ? (
-              <Button variant="secondary" disabled={backup.isPending} onClick={() => backup.mutate()}>
-                <Database size={16} />
-                {backup.isPending ? "备份中…" : "创建备份"}
-              </Button>
-            ) : (
-              <Badge>由数据库服务管理</Badge>
-            )
-          }
-        />
-        {!deployment.backupSupported && (
-          <p className="p-4 text-sm text-[var(--muted)]">
-            使用数据库服务的备份或 <code>pg_dump</code>；本地数据路径中的运行文件需另行备份。
-          </p>
+    <div className="settings-rows">
+      <SettingsRow label="数据备份">
+        {deployment.backupSupported ? (
+          <Button variant="secondary" size="sm" disabled={backup.isPending} onClick={() => backup.mutate()}>
+            <Database size={15} />
+            {backup.isPending ? "备份中…" : "创建备份"}
+          </Button>
+        ) : (
+          <Badge>由数据库服务管理</Badge>
         )}
-        {file && (
-          <Notice title="备份已创建" className="m-4">
-            backups/{file}
-          </Notice>
-        )}
-      </div>
-      <section className="ui-card" aria-label="运行信息">
-        <CardHeader title="运行信息" action={<Badge>只读</Badge>} />
-        <dl className="studio-deployment-details p-4">
+      </SettingsRow>
+      {!deployment.backupSupported && (
+        <p className="settings-note">
+          使用数据库服务的备份或 <code>pg_dump</code>；本地数据路径中的运行文件需另行备份。
+        </p>
+      )}
+      {file && (
+        <Notice title="备份已创建" className="my-3">
+          backups/{file}
+        </Notice>
+      )}
+      <section aria-labelledby="settings-runtime-title">
+        <h3 id="settings-runtime-title" className="settings-subhead">
+          运行信息
+        </h3>
+        <dl className="studio-deployment-details">
           <div>
             <dt>监听地址</dt>
             <dd>{deployment.listenAddress}</dd>

@@ -6,7 +6,6 @@ import { Badge } from "../../components/ui/Badge";
 import { ButtonLink } from "../../components/ui/Button";
 import { Notice } from "../../components/ui/Notice";
 import { Skeleton } from "../../components/ui/States";
-import { WidgetHeader } from "../../components/dashboard/WidgetHeader";
 import { cn } from "../../shared/cn";
 import { formatClock } from "../../shared/format";
 import { useOverviewSummary } from "../../shared/dashboard";
@@ -75,27 +74,12 @@ export default function TodoTodayWidget({ widget }: { widget: Widget }) {
   const open = data.items.filter((item) => !doneIds.has(item.id));
   const renewals = data.renewals ?? [];
   const completedToday = data.completedToday ?? 0;
-  const dayTotal = data.total + completedToday;
-  const progress = dayTotal > 0 ? Math.round((completedToday / dayTotal) * 100) : 0;
   if (open.length === 0 && done.length === 0 && renewals.length === 0 && completedToday === 0) return null;
   const visibleCompleted = data.items.filter((item) => doneIds.has(item.id)).length;
   const more = Math.max(0, data.total - open.length - visibleCompleted);
   return (
     <>
-      <WidgetHeader>
-        {data.overdue > 0 ? <Badge tone="danger">{data.overdue} 项逾期</Badge> : open.length > 0 && <Badge>{data.total} 项</Badge>}
-      </WidgetHeader>
-      {dayTotal > 0 && (
-        <div className="mb-4" aria-label={`今日完成 ${completedToday}/${dayTotal}`}>
-          <div className="mb-1 flex items-center justify-between text-xs text-[var(--muted)]">
-            <span>今日完成</span>
-            <span>{completedToday}/{dayTotal}</span>
-          </div>
-          <div className="h-1.5 overflow-hidden rounded-full bg-[var(--soft)]">
-            <div className="h-full rounded-full bg-[var(--cta)]" style={{ width: `${progress}%` }} />
-          </div>
-        </div>
-      )}
+      {/* Completion and overdue counts live in the 今日待办 tile above; the card lists the items. */}
       {(open.length > 0 || done.length > 0) && (
         <>
           <p className="ov-section">任务</p>

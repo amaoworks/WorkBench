@@ -8,17 +8,17 @@ import { dashboardSchema, widgetCatalogSchema, type ConfigurableWidget, type Wid
 import { DashboardSignalsContext, WidgetHeaderSlotContext, type OverviewSummary } from "../../shared/dashboard";
 import { widgetRegistry } from "../../modules/registry";
 import { Card } from "../../components/ui/Card";
-import { Button, ButtonLink } from "../../components/ui/Button";
+import { Button } from "../../components/ui/Button";
 import { Skeleton } from "../../components/ui/States";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { Notice } from "../../components/ui/Notice";
 import { Badge } from "../../components/ui/Badge";
-import { NotificationsOverview, NotificationsSummary } from "../notifications/NotificationsSummary";
+import { NotificationsOverview } from "../notifications/NotificationsSummary";
 import { Checkbox } from "../../components/ui/Checkbox";
 import { Select } from "../../components/ui/Select";
 
-// Overview cards owned by the platform rather than a business module.
-const platformWidgets: Record<string, ComponentType<{ widget: Widget }>> = { "notifications.summary": NotificationsSummary };
+// The platform notifications card renders only as a 今日概况 tile, never as a full card.
+const TILE_ONLY = "notifications.summary";
 
 const widgetIcons: Record<string, ComponentType<{ size?: number }>> = {
   "investment.snapshot": Wallet,
@@ -69,7 +69,9 @@ export default function DashboardPage() {
     });
   }, []);
   const signals = useMemo(() => ({ heldSymbols, setHeldSymbols, summaries, setSummary }), [heldSymbols, setHeldSymbols, summaries, setSummary]);
-  const widgets = dashboard.data?.widgets ?? [];
+  const configured = dashboard.data?.widgets ?? [];
+  const showNotifications = configured.some((widget) => widget.widgetKind === TILE_ONLY);
+  const widgets = configured.filter((widget) => widget.widgetKind !== TILE_ONLY);
   // Only the first configured card may lead, preserving the user's card order.
   const lead = widgets[0]?.size === "large" ? widgets[0] : undefined;
   const rest = widgets.filter((widget) => widget !== lead);
@@ -83,18 +85,11 @@ export default function DashboardPage() {
           {todayLabel()}
           {phrases.length > 0 && ` · ${phrases.join("、")}`}
         </p>
+        <Button className="overview-edit" variant="ghost" size="sm" aria-pressed={editing} onClick={() => setEditing(!editing)}>
+          <LayoutGrid size={14} />
+          {editing ? "完成" : "配置卡片"}
+        </Button>
       </header>
-      <div className="overview-section-head">
-        <h2>今日概况</h2>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" size="sm" onClick={() => setEditing(!editing)}>
-            {editing ? "关闭配置" : "配置卡片"}
-          </Button>
-          <ButtonLink variant="secondary" size="sm" to="/settings?tab=modules">
-            管理业务
-          </ButtonLink>
-        </div>
-      </div>
       {editing && (
         <Card className="mb-5 p-5">
           {catalog.isPending ? (
@@ -119,13 +114,13 @@ export default function DashboardPage() {
           {dashboard.error.message}
         </Notice>
       )}
-      {dashboard.data?.widgets.length === 0 && (
+      {dashboard.data && configured.length === 0 && (
         <Card>
           <EmptyState title="暂无卡片" description="可在配置总览中选择卡片，或前往设置启用业务。" />
         </Card>
       )}
       <DashboardSignalsContext.Provider value={signals}>
-        <NotificationsOverview />
+        {showNotifications && <NotificationsOverview />}
         {(widgets.length > 0 || tiles.length > 0) && (
           <div className="overview-today" data-has-tiles={tiles.length > 0} data-has-lead={Boolean(lead)}>
             {tiles.length > 0 && (
@@ -153,12 +148,6 @@ export default function DashboardPage() {
           </Card>
         )}
       </DashboardSignalsContext.Provider>
-      {widgets.length > 0 && (
-        <p className="dashboard-hint">
-          <LayoutGrid size={13} />
-          空卡片默认隐藏；在「配置卡片」中可调整顺序与大小。
-        </p>
-      )}
     </div>
   );
 }
@@ -189,7 +178,7 @@ function SummaryTile({ id, summary }: { id: string; summary: OverviewSummary }) 
 
 function DashboardCard({ widget }: { widget: Widget }) {
   const [slot, setSlot] = useState<HTMLDivElement | null>(null);
-  const Renderer = platformWidgets[widget.widgetKind] ?? widgetRegistry[widget.widgetKind];
+  const Renderer = widgetRegistry[widget.widgetKind];
   const Icon = widgetIcons[widget.widgetKind];
   return (
     <section className={`dashboard-widget widget-${widget.size}`} aria-label={widget.title}>
@@ -275,7 +264,7 @@ function LayoutEditor({ widgets }: { widgets: ConfigurableWidget[] }) {
             </Checkbox>
             {!item.enabled && <Badge>业务已停用</Badge>}
           </div>
-          <Select
+          {item.widgetKind === TILE_ONLY ? <span className="layout-size layout-size-tile">概况</span> : <Select
             className="layout-size"
             aria-label={`${item.title}尺寸`}
             value={item.size}
@@ -283,7 +272,7 @@ function LayoutEditor({ widgets }: { widgets: ConfigurableWidget[] }) {
             onValueChange={(size) =>
               setItems(items.map((value) => (value.id === item.id ? { ...value, size: size as ConfigurableWidget["size"] } : value)))
             }
-          />
+          />}
           <Button variant="ghost" disabled={index === 0} aria-label={`${item.title}上移`} onClick={() => move(index, -1)}>
             上移
           </Button>

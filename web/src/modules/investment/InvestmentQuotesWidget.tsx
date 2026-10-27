@@ -1,9 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ExternalLink } from "lucide-react";
 import type { Widget } from "../../shared/schema";
 import { Badge } from "../../components/ui/Badge";
-import { ButtonLink } from "../../components/ui/Button";
 import { Notice } from "../../components/ui/Notice";
 import { Skeleton } from "../../components/ui/States";
 import { WidgetHeader } from "../../components/dashboard/WidgetHeader";
@@ -20,7 +18,7 @@ const sessions: Record<OverviewSession, { label: string; tone: "neutral" | "succ
   closed: { label: "休市", tone: "neutral" },
 };
 
-const terminalHref = (symbol: string) => `/investment?view=terminal&symbol=${encodeURIComponent(symbol)}`;
+const terminalHref = (symbol: string) => `/investment?symbol=${encodeURIComponent(symbol)}`;
 
 function Sparkline({ points, up }: { points: number[]; up: boolean }) {
   if (points.length < 2) return <span className="ov-spark" aria-hidden="true" />;
@@ -82,11 +80,12 @@ export default function InvestmentQuotesWidget({ widget }: { widget: Widget }) {
           </thead>
           <tbody>
             {rows.map((item) => {
-              const badge = sessions[item.session];
+              // The header badge names the market session once; a row only repeats it when it differs.
+              const badge = item.session !== data.session ? sessions[item.session] : null;
               return (
                 <tr key={item.symbol}>
                   <td>
-                    <Link to={terminalHref(item.symbol)} className="ov-symbol focus-ring" title="在投资终端中打开">
+                    <Link to={terminalHref(item.symbol)} className="ov-symbol focus-ring" title="在图表中打开">
                       <b>{item.symbol}</b>
                       {item.description && <span>{item.description}</span>}
                     </Link>
@@ -96,7 +95,7 @@ export default function InvestmentQuotesWidget({ widget }: { widget: Widget }) {
                     <span className={cn("ov-chg", item.changePct >= 0 ? "ov-chg-up" : "ov-chg-down")}>{formatSignedPct(item.changePct)}</span>
                   </td>
                   <td className="ov-hide-sm">
-                    <Badge tone={badge.tone}>{badge.label}</Badge>
+                    {badge && <Badge tone={badge.tone}>{badge.label}</Badge>}
                     {item.extChangePct !== undefined && <span className={cn("ov-ext", item.extChangePct >= 0 ? "ov-up" : "ov-down")}>{formatSignedPct(item.extChangePct)}</span>}
                   </td>
                   <td>
@@ -111,12 +110,8 @@ export default function InvestmentQuotesWidget({ widget }: { widget: Widget }) {
       <div className="ov-card-foot">
         <span>
           报价来自 Schwab{data.updatedAt ? ` · ${formatClock(data.updatedAt)} 更新` : ""}
-          {data.status !== "ok" ? " · 数据可能滞后" : ""} · 点击代码在终端中打开
+          {data.status !== "ok" ? " · 数据可能滞后" : ""}
         </span>
-        <ButtonLink size="sm" to="/investment?view=terminal">
-          打开终端
-          <ExternalLink size={13} />
-        </ButtonLink>
       </div>
     </>
   );

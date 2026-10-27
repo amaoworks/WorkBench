@@ -2,11 +2,11 @@
 
 模块 ID 为 `investment`，显示名称为“投资”，页面为 `/investment`，子页面为 `/investment/positions`（持仓）和 `/investment/orders`（订单）。后端在 [internal/modules/investment](../../internal/modules/investment)，前端在 [web/src/modules/investment](../../web/src/modules/investment)。模块随 Workbench 主程序运行，内部按配置、授权、连接、订阅和历史行情分文件，见[代码导航](../../internal/modules/investment/README.md)。
 
-模块在工作台进程内接入 Charles Schwab Trader API：Go 负责 OAuth、REST、Streamer WebSocket 和后台价格监控，TradingView 终端负责行情、持仓与订单界面。投资页可切换「交易终端」和「价格监控」。行情及提醒均使用真实券商数据。
+模块在工作台进程内接入 Charles Schwab Trader API：Go 负责 OAuth、REST、Streamer WebSocket 和后台价格监控，TradingView 终端负责行情、持仓与订单界面。`/investment` 是全屏图表，价格监控在 `/investment/monitor`。行情及提醒均使用真实券商数据。
 
 ## 价格监控与预警
 
-在 `/investment?tab=monitor` 添加美股或 ETF 代码，选择上涨/下跌和正百分比阈值，最多 100 条规则。涨跌幅为 `(常规时段最新成交价 / 上一交易日收盘价 - 1) × 100%`；阈值支持两位小数，上涨最多 1000%，下跌最多 100%。首次有效检查已满足阈值时也会提醒。尚未授权时可以保存规则，页面显示授权或行情错误。
+在 `/investment/monitor`（旧链接 `/investment?tab=monitor` 会跳转到这里）添加美股或 ETF 代码，选择上涨/下跌和正百分比阈值，最多 100 条规则。涨跌幅为 `(常规时段最新成交价 / 上一交易日收盘价 - 1) × 100%`；阈值支持两位小数，上涨最多 1000%，下跌最多 100%。首次有效检查已满足阈值时也会提醒。尚未授权时可以保存规则，页面显示授权或行情错误。
 
 `investment.monitor_prices` 每分钟在服务端运行，同一标的只查询一次，每批最多 50 个代码，关闭网页不影响检查。进程必须保持运行。交易时段来自 Schwab `markets/equity` 的当天常规时段，日历最多缓存一小时，支持休市、提前收市和美东夏令时；无法确认时段时暂停判断。盘前、盘后和富途夜盘行情当前不参与预警。
 
@@ -62,7 +62,7 @@ OpenD 容器封装在源码仓库根目录 [futu-opend](https://github.com/amaow
 
 内部图表启用 TradingView 官方的 `iframe_loading_same_origin`，通过同源代理 `/charting_library/sameorigin.html` 创建子页面，避免依赖 `blob:` iframe 导航。加载提示一直保留到图表 `chartReady()` 完成，行情 WebSocket 就绪不会提前隐藏它。图表模块加载失败或初始化异常显示重试入口；超过三十秒仍未就绪时提示继续等待或重新加载，迟到的成功加载仍可正常恢复。参见[官方 Featuresets](https://www.tradingview.com/charting-library-docs/latest/customization/Featuresets/#iframe_loading_same_origin)。
 
-投资页工具栏提供「页面铺满」「全屏」「新窗口」。交易终端/价格监控标签和页面铺满偏好保存到服务端；直接打开 `/investment` 时恢复，明确的 `tab`、`view` 网址参数优先。页面铺满使用 `/investment?view=terminal`，隐藏工作台导航、页头和外围留白，保留终端工具栏；「返回工作台」恢复普通布局。切换页面铺满或浏览器全屏只改变布局，不重建 iframe，保留当前图表及下单面板状态。「新窗口」在独立标签页打开同一投资页并默认铺满，适合放到副屏；浏览器原生全屏需要手动点击进入，可以通过工具栏或浏览器退出操作恢复。
+`/investment` 只显示图表，铺满顶部导航下方的全部区域；「页面铺满」「全屏」「新窗口」是图表左下角的半透明小图标按钮（避开 TradingView 左侧工具栏和时间轴，悬停时变清晰）。券商未连接或需要重新授权时，图表区域居中显示提示和设置/授权入口。页面铺满偏好保存到服务端；直接打开 `/investment` 时恢复，明确的 `view` 网址参数优先，旧偏好中的价格监控标签不再生效。页面铺满使用 `/investment?view=terminal`，隐藏工作台导航，保留终端工具栏；「返回工作台」恢复普通布局。切换页面铺满或浏览器全屏只改变布局，不重建 iframe，保留当前图表及下单面板状态。「新窗口」在独立标签页打开同一投资页并默认铺满，适合放到副屏；浏览器原生全屏需要手动点击进入，可以通过工具栏或浏览器退出操作恢复。
 
 账户初始化在 `broker_factory` 返回后的下一个任务中启动，等待 TradingView 完成适配器注册后再通知连接状态。持仓与订单的标的列使用数据中的 `symbol` 字段，分别传给券商标的和图表标的参数，避免渲染异常或将订单 ID 当作图表标的。
 
@@ -139,7 +139,9 @@ Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后
 
 ### 持仓与订单子页面
 
-前端 `investment.module.ts` 通过 `subpages` 注册了两个页面，入口在顶部导航「投资」的下拉菜单中，菜单项包括 交易终端（`?tab=terminal`）、价格监控（`?tab=monitor`）、持仓、订单、券商连接。`/investment` 页面和 TradingView 终端的结构没有改动，只换了外壳和主题变量。
+前端 `investment.module.ts` 通过 `subpages` 注册了三个页面，入口在顶部导航「投资」的下拉菜单中，菜单项包括 图表（`/investment`）、价格监控（`/investment/monitor`）、持仓、订单、券商连接。TradingView 终端内部结构没有改动。
+
+- `/investment/monitor`（`MonitorPage`）：价格监控规则与触发记录；`/investment?tab=monitor` 重定向到这里，站内通知的 `actionRoute` 仍可使用旧地址。
 
 - `/investment/positions`（`PositionsPage`）：显示账户总值、持仓市值、现金、今日盈亏和持仓盈亏，下面是持仓表，列出代码、数量、均价、现价、市值、今日盈亏、持仓盈亏和占比。有多个账户时可以切换账户。点击代码会在交易终端中打开对应标的。每 30 秒刷新一次。
 - `/investment/orders`（`OrdersPage`）：按最近 1、7、30、90 天（`?range=`）和 全部/working/filled/canceled（`?status=`）筛选委托。条件单和组合单会按 `childOrderStrategies` 展开。页面只读，改单和撤单仍在交易终端中操作。

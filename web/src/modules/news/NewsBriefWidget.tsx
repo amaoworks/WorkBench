@@ -2,7 +2,6 @@ import type { Widget } from "../../shared/schema";
 import { ButtonLink } from "../../components/ui/Button";
 import { Notice } from "../../components/ui/Notice";
 import { Skeleton } from "../../components/ui/States";
-import { WidgetHeader } from "../../components/dashboard/WidgetHeader";
 import { useDashboardSignals, useOverviewSummary } from "../../shared/dashboard";
 import { cn } from "../../shared/cn";
 import { formatRelative } from "../../shared/format";
@@ -60,14 +59,7 @@ export default function NewsBriefWidget({ widget }: { widget: Widget }) {
   if (!digest && data.latest.length === 0) return null;
   return (
     <>
-      <WidgetHeader>
-        <span className="ov-sub">
-          {data.sources} 个订阅源 · 未读 {data.unread}
-        </span>
-        <ButtonLink size="sm" variant="secondary" to="/news" className="ov-hide-sm">
-          查看资讯
-        </ButtonLink>
-      </WidgetHeader>
+      {/* Source and unread counts live in the 资讯 tile above. */}
       <div className={cn("ov-brief", right.length > 0 && (digest || left) && "has-two")}>
         <div className="min-w-0">
           {digest ? (

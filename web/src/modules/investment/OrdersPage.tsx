@@ -47,7 +47,7 @@ export default function OrdersPage() {
         title="订单"
         description="只读的 Schwab 订单记录；下单、改单与撤单请在交易终端中操作。"
         action={
-          <ButtonLink to="/investment?tab=terminal" variant="secondary" size="sm">
+          <ButtonLink to="/investment" variant="secondary" size="sm">
             打开交易终端
           </ButtonLink>
         }
@@ -147,7 +147,7 @@ function Orders() {
                         <th scope="row">
                           {order.legs.map((leg, index) => (
                             <div key={index}>
-                              <Link className="symbol-link focus-ring" to={`/investment?tab=terminal&symbol=${encodeURIComponent(leg.symbol)}`}>
+                              <Link className="symbol-link focus-ring" to={`/investment?symbol=${encodeURIComponent(leg.symbol)}`}>
                                 {leg.symbol || "—"}
                               </Link>
                               {order.legs.length > 1 && (

@@ -229,7 +229,7 @@ async function visitWithoutOverflow(page, url, label, ready) {
     await api(page, "/api/modules/investment/monitor/rules", "POST", {
       symbol: "AAPL", direction: "up", thresholdPercent: 3, enabled: true
     });
-    await page.goto(`${baseURL}/investment?tab=monitor`);
+    await page.goto(`${baseURL}/investment/monitor`);
     const monitorDelete = page.getByRole("button", { name: "删除 AAPL", exact: true });
     await page.getByRole("button", { name: "编辑", exact: true }).click();
     assert(await monitorDelete.isDisabled(), "monitor deletion must stay disabled while a rule is being edited");
@@ -291,14 +291,14 @@ async function visitWithoutOverflow(page, url, label, ready) {
     assert.match(await page.locator(`[id="${describedBy[0]}"]`).innerText(), /两次输入的密码不一致/);
     await page.unroute(/\/api\/settings$/);
 
-    await page.getByRole("tab", { name: "通知推送", exact: true }).click();
+    await page.getByRole("link", { name: "通知推送", exact: true }).click();
     const telegramSwitch = page.getByRole("switch", { name: "启用推送", exact: true });
     await telegramSwitch.waitFor();
     const switchBox = await telegramSwitch.boundingBox();
     const trackBox = await telegramSwitch.locator(".studio-switch-track").boundingBox();
     assert.deepEqual({ width: switchBox.width, height: switchBox.height }, { width: 44, height: 44 });
     assert.deepEqual({ width: trackBox.width, height: trackBox.height }, { width: 38, height: 22 });
-    await page.getByRole("tab", { name: "外观", exact: true }).click();
+    await page.getByRole("link", { name: "外观", exact: true }).click();
     await page.getByRole("group", { name: "主题", exact: true }).waitFor();
     for (const theme of ["浅色", "深色", "跟随系统"]) {
       assert.equal(await page.getByRole("button", { name: theme, exact: true }).count(), 1, `missing exact theme card: ${theme}`);
@@ -328,7 +328,7 @@ async function visitWithoutOverflow(page, url, label, ready) {
         await page.getByRole("region", { name: "投资终端", exact: true }).waitFor();
         await page.getByRole("heading", { name: "未连接 Schwab", exact: true }).waitFor();
       });
-      await visitWithoutOverflow(page, `${baseURL}/investment?tab=monitor`, `Investment monitor at ${prefix}`, async () => {
+      await visitWithoutOverflow(page, `${baseURL}/investment/monitor`, `Investment monitor at ${prefix}`, async () => {
         await page.getByRole("button", { name: "添加规则", exact: true }).waitFor();
         await page.getByText("暂无监控规则", { exact: true }).waitFor();
         await page.getByText("暂无触发记录", { exact: true }).waitFor();
@@ -347,7 +347,7 @@ async function visitWithoutOverflow(page, url, label, ready) {
         modules: () => page.getByRole("heading", { name: "业务", exact: true }).waitFor(),
         ai: () => page.getByLabel("接口地址", { exact: true }).waitFor(),
         notifications: () => page.getByRole("switch", { name: "启用推送", exact: true }).waitFor(),
-        security: () => page.getByRole("heading", { name: "本机免登录模式", exact: true }).waitFor(),
+        security: () => page.getByRole("region", { name: "账户安全", exact: true }).getByText("本机免登录", { exact: true }).waitFor(),
         appearance: () => page.getByRole("group", { name: "主题", exact: true }).waitFor(),
         data: () => page.getByRole("region", { name: "运行信息", exact: true }).waitFor()
       };

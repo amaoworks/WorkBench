@@ -90,7 +90,7 @@ export default function PositionsPage() {
                       return (
                         <tr key={position.accountHash + ":" + position.symbol}>
                           <th scope="row">
-                            <Link className="symbol-link focus-ring" to={"/investment?tab=terminal&symbol=" + encodeURIComponent(position.symbol)}>
+                            <Link className="symbol-link focus-ring" to={"/investment?symbol=" + encodeURIComponent(position.symbol)}>
                               {position.symbol}
                             </Link>
                             {position.description && <span className="data-table-sub">{position.description}</span>}

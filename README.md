@@ -58,7 +58,7 @@ cd workbench_v0.1.1_linux_amd64
 
 ## 日志与排障
 
-进入 **设置 → 数据与运行 → 运行日志**，选择 `debug / info / warn / error` 最低等级，点击「保存日志等级」后立即生效，重启后保留。默认 `info`；选择 `warn` 会同时记录警告和错误，选择 `error` 仅记录错误。
+进入 **设置 → 数据与运行 → 运行日志**，选择 `debug / info / warn / error` 最低等级，点击「保存」后立即生效，重启后保留。默认 `info`；选择 `warn` 会同时记录警告和错误，选择 `error` 仅记录错误。
 
 二进制和容器均输出 JSON 日志到 stderr。Docker 使用 `docker compose logs -f --tail 100 workbench`，systemd 使用 `journalctl -u workbench -f`。首次启动默认等级可通过 `WORKBENCH_LOG_LEVEL=info` 或 `-log-level info` 设置；页面已保存的等级优先。详细字段、等级规则和轮转说明见[运行日志](doc/configuration.md#运行日志)。
 
@@ -138,7 +138,7 @@ npm ci --prefix web
 
 ## 日常使用
 
-- 界面使用顶部导航，各业务提供下拉菜单，可以直达页面内的视图；窄屏时收进抽屉。默认是 TradingView 风格的配色，可在「设置 → 外观」切换为暖陶，主题默认跟随系统。
+- 界面使用顶部导航；只有投资带下拉菜单（图表、价格监控、持仓、订单、券商连接），其他入口是普通链接；窄屏时收进抽屉。投资页只显示全屏图表。默认是 TradingView 风格的配色，可在「设置 → 外观」切换为暖陶，主题默认跟随系统。
 - 总览「今天，一目了然」汇总待办、通知和资讯，支持卡片显隐、排序、尺寸和恢复默认（`/?edit=1`）。
 - 待办按 已逾期/今天/本周/以后/已完成 分组，支持优先级、分类、服务端筛选计数、分页和到期提醒；Wallos 在待办模块设置中连接，续费任务带「续费」标记。
 - 投资连接 Schwab 后提供 TradingView 终端，查看真实行情、持仓和订单，并支持下单、改单和撤单。另有只读的「持仓」`/investment/positions` 和「订单」`/investment/orders` 页面。
@@ -146,7 +146,7 @@ npm ci --prefix web
 - 投资价格监控每分钟检查美股/ETF 常规时段涨跌阈值，保存站内提醒，可通过 Telegram 推送；关闭网页仍由服务器执行。
 - 点击右上角「问 AI」或按 `Ctrl+J`（macOS 上是 `⌘J`）打开 AI 面板，面板提供对话和已注册的业务工具；未启用 AI 不影响普通业务操作。
 - 通知按 今天/昨天/更早 分组，支持全部/未读和按来源筛选。
-- 设置提供业务模块、AI 配置、通知推送、账户安全、外观、数据与运行六个标签；TG 配置见 [Telegram 通知](doc/notifications.md)。
+- 设置是单页，左侧分类导航，依次为外观、业务模块、AI、通知推送、账户安全、数据与运行；TG 配置见 [Telegram 通知](doc/notifications.md)。
 - SQLite 数据备份保存到工作空间的 `backups/` 目录；PostgreSQL 备份由数据库服务管理。备份包含业务内容与保存的凭据。
 
 ## 验证

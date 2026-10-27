@@ -1,12 +1,9 @@
-import { useQuery } from "@tanstack/react-query";
-import { Bell, KeyRound, Plug, Target } from "lucide-react";
+import { KeyRound, Plug, Target } from "lucide-react";
 import { Link } from "react-router-dom";
-import { apiValidated } from "../../shared/api";
-import { notificationsPageSchema, type Widget } from "../../shared/schema";
+import type { Widget } from "../../shared/schema";
 import { Badge } from "../../components/ui/Badge";
 import { Notice } from "../../components/ui/Notice";
 import { Skeleton } from "../../components/ui/States";
-import { WidgetHeader } from "../../components/dashboard/WidgetHeader";
 import { cn } from "../../shared/cn";
 import { formatClock, formatRelative, formatSignedPct } from "../../shared/format";
 import { useOverviewAlerts } from "./queries";
@@ -74,11 +71,6 @@ function FutuHealth({ futu }: { futu: OverviewAlerts["futu"] }) {
 
 export default function InvestmentAlertsWidget({ widget }: { widget: Widget }) {
   const alerts = useOverviewAlerts(widget);
-  const notifications = useQuery({
-    queryKey: ["notifications", "unread", 5],
-    queryFn: () => apiValidated("/api/notifications?unread=true&limit=5", notificationsPageSchema),
-    refetchInterval: 60_000,
-  });
   if (alerts.isPending) return <Skeleton className="h-32" />;
   if (alerts.isError)
     return (
@@ -87,43 +79,29 @@ export default function InvestmentAlertsWidget({ widget }: { widget: Widget }) {
       </Notice>
     );
   const { schwab, futu, triggers } = alerts.data;
-  const unread = notifications.data?.items ?? [];
   const showSchwab = schwab.status === "connected" || schwab.status === "reauth";
-  if (triggers.length === 0 && unread.length === 0 && !showSchwab && !futu.enabled) return null;
+  // Unread notifications are the 通知 tile's job; this card covers price triggers and broker health only.
+  if (triggers.length === 0 && !showSchwab && !futu.enabled) return null;
   return (
     <>
-      <WidgetHeader>{unread.length > 0 && <Badge>{unread.length >= 5 ? "5+" : unread.length} 条未读</Badge>}</WidgetHeader>
-      {triggers.length > 0 || unread.length > 0 ? (
-        <ul className="ov-list" aria-label="提醒">
+      {triggers.length > 0 ? (
+        <ul className="ov-list" aria-label="价格提醒">
           {triggers.map((trigger) => (
             <li key={trigger.id} className="ov-item">
               <span className={cn("ov-icon", trigger.direction === "up" ? "ov-icon-up" : "ov-icon-down")}>
                 <Target size={15} />
               </span>
               <div className="ov-item-text">
-                <Link to={`/investment?tab=monitor`} className="ov-item-title">
+                <Link to="/investment/monitor" className="ov-item-title">
                   {trigger.symbol} {trigger.direction === "up" ? "涨幅" : "跌幅"}超过 {trigger.thresholdPercent}% · {trigger.price.toFixed(2)} ({formatSignedPct(trigger.changePercent)})
                 </Link>
                 <p className="ov-note">价格监控 · {formatRelative(trigger.triggeredAt)}</p>
               </div>
             </li>
           ))}
-          {unread.map((item) => (
-            <li key={item.id} className="ov-item">
-              <span className="ov-icon">
-                <Bell size={15} />
-              </span>
-              <div className="ov-item-text">
-                <Link to={item.actionRoute || "/notifications"} className="ov-item-title">
-                  {item.title}
-                </Link>
-                <p className="ov-note">通知 · {formatRelative(item.createdAt)}</p>
-              </div>
-            </li>
-          ))}
         </ul>
       ) : (
-        <p className="ov-empty-line">暂无新提醒。</p>
+        <p className="ov-empty-line">暂无价格异动。</p>
       )}
       {(showSchwab || futu.enabled) && (
         <>

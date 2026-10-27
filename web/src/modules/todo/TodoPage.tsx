@@ -86,7 +86,7 @@ export default function TodoPage() {
   const items = tasks.data?.pages.flatMap((page) => page.items) ?? [];
   const refresh = useRefreshTodo();
   const wantsNew = params.get("new") === "1";
-  // The 新建待办 menu entry links to ?new=1; focus the input every time it is followed.
+  // `?new=1` (e.g. from the AI panel or a bookmark) focuses the input every time it is followed.
   useEffect(() => {
     if (wantsNew) titleInput.current?.focus();
   }, [wantsNew, location.key]);

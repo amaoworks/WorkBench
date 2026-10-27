@@ -14,7 +14,7 @@ import { useNotificationStream } from "../features/notifications/useNotification
 import { useSettings, useAppearance } from "../features/settings/queries";
 import { toast } from "sonner";
 import { TopNav } from "./TopNav";
-import { matchesLocation, notificationsMenu, overviewMenu, settingsIcon, settingsMenu, type NavEntry } from "./navigation";
+import { matchesLocation, settingsIcon, type NavEntry } from "./navigation";
 
 const DashboardPage = lazy(() => import("../features/dashboard/DashboardPage"));
 const NotificationsPage = lazy(() => import("../features/notifications/NotificationsPage"));
@@ -86,7 +86,7 @@ export function Layout() {
   );
   const entries = useMemo<NavEntry[]>(
     () => [
-      { key: "overview", label: "总览", to: "/", icon: LayoutDashboard, menu: overviewMenu },
+      { key: "overview", label: "总览", to: "/", icon: LayoutDashboard, menu: [] },
       ...navigation.map((item) => ({
         key: item.pageKey,
         label: item.label,
@@ -94,8 +94,8 @@ export function Layout() {
         icon: iconRegistry[item.icon] ?? CheckSquare2,
         menu: menuRegistry[item.moduleId] ?? [],
       })),
-      { key: "notifications", label: "通知", to: "/notifications", icon: Bell, badge: unread.data?.count, menu: notificationsMenu },
-      { key: "settings", label: "设置", to: "/settings", icon: settingsIcon, menu: settingsMenu },
+      { key: "notifications", label: "通知", to: "/notifications", icon: Bell, badge: unread.data?.count, menu: [] },
+      { key: "settings", label: "设置", to: "/settings", icon: settingsIcon, menu: [] },
     ],
     [navigation, unread.data?.count],
   );

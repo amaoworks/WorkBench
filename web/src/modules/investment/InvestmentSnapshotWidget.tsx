@@ -1,5 +1,4 @@
 import { useEffect } from "react";
-import { ExternalLink } from "lucide-react";
 import type { Widget } from "../../shared/schema";
 import { Button, ButtonLink } from "../../components/ui/Button";
 import { Badge } from "../../components/ui/Badge";
@@ -57,10 +56,6 @@ export default function InvestmentSnapshotWidget({ widget }: { widget: Widget })
           Schwab · {data.accounts} 个账户{data.updatedAt ? ` · ${formatClock(data.updatedAt)} 更新` : ""}
         </span>
         {data.stale && <Badge tone="warning">数据可能滞后</Badge>}
-        <ButtonLink size="sm" variant="secondary" to="/investment" className="ov-hide-sm">
-          打开投资终端
-          <ExternalLink size={13} />
-        </ButtonLink>
       </WidgetHeader>
       <div className="ov-snap">
         <div>

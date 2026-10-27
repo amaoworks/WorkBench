@@ -1,39 +1,61 @@
 import { useContext, useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Expand, ExternalLink, Maximize, Minimize } from "lucide-react";
-import { useSearchParams } from "react-router-dom";
+import { ExternalLink, Maximize, Maximize2, Minimize, Minimize2 } from "lucide-react";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { Button, ButtonLink } from "../../components/ui/Button";
 import { Notice } from "../../components/ui/Notice";
-import { PageHeader } from "../../components/ui/PageHeader";
 import { Skeleton } from "../../components/ui/States";
 import { ThemeContext, type Theme } from "../../shared/theme";
 import { refreshSchwabToken, useInvestmentView, useRefreshInvestment, useSchwabSettings } from "./queries";
 import { APIError } from "../../shared/api";
 import { moduleQueryKey } from "../../shared/queryKeys";
-import type { InvestmentView } from "./schema";
-import { InvestmentMonitor } from "./InvestmentMonitor";
 
 export default function InvestmentPage() {
+  const [searchParams] = useSearchParams();
+  // Price monitoring moved to its own subpage; keep old links and notification routes working.
+  if (searchParams.get("tab") === "monitor") {
+    const next = new URLSearchParams(searchParams);
+    next.delete("tab");
+    next.delete("view");
+    const query = next.toString();
+    return <Navigate to={`/investment/monitor${query ? `?${query}` : ""}`} replace />;
+  }
+  return <InvestmentChart />;
+}
+
+function InvestmentChart() {
   const viewSettings = useInvestmentView();
-  if (viewSettings.query.isPending) return <Skeleton className="h-24" />;
-  if (viewSettings.query.isError) return (
-    <Notice tone="danger" title="投资设置加载失败" action={<Button onClick={() => viewSettings.query.refetch()}>重新加载</Button>}>
-      {viewSettings.query.error.message}
-    </Notice>
-  );
+  if (viewSettings.query.isPending)
+    return (
+      <div className="investment-page">
+        <Skeleton className="investment-view" />
+      </div>
+    );
+  if (viewSettings.query.isError)
+    return (
+      <div className="investment-page">
+        <div className="investment-view investment-gate">
+          <Notice tone="danger" title="投资设置加载失败" action={<Button onClick={() => viewSettings.query.refetch()}>重新加载</Button>}>
+            {viewSettings.query.error.message}
+          </Notice>
+        </div>
+      </div>
+    );
   return <InvestmentContent viewSettings={viewSettings} />;
 }
 
 function InvestmentContent({ viewSettings }: { viewSettings: ReturnType<typeof useInvestmentView> }) {
   const schwab = useSchwabSettings(true);
   const refresh = useRefreshInvestment();
-  const retry = useMutation({ mutationFn: refreshSchwabToken, onSettled: refresh });
+  const retry = useMutation({
+    mutationFn: refreshSchwabToken,
+    onSettled: refresh,
+  });
   const [searchParams, setSearchParams] = useSearchParams();
   const restoredView = useRef(false);
   const expanded = searchParams.get("view") === "terminal";
   const requestedSymbol = searchParams.get("symbol")?.trim().toUpperCase() ?? "";
   const symbol = /^[A-Z$/][A-Z0-9./-]{0,14}$/.test(requestedSymbol) ? requestedSymbol : undefined;
-  const monitoring = !expanded && searchParams.get("tab") === "monitor";
   const terminal = useRef<HTMLElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [fullscreenError, setFullscreenError] = useState("");
@@ -44,23 +66,11 @@ function InvestmentContent({ viewSettings }: { viewSettings: ReturnType<typeof u
   useEffect(() => {
     if (restoredView.current) return;
     restoredView.current = true;
-    if (searchParams.has("view") || searchParams.has("tab")) return;
+    if (searchParams.has("view") || !viewSettings.view?.expanded) return;
     const next = new URLSearchParams(searchParams);
-    if (viewSettings.view?.expanded) next.set("view", "terminal");
-    else if (viewSettings.view?.tab === "monitor") next.set("tab", "monitor");
-    else return;
+    next.set("view", "terminal");
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams, viewSettings.view]);
-
-  function changeView(value: InvestmentView) {
-    viewSettings.setView(value);
-    const next = new URLSearchParams(searchParams);
-    if (value.expanded) next.set("view", "terminal");
-    else next.delete("view");
-    if (value.tab === "monitor") next.set("tab", "monitor");
-    else next.delete("tab");
-    setSearchParams(next);
-  }
 
   useEffect(() => {
     const update = () => setFullscreen(Boolean(terminal.current && document.fullscreenElement === terminal.current));
@@ -70,7 +80,13 @@ function InvestmentContent({ viewSettings }: { viewSettings: ReturnType<typeof u
 
   async function toggleExpanded() {
     if (document.fullscreenElement) await document.exitFullscreen();
-    changeView({ tab: "terminal", expanded: !expanded });
+    // The preference schema keeps `tab`; the chart is the only view on this page.
+    viewSettings.setView({ tab: "terminal", expanded: !expanded });
+    const next = new URLSearchParams(searchParams);
+    next.delete("tab");
+    if (expanded) next.delete("view");
+    else next.set("view", "terminal");
+    setSearchParams(next);
   }
 
   async function toggleFullscreen() {
@@ -79,153 +95,151 @@ function InvestmentContent({ viewSettings }: { viewSettings: ReturnType<typeof u
       if (document.fullscreenElement) await document.exitFullscreen();
       else await terminal.current?.requestFullscreen();
     } catch {
-      setFullscreenError("浏览器未能进入全屏，可切换为页面铺满。");
+      setFullscreenError("浏览器未能进入全屏，可改用页面铺满。");
     }
   }
 
-  return (
-    <div className="page investment-page" data-expanded={expanded}>
-      {viewSettings.save.isError && (
-        <Notice tone="warning" title="投资视图尚未保存" className="m-5" action={
-          <Button variant="secondary" onClick={() => {
+  const login = schwab.data?.hasAppSecret && schwab.data.callbackUrl.startsWith("https://") && (
+    <Button
+      onClick={() => {
+        window.location.href = "/api/modules/investment/schwab/oauth/login";
+      }}
+    >
+      登录 Schwab
+    </Button>
+  );
+  const banner = viewSettings.save.isError ? (
+    <Notice
+      tone="warning"
+      title="投资视图尚未保存"
+      action={
+        <Button
+          variant="secondary"
+          onClick={() => {
             if (viewSettings.save.error instanceof APIError && viewSettings.save.error.status === 409) window.location.reload();
             else if (viewSettings.save.variables) viewSettings.save.mutate(viewSettings.save.variables);
-          }}>
-            {viewSettings.save.error instanceof APIError && viewSettings.save.error.status === 409 ? "重新加载" : "重试保存"}
-          </Button>
-        }>{viewSettings.save.error.message}</Notice>
-      )}
-      <div hidden={expanded}>
-        <PageHeader
-          title="投资"
-          action={
-            <div className="flex gap-2" aria-label="投资视图">
-              <Button
-                size="sm"
-                variant={monitoring ? "secondary" : "primary"}
-                aria-pressed={!monitoring}
-                onClick={() => changeView({ tab: "terminal", expanded: false })}
-              >
-                交易终端
-              </Button>
-              <Button
-                size="sm"
-                variant={monitoring ? "primary" : "secondary"}
-                aria-pressed={monitoring}
-                onClick={() => changeView({ tab: "monitor", expanded: false })}
-              >
-                价格监控
-              </Button>
-            </div>
-          }
-        />
-      </div>
-      <section ref={terminal} className="investment-view" aria-label="投资终端" style={monitoring ? { display: "none" } : undefined}>
-        <div className="investment-toolbar">
-          <span className="investment-toolbar-title">TradingView</span>
-          <div className="investment-toolbar-actions">
-            <Button
-              variant="ghost"
-              size="sm"
-              title={expanded ? "恢复顶部导航" : "隐藏工作台导航并撑满窗口"}
-              onClick={() => {
-                void toggleExpanded();
-              }}
-              aria-pressed={expanded}
-            >
-              {expanded ? <ArrowLeft size={15} /> : <Expand size={15} />}
-              {expanded ? "返回工作台" : "页面铺满"}
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              title={fullscreen ? "退出全屏" : "进入浏览器全屏"}
-              onClick={() => {
-                void toggleFullscreen();
-              }}
-              disabled={!document.fullscreenEnabled}
-              aria-pressed={fullscreen}
-            >
-              {fullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
-              {fullscreen ? "退出全屏" : "全屏"}
-            </Button>
-            <ButtonLink variant="ghost" size="sm" to="/investment?view=terminal" target="_blank" rel="noopener noreferrer">
-              <ExternalLink size={15} />
-              新窗口
-            </ButtonLink>
-          </div>
-        </div>
-        {fullscreenError && (
-          <Notice tone="warning" title="全屏不可用" className="m-5">
-            {fullscreenError}
-          </Notice>
-        )}
-        {schwab.isPending && <Skeleton className="m-5 h-24" />}
+          }}
+        >
+          {viewSettings.save.error instanceof APIError && viewSettings.save.error.status === 409 ? "重新加载" : "重试保存"}
+        </Button>
+      }
+    >
+      {viewSettings.save.error.message}
+    </Notice>
+  ) : fullscreenError ? (
+    <Notice tone="warning" title="全屏不可用">
+      {fullscreenError}
+    </Notice>
+  ) : connected && schwab.data?.lastError ? (
+    <Notice
+      tone="danger"
+      title="Schwab 连接异常"
+      action={
+        <Button variant="secondary" disabled={retry.isPending} onClick={() => retry.mutate()}>
+          {retry.isPending ? "重试中…" : "重试连接"}
+        </Button>
+      }
+    >
+      {schwab.data.lastError}
+    </Notice>
+  ) : null;
+
+  return (
+    <div className="investment-page" data-expanded={expanded}>
+      <h1 className="sr-only">投资</h1>
+      <section ref={terminal} className="investment-view" aria-label="投资终端">
+        {schwab.isPending && <Skeleton className="investment-terminal" />}
         {schwab.isError && (
-          <Notice tone="danger" title="投资配置加载失败" className="m-5">
-            {schwab.error.message}
-          </Notice>
+          <div className="investment-gate">
+            <Notice
+              tone="danger"
+              title="投资配置加载失败"
+              action={
+                <Button variant="secondary" onClick={() => schwab.refetch()}>
+                  重新加载
+                </Button>
+              }
+            >
+              {schwab.error.message}
+            </Notice>
+          </div>
         )}
         {reauthorizationRequired && (
-          <Notice
-            tone="warning"
-            title="Schwab 授权已失效"
-            className="m-5"
-            action={
-              <Button
-                onClick={() => {
-                  window.location.href = "/api/modules/investment/schwab/oauth/login";
-                }}
-              >
-                重新授权
-              </Button>
-            }
-          >
-            行情和交易已暂停。
-          </Notice>
-        )}
-        {connected && schwab.data?.lastError && (
-          <Notice
-            tone="danger"
-            title="Schwab 连接异常"
-            className="m-5"
-            action={
-              <Button variant="secondary" disabled={retry.isPending} onClick={() => retry.mutate()}>
-                {retry.isPending ? "重试中…" : "重试连接"}
-              </Button>
-            }
-          >
-            {schwab.data.lastError}
-          </Notice>
+          <div className="investment-gate">
+            <Notice
+              tone="warning"
+              title="Schwab 授权已失效"
+              action={
+                <Button
+                  onClick={() => {
+                    window.location.href = "/api/modules/investment/schwab/oauth/login";
+                  }}
+                >
+                  重新授权
+                </Button>
+              }
+            >
+              行情和交易已暂停。
+            </Notice>
+          </div>
         )}
         {schwab.data && !connected && !reauthorizationRequired && (
-          <Notice
-            title="未连接 Schwab"
-            className="m-5"
-            action={
-              <>
-                <ButtonLink variant="secondary" to="/settings?tab=modules">
-                  打开设置
-                </ButtonLink>
-                {schwab.data.hasAppSecret && schwab.data.callbackUrl.startsWith("https://") && (
-                  <Button
-                    variant="secondary"
-                    onClick={() => {
-                      window.location.href = "/api/modules/investment/schwab/oauth/login";
-                    }}
-                  >
-                    登录 Schwab
-                  </Button>
-                )}
-              </>
-            }
-          >
-            授权后可使用交易终端。
-          </Notice>
+          <div className="investment-gate">
+            <Notice
+              title="未连接 Schwab"
+              action={
+                <>
+                  <ButtonLink variant="secondary" to="/settings?tab=modules&module=investment">
+                    券商连接
+                  </ButtonLink>
+                  {login}
+                </>
+              }
+            >
+              授权后可使用图表与交易。
+            </Notice>
+          </div>
         )}
         {connected && <InvestmentTerminal theme={theme} symbol={symbol} />}
+        {banner && <div className="investment-banner">{banner}</div>}
+        <div className="investment-float" role="toolbar" aria-label="图表窗口">
+          <button
+            type="button"
+            className="investment-float-button focus-ring"
+            title={expanded ? "返回工作台" : "页面铺满"}
+            aria-label={expanded ? "返回工作台" : "页面铺满"}
+            aria-pressed={expanded}
+            onClick={() => {
+              void toggleExpanded();
+            }}
+          >
+            {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+          </button>
+          <button
+            type="button"
+            className="investment-float-button focus-ring"
+            title={fullscreen ? "退出全屏" : "全屏"}
+            aria-label={fullscreen ? "退出全屏" : "全屏"}
+            aria-pressed={fullscreen}
+            disabled={!document.fullscreenEnabled}
+            onClick={() => {
+              void toggleFullscreen();
+            }}
+          >
+            {fullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
+          </button>
+          <Link
+            className="investment-float-button focus-ring"
+            to={`/investment?view=terminal${symbol ? `&symbol=${encodeURIComponent(symbol)}` : ""}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="新窗口"
+            aria-label="新窗口"
+          >
+            <ExternalLink size={15} />
+          </Link>
+        </div>
       </section>
-      {monitoring && <InvestmentMonitor />}
     </div>
   );
 }
@@ -246,8 +260,12 @@ function InvestmentTerminal({ theme, symbol }: { theme: Theme; symbol?: string }
         event.data?.type !== "workbench.schwab.status_changed"
       )
         return;
-      void client.invalidateQueries({ queryKey: moduleQueryKey("investment", "schwab") });
-      void client.invalidateQueries({ queryKey: moduleQueryKey("investment", "widget") });
+      void client.invalidateQueries({
+        queryKey: moduleQueryKey("investment", "schwab"),
+      });
+      void client.invalidateQueries({
+        queryKey: moduleQueryKey("investment", "widget"),
+      });
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);

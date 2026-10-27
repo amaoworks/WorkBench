@@ -6,8 +6,6 @@ import { toast } from "sonner";
 import { apiValidated } from "../../shared/api";
 import type { LoggingSettings, Settings } from "./queries";
 import { Button } from "../../components/ui/Button";
-import { CardHeader } from "../../components/ui/Card";
-import { Field } from "../../components/ui/Field";
 import { Select } from "../../components/ui/Select";
 
 const levels = [
@@ -30,28 +28,27 @@ export function LoggingPanel({ value }: { value: LoggingSettings }) {
   });
   return (
     <form
-      className="ui-card mb-4"
+      className="settings-row"
       onSubmit={(event) => {
         event.preventDefault();
         save.mutate();
       }}
     >
-      <CardHeader title="运行日志" />
-      <div className="p-4">
-        <Field label="日志等级">
-          <Select
-            value={level}
-            disabled={save.isPending}
-            options={levels}
-            onValueChange={(next) => setLevel(next as LoggingSettings["level"])}
-          />
-        </Field>
-        <div className="form-actions">
-          <Button disabled={save.isPending || level === value.level}>
-            <Save size={16} />
-            {save.isPending ? "保存中…" : "保存"}
-          </Button>
-        </div>
+      <span className="settings-row-label" id="logging-level-label">
+        日志等级
+      </span>
+      <div className="settings-row-control">
+        <Select
+          aria-labelledby="logging-level-label"
+          value={level}
+          disabled={save.isPending}
+          options={levels}
+          onValueChange={(next) => setLevel(next as LoggingSettings["level"])}
+        />
+        <Button size="sm" variant="secondary" disabled={save.isPending || level === value.level}>
+          <Save size={15} />
+          {save.isPending ? "保存中…" : "保存"}
+        </Button>
       </div>
     </form>
   );

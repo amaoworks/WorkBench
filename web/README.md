@@ -21,7 +21,7 @@ src/styles.css          主题变量和共享样式
 
 ## 模块注册和缓存
 
-`src/modules/<id>/<id>.module.ts` 声明 pages、widgets，以及可选的 icons、settings、`menu`（顶部导航下拉项）和 `subpages`（挂在 `${route}/${path}` 下的子页面）。平台页面的菜单放在 `src/app/navigation.ts`。Registry 自动收集声明，组件按需加载。后端 `pageKey/widgetKind` 只映射到已编译的本地注册项；Shell 和总览不包含业务组件实现。外部模块不进入该注册表，页面为 `/apps/{id}/{pageName}`，由通用 iframe 容器加载 `/modules/{id}/ui/*` 与设置 `/modules/{id}/settings/*`。未知图标回退到宿主默认图标。
+`src/modules/<id>/<id>.module.ts` 声明 pages、widgets，以及可选的 icons、settings、`menu`（顶部导航下拉项；目前只有投资声明，空菜单渲染为普通链接）和 `subpages`（挂在 `${route}/${path}` 下的子页面）。平台页面的菜单放在 `src/app/navigation.ts`。Registry 自动收集声明，组件按需加载。后端 `pageKey/widgetKind` 只映射到已编译的本地注册项；Shell 和总览不包含业务组件实现。外部模块不进入该注册表，页面为 `/apps/{id}/{pageName}`，由通用 iframe 容器加载 `/modules/{id}/ui/*` 与设置 `/modules/{id}/settings/*`。未知图标回退到宿主默认图标。
 
 模块设置接收 `{ enabled: boolean }`，停用时不发起业务查询。设置弹窗由平台管理，没有设置组件的模块展示暂无配置内容。
 
@@ -35,10 +35,11 @@ src/styles.css          主题变量和共享样式
 - 配色读取 `styles.css` 的语义变量，兼容明暗主题，尊重系统及工作空间的减少动态效果设置。默认 palette 为 TradingView 风格，可选 `claude`（暖陶）；主题默认跟随系统。
 - 外壳是顶部导航，不使用侧栏和页脚。`Ctrl+J`（macOS 上是 `⌘J`）打开或关闭 AI 面板，头像菜单提供主题切换。
 - 删除确认使用共享 ConfirmDialog 与 useConfirmDelete，支持键盘操作，并按操作结果恢复焦点。
-- 设置页面有六个标签：业务模块、AI 配置、通知推送、账户安全、外观、数据与运行。切换时保留当前页面内的表单草稿；支持方向键、Home/End。`/settings?tab=modules|ai|notifications|security|appearance|data` 可定位标签。
+- 设置是单页：左侧吸顶分类导航，右侧依次是 外观、业务模块、AI、通知推送、账户安全、数据与运行 分区卡片，行内左侧名称、右侧控件。`/settings?tab=modules|ai|notifications|security|appearance|data` 滚动到对应分区，`?module=<id>` 打开业务设置弹窗。
 - 业务设置弹窗最大宽度 480px，支持 Escape、遮罩及关闭按钮，接入 `useReportDirty` 拦截未保存草稿关闭，并将焦点还给触发按钮。
 - 通知的查看、已读、归档使用共享 Button/ButtonLink 的 ghost、sm 规格；业务只提供 actionRoute 和 actionLabel。
-- 设置标签栏按需横向滚动，避免纵向溢出；新增页面检查桌面和窄屏宽度。
+- 宽度不超过 900px 时设置分类变为横向滚动胶囊，避免纵向溢出；新增页面检查桌面和窄屏宽度。
+- `/investment` 只显示图表（铺满导航下方区域，角落图标按钮切换铺满/全屏/新窗口），价格监控在 `/investment/monitor`。
 
 ## 开发与构建
 

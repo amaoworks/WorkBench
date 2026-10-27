@@ -16,7 +16,7 @@ async function choose(page, trigger, option) {
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto(`${baseURL}/settings?tab=data`);
     const select = page.getByLabel("日志等级", { exact: true });
-    const save = page.getByRole("button", { name: "保存", exact: true });
+    const save = page.getByRole("region", { name: "数据与运行", exact: true }).getByRole("button", { name: "保存", exact: true });
     let requestArrived;
     let releaseRequest;
     await page.route("**/api/settings/logging", async (route) => {
@@ -32,7 +32,7 @@ async function choose(page, trigger, option) {
       const response = page.waitForResponse((r) => r.url() === `${baseURL}/api/settings/logging` && r.request().method() === "PUT");
       await save.click();
       await arrived;
-      const pending = page.getByRole("button", { name: "保存中…", exact: true });
+      const pending = page.getByRole("region", { name: "数据与运行", exact: true }).getByRole("button", { name: "保存中…", exact: true });
       await pending.waitFor();
       assert(await pending.isDisabled());
       releaseRequest();

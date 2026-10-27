@@ -4,7 +4,6 @@ import { toast } from "sonner";
 import { api, apiValidated } from "../../shared/api";
 import { Button } from "../../components/ui/Button";
 import { Badge } from "../../components/ui/Badge";
-import { Card, CardHeader } from "../../components/ui/Card";
 import { Field } from "../../components/ui/Field";
 import { Notice } from "../../components/ui/Notice";
 import { Skeleton } from "../../components/ui/States";
@@ -24,29 +23,36 @@ export function TelegramPanel() {
     );
   const value = settings.data;
   return (
-    <div className="space-y-4">
+    <div>
       <TelegramForm key={`${value.enabled}:${value.chatId}:${value.hasBotToken}`} value={value} />
-      <Card>
-        <CardHeader title="最近投递状态" />
-        <div className="p-4">
-          <p className="mt-2 text-sm">
-            最近尝试：{value.status.lastAttemptAt ? formatDateTime(value.status.lastAttemptAt) : "尚未发送"}
-          </p>
-          <p className="mt-2 text-sm">
-            最近成功：{value.status.lastSuccessAt ? formatDateTime(value.status.lastSuccessAt) : "暂无成功记录"}
-          </p>
-          {value.status.lastError && (
-            <Notice tone="danger" title="投递失败" className="mt-3">
-              {value.status.lastError}
-            </Notice>
-          )}
+      <section aria-labelledby="telegram-status-title">
+        <h3 id="telegram-status-title" className="settings-subhead">
+          最近投递状态
+        </h3>
+        <dl className="studio-deployment-details">
+          <div>
+            <dt>最近尝试</dt>
+            <dd>{value.status.lastAttemptAt ? formatDateTime(value.status.lastAttemptAt) : "尚未发送"}</dd>
+          </div>
+          <div>
+            <dt>最近成功</dt>
+            <dd>{value.status.lastSuccessAt ? formatDateTime(value.status.lastSuccessAt) : "暂无成功记录"}</dd>
+          </div>
           {value.failedDeliveries > 0 && (
-            <Badge tone="danger" className="mt-3">
-              {value.failedDeliveries} 条投递失败
-            </Badge>
+            <div>
+              <dt>投递失败</dt>
+              <dd>
+                <Badge tone="danger">{value.failedDeliveries} 条</Badge>
+              </dd>
+            </div>
           )}
-        </div>
-      </Card>
+        </dl>
+      </section>
+      {value.status.lastError && (
+        <Notice tone="danger" title="投递失败" className="my-3">
+          {value.status.lastError}
+        </Notice>
+      )}
     </div>
   );
 }
@@ -89,7 +95,7 @@ function TelegramForm({ value }: { value: TelegramSettings }) {
         <h3>Telegram 推送</h3>
       </div>
       <fieldset className="form-fields" disabled={busy} onChange={() => setTestResult("")}>
-        <div className="flex items-center justify-between gap-3 text-sm">
+        <div className="settings-line">
           <span>启用推送</span>
           <Switch
             label="启用推送"
@@ -122,7 +128,7 @@ function TelegramForm({ value }: { value: TelegramSettings }) {
           />
         </Field>
         {value.hasBotToken && (
-          <div className="flex items-center justify-between gap-3 text-sm">
+          <div className="settings-line">
             <span>清除 Token 并停用</span>
             <Switch
               label="清除 Token 并停用"
