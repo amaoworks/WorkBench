@@ -90,6 +90,8 @@ def main():
         def start():
             nonlocal process
             if args.image:
+                if args.database == "postgres":
+                    command(compose + ["pull", "postgres"])
                 command(compose + ["up", "-d", "--pull", "never", "--force-recreate", "--wait", "--wait-timeout", "90", "workbench"])
             else:
                 process = subprocess.Popen([str(args.binary.resolve())], env=env, stdout=log, stderr=log)
