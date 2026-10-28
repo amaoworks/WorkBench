@@ -31,7 +31,7 @@ if ! diff -ru "$generated_check/before" "$generated_check/after"; then
 fi
 "$go_bin" test ./...
 "$go_bin" test -tags dev ./internal/modules/investment -run '^TestDevChart'
-node --test scripts/dev.test.mjs
+node --test scripts/dev.test.mjs scripts/release.test.mjs
 
 cd "$repo_root/web"
 npm run lint

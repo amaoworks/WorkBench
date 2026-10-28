@@ -57,8 +57,8 @@ func TestTVNightQuoteCompatFreshAndDiskCachedBundles(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				get := func(etag string) *httptest.ResponseRecorder {
-					req := httptest.NewRequest(http.MethodGet, strings.Replace(assetPath, "/charting_library/", "/charting_library/quotes-v1/", 1), nil)
+				get := func(version, etag string) *httptest.ResponseRecorder {
+					req := httptest.NewRequest(http.MethodGet, strings.Replace(assetPath, "/charting_library/", "/charting_library/"+version+"/", 1), nil)
 					req.Header.Set("Accept-Encoding", cacheEncoding)
 					req.Header.Set("If-None-Match", etag)
 					req.Header.Set("Range", "bytes=0-")
@@ -67,7 +67,7 @@ func TestTVNightQuoteCompatFreshAndDiskCachedBundles(t *testing.T) {
 					proxy.ServeHTTP(response, req)
 					return response
 				}
-				response := get(`"upstream"`)
+				response := get("quotes-v2", `"upstream"`)
 				if response.Code != http.StatusOK {
 					t.Fatalf("old upstream ETag must not validate patched body: %d", response.Code)
 				}
@@ -83,7 +83,11 @@ func TestTVNightQuoteCompatFreshAndDiskCachedBundles(t *testing.T) {
 				if response.Header().Get("Digest") != "" || response.Header().Get("ETag") == `"upstream"` || response.Result().ContentLength != int64(response.Body.Len()) {
 					t.Fatalf("patched representation headers: %v", response.Header())
 				}
-				cached := get(response.Header().Get("ETag"))
+				legacy := get("quotes-v1", "")
+				if legacy.Code != http.StatusOK || !bytes.Equal(legacy.Body.Bytes(), response.Body.Bytes()) {
+					t.Fatalf("legacy library path: %d %s", legacy.Code, legacy.Body)
+				}
+				cached := get("quotes-v2", response.Header().Get("ETag"))
 				if cached.Code != http.StatusNotModified || cached.Body.Len() != 0 {
 					t.Fatalf("patched ETag did not revalidate: %d %s", cached.Code, cached.Body)
 				}

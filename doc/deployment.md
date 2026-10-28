@@ -101,7 +101,14 @@ docker compose logs workbench
 
 首次启动会自动生成初始密码并写入 `workbench` 容器日志。使用该密码登录后必须立即设置新密码。后续启动沿用数据库中的凭据，不再生成新密码。
 
-`.env.example` 默认监听宿主机 `127.0.0.1:8080`，使用内置 PostgreSQL，并以 `workbench-local` 作为开发数据库密码。运行前应替换 `POSTGRES_PASSWORD`；`WORKBENCH_DATABASE_URL` 使用 Compose 变量插值同步账号、密码、端口和数据库名。密码包含连接串保留字符时必须进行 URL 编码。`.env` 已被 Git 和 Docker 构建上下文排除。
+`.env.example` 默认监听宿主机 `127.0.0.1:8080`，使用内置 PostgreSQL，并以 `workbench-local` 作为开发数据库密码。运行前应替换 `POSTGRES_PASSWORD`；`WORKBENCH_DATABASE_URL` 默认使用 Compose 变量插值同步账号、密码、端口和数据库名。`.env` 已被 Git 和 Docker 构建上下文排除。
+
+`POSTGRES_PASSWORD` 始终填写原始密码。密码包含 `@`、`:`、`/`、`?`、`#`、`%` 等 URI 保留字符时，手动覆盖 `WORKBENCH_DATABASE_URL`，仅对连接串中的密码进行 URL 编码，不再引用 `${POSTGRES_PASSWORD}`。例如，原始密码为 `p/q` 时：
+
+```dotenv
+POSTGRES_PASSWORD='p/q'
+WORKBENCH_DATABASE_URL=postgresql://${POSTGRES_USER}:p%2Fq@postgres:${POSTGRES_PORT}/${POSTGRES_DB}?sslmode=disable
+```
 
 本机同源访问保持 `WORKBENCH_PUBLIC_URL` 和 `WORKBENCH_CORS_ALLOW_ORIGIN` 为空。跨源前端调用时，后者填写以逗号分隔的完整来源白名单。通过反向代理公开时填写 `WORKBENCH_PUBLIC_URL=https://实际域名`，并相应调整 `WORKBENCH_ALLOWED_HOSTS`。默认的 `WORKBENCH_ALLOW_INSECURE_HTTP=true` 明确允许本机 HTTP 入口。
 
@@ -183,7 +190,7 @@ sudo chmod 700 data
 
 `WORKBENCH_PUBLIC_URL` 的 Host（包括非标准端口）自动加入允许列表。应用不根据 `Forwarded` 或 `X-Forwarded-*` 判断安全来源，也不读取这些头来改变 Cookie 属性；无需配置可信代理 CIDR。后端的访问隔离由 loopback 监听、Compose 端口映射或专用容器网络保证，不应把 HTTP 后端直接发布到公网。
 
-- **Nginx**：参考 `deploy/nginx.conf.example`，替换域名、证书路径和后端端口。示例使用 Nginx 1.25.1+ 的 `http2 on;`，需要构建时启用 `ngx_http_v2_module`；旧版本使用 `listen 443 ssl http2;` 并删除 `http2 on;`。示例保留 Host，配置 WebSocket Upgrade，关闭 SSE 响应缓冲，代理读写超时均为 3600 秒。`map` 应放在 `http` 上下文。先执行 `nginx -t`，通过后重新加载配置。[HTTP/2 配置](https://nginx.org/en/docs/http/ngx_http_v2_module.html)、[WebSocket 代理说明](https://nginx.org/en/docs/http/websocket.html)
+- **Nginx**：参考 `deploy/nginx.conf.example`，替换域名、证书路径和后端端口。示例使用 Nginx 1.25.1+ 的 `http2 on;`，需要构建时启用 `ngx_http_v2_module`；旧版本使用 `listen 443 ssl http2;` 并删除 `http2 on;`。示例保留 Host，配置 WebSocket Upgrade，关闭 SSE 响应缓冲，代理读写超时均为 3600 秒。请求体上限设置为 `8m`，与投资偏好接口的 8 MiB 上限对齐，兼容旧终端的布局保存请求。`map` 应放在 `http` 上下文。先执行 `nginx -t`，通过后重新加载配置。[HTTP/2 配置](https://nginx.org/en/docs/http/ngx_http_v2_module.html)、[WebSocket 代理说明](https://nginx.org/en/docs/http/websocket.html)
 - **Caddy**：参考 `deploy/Caddyfile.example`。宿主机 Caddy 代理到 `127.0.0.1:8080`；容器 Caddy 代理到 `workbench:8080`。域名与 DNS、80/443 入口配置正确时，由 Caddy 管理外部 HTTPS。[reverse_proxy 说明](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy)
 
 Schwab 的回调地址填写 `https://实际域名/oauth/schwab`，与 Developer Portal 登记完全一致；从同一个 HTTPS 入口开始授权。回调流程及排查见[配置与运行](configuration.md)。
@@ -249,9 +256,9 @@ VERSION=v0.1.1 ./scripts/release.sh
 
 流程先通过 `scripts/check-workflows.sh` 执行 actionlint 和 ShellCheck，缺少 ShellCheck 会明确失败，避免本地悄悄跳过而 CI 报错。`check` 任务挂载 PostgreSQL 17 Alpine 服务并注入 `WORKBENCH_TEST_POSTGRES_URL`，检查 SQL 生成漂移、Go 测试（含 PostgreSQL 集成测试）、前端 lint、前后端契约测试、投资 JS 测试和生产构建，以及部署相关并发行为；最后在 Linux amd64/arm64 runner 上分别构建镜像，对 SQLite 与默认 PostgreSQL（`--database postgres`）两套 Compose 栈验证生命周期、登录、备份和数据保留。
 
-主分支推送及手动分支构建还通过 `scripts/export-build.sh` 从已经验证的镜像中提取相同的静态二进制，导出 Docker 镜像和部署文件包，并验证导出的二进制。构建版本为 `v0.0.0-dev.<运行序号>-<短提交号>`，产物上传到该次运行的 **Artifacts**，按架构分为 `workbench-linux-amd64-<提交号>`、`workbench-linux-arm64-<提交号>`，保留 14 天。PR 执行检查和镜像验证，正式标签的产物由 Release 工作流发布。
+主分支推送、手动分支构建及 Release 调用的标签构建通过 `scripts/export-build.sh` 从已经验证的镜像中提取相同的静态二进制，导出 Docker 镜像和部署文件包，并验证导出的二进制。分支构建版本为 `v0.0.0-dev.<运行序号>-<短提交号>`，标签构建使用标签版本。产物上传到该次运行的 **Artifacts**，按架构分为 `workbench-linux-amd64-<提交号>`、`workbench-linux-arm64-<提交号>`，保留 14 天。PR 执行检查和镜像验证。
 
-下载 artifact ZIP 并解压后，先运行 `sha256sum --check SHA256SUMS`。二进制包解压即可运行；`*_docker.tar.gz` 使用 `docker load --input 文件名` 导入，镜像名为 `workbench:sha-<完整提交号>`。在 `.env` 设置 `WORKBENCH_IMAGE=workbench`、`WORKBENCH_VERSION=sha-<完整提交号>`，使用 `compose.image.yaml` 启动。普通构建不推送 GHCR，也不创建正式 Release。
+下载 artifact ZIP 并解压后，先运行 `sha256sum --check SHA256SUMS`。二进制包解压即可运行；`*_docker.tar.gz` 使用 `docker load --input 文件名` 导入，镜像名为 `workbench:sha-<完整提交号>-<架构>`。例如下载 amd64 产物后，在 `.env` 设置 `WORKBENCH_IMAGE=workbench`、`WORKBENCH_VERSION=sha-<完整提交号>-amd64`，使用 `compose.image.yaml` 启动。普通构建不推送 GHCR，也不创建正式 Release。
 
 
 `.github/workflows/release.yml` 在推送 `v*` 标签时触发。接受 `vMAJOR.MINOR.PATCH` 及预发布后缀，例如 `v0.1.1-rc.1`，不使用带 `+` 的构建元数据。正式包只能从 `main` 产出：标签指向的提交必须已经包含在 `origin/main` 中。先推送 `main`，再在该提交上打标签。
@@ -263,11 +270,11 @@ git tag v0.1.1
 git push origin v0.1.1
 ```
 
-**Require commit on main** 用 `git merge-base --is-ancestor` 检查该提交。尚未合并进 `main` 的 `dev` 提交会在这一步失败，后续的检查、打包、GHCR 推送和 GitHub Release 都不会执行。通过后复用 CI，构建二进制包，分别在两个架构的 runner 上运行压缩包中的程序，再推送多架构 GHCR 镜像并创建 GitHub Release。Release 说明包含 `Released from: main` 和对应提交号。
+**Require commit on main** 用 `git merge-base --is-ancestor` 检查该提交。尚未合并进 `main` 的 `dev` 提交会在这一步失败，后续的检查、打包、GHCR 推送和 GitHub Release 都不会执行。通过后复用 CI，在两个架构的 runner 上分别验证镜像和导出的二进制；后续下载并校验同一次运行的产物，直接组成发布包，将已验证的单架构镜像推送到 GHCR 并合成多架构清单，不再重新编译。Release 说明包含 `Released from: main` 和对应提交号。所有检查和构建使用标签指向的提交；读取 `origin/main` 只用于校验归属。
 
-二进制和镜像注入相同的版本、提交号和提交时间。镜像标签包括版本原文（`v0.1.1`）、完整提交号（`sha-...`），稳定版本另更新 `latest`；预发布不会更新 `latest`，GitHub Release 标记为 prerelease。部署推荐固定版本。不要移动已发布标签；需要修正时发布新版本。这条分支限制写在被标记提交自己的工作流里，合并到 `main` 之后才会约束新的标签。
+二进制和镜像注入相同的版本、提交号和提交时间。镜像标签包括版本原文（`v0.1.1`）、完整提交号（`sha-...`），以及用于组装清单的 `sha-<提交号>-amd64/arm64` 单架构标签。Release 使用同一并发组串行排队，最多保留 100 个等待中的运行。稳定版本按数值比较已发布的稳定版，只有最高版本才更新 GitHub Release 与 GHCR 的 `latest`；预发布标记为 prerelease，补发旧稳定版保留版本入口，两者均不移动 `latest`。部署推荐固定版本。不要移动已发布标签；需要修正时发布新版本。这条分支限制写在被标记提交自己的工作流里，合并到 `main` 之后才会约束新的标签。
 
-Actions 通过内置 `GITHUB_TOKEN` 发布：镜像任务有 `packages: write`，Release 任务有 `contents: write`，验证任务仅请求读权限。仓库或组织需允许相应权限。Actions 依赖固定到提交 SHA，Dependabot 每月检查工作流依赖更新。Fork 发布时镜像名自动取该仓库的小写路径，部署 `.env` 的 `WORKBENCH_IMAGE` 需对应修改。
+Actions 通过内置 `GITHUB_TOKEN` 发布：镜像任务有 `packages: write`，Release 任务有 `contents: write` 与更新 `latest` 所需的 `packages: write`，验证任务仅请求读权限。仓库或组织需允许相应权限。Actions 依赖固定到提交 SHA，Dependabot 每月检查工作流依赖更新。Fork 发布时镜像名自动取该仓库的小写路径，部署 `.env` 的 `WORKBENCH_IMAGE` 需对应修改。
 
 推送镜像与创建 Release 是两个外部步骤，不具备跨服务事务；若最后一步失败，查看 Actions 日志后处理已产生的产物。工作流发布产物后，由服务器执行拉取与重启完成升级。
 

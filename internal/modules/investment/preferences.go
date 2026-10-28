@@ -46,6 +46,9 @@ func (m *Module) getPreferences(w http.ResponseWriter, r *http.Request) {
 	}
 	entries := make(map[string]preferenceView, len(rows))
 	for _, row := range rows {
+		if row.Name == "layout" && r.URL.Query().Get("includeLayout") == "false" {
+			continue
+		}
 		value := json.RawMessage(row.Content)
 		if !json.Valid(value) {
 			httpapi.Error(w, http.StatusInternalServerError, "preferences_read_failed", "无法读取投资偏好")

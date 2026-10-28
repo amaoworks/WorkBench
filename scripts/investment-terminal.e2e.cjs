@@ -32,6 +32,7 @@ let failWatchlistSave = false;
 let heldWatchlistSave;
 let preferences = { entries: {} };
 const preferenceWriters = new Map();
+const preferenceRequests = [];
 const history = [
   { ...order, orderId: 40, status: "FILLED", filledQuantity: 2 },
   { ...order, orderId: 41, status: "CANCELED" },
@@ -76,7 +77,10 @@ function minuteHistoryFixture(fromMs, toMs, resolution, source, poisonBoundaries
 }
 
 async function fulfillPreferences(route) {
-  if (route.request().method() === 'GET') return route.fulfill({ json: preferences });
+  if (route.request().method() === 'GET') {
+    const excludeLayout = new URL(route.request().url()).searchParams.get('includeLayout') === 'false';
+    return route.fulfill({ json: { entries: Object.fromEntries(Object.entries(preferences.entries).filter(([name]) => !excludeLayout || name !== 'layout')) } });
+  }
   assert.equal(route.request().method(), 'PUT');
   assert.equal(route.request().headers()['x-csrf-token'], 'test-csrf');
   const input = route.request().postDataJSON();
@@ -174,7 +178,7 @@ async function pollUntil(check, message, timeout = 30000) {
             <body style="margin:0"><iframe name="investment-terminal" title="投资终端" src="/investment/terminal" style="position:fixed;inset:0;width:100%;height:100%;border:0"></iframe></body></html>` });
         }
         if (path.startsWith("/charting_library/")) {
-          const libraryPath = path.replace('/charting_library/quotes-v1/', '/charting_library/');
+          const libraryPath = path.replace('/charting_library/quotes-v2/', '/charting_library/');
           const file = join(cache, createHash("sha256").update(libraryPath).digest("hex") + ".json");
           let asset;
           // Always refresh the entry point. Its hashed bundles can be reused.
@@ -188,7 +192,8 @@ async function pollUntil(check, message, timeout = 30000) {
             await writeFile(file, JSON.stringify(asset));
           }
           let body = Buffer.from(asset.body, "base64");
-          if (libraryPath.endsWith('/' + quoteCompat.bundle)) {
+          if (libraryPath.includes('/symbol-details.')) {
+            assert(libraryPath.endsWith('/' + quoteCompat.bundle), `unverified TV Details bundle: ${libraryPath}`);
             const source = body.toString('utf8');
             assert.equal(source.split(quoteCompat.from).length, 2, 'known TV Details quote-copy patch must match once');
             body = Buffer.from(source.replace(quoteCompat.from, quoteCompat.to));
@@ -240,7 +245,7 @@ async function pollUntil(check, message, timeout = 30000) {
         window.__broker = broker;
         return broker;
       },`);
-            const themeBinding = "unbindTheme = bindTheme(widget, theme, window, () => layoutSync?.schedule());";
+            const themeBinding = "unbindTheme = bindTheme(widget, theme, window);";
             assert(body.includes(themeBinding));
             body = body.replace(themeBinding, `${themeBinding} window.__widget = widget;`);
             assert(body.includes('if (disposed) watchlistSync.dispose();'));
@@ -271,6 +276,11 @@ async function pollUntil(check, message, timeout = 30000) {
           return await route.fulfill({ json: { token: "test-csrf" } });
         }
         if (path === "/api/modules/investment/preferences") {
+          preferenceRequests.push({
+            method: route.request().method(),
+            search: url.search,
+            name: route.request().method() === 'PUT' ? route.request().postDataJSON()?.name : null,
+          });
           if (useApp) return await route.continue();
           return await fulfillPreferences(route);
         }
@@ -368,12 +378,28 @@ async function pollUntil(check, message, timeout = 30000) {
         }
         throw new Error(`unexpected fixture API: ${path}`);
       } catch (error) {
+        console.error('Fixture request failed:', error.message);
         errors.push(error.message);
         await route.fulfill({ status: 500, json: { error: "browser fixture failed" } }).catch(() => {});
       }
     });
     };
     await installPageRoutes(context, page);
+
+    let legacyLayoutRevision;
+    const legacyLayout = { charts: [{ panes: [] }], legacyMarker: 'retained-layout' };
+    if (testPreferences) {
+      const csrfResponse = await context.request.get(`${origin}/api/auth/csrf`);
+      assert(csrfResponse.ok(), `legacy layout CSRF HTTP ${csrfResponse.status()}`);
+      const { token } = await csrfResponse.json();
+      const seedResponse = await context.request.put(`${origin}/api/modules/investment/preferences`, {
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token, Origin: origin },
+        data: { name: 'layout', value: legacyLayout, revision: 0, writer: 'legacy-layout-seed', sequence: 1 },
+      });
+      const seedResult = await seedResponse.json();
+      assert(seedResponse.ok(), `legacy layout seed HTTP ${seedResponse.status()}: ${JSON.stringify(seedResult)}`);
+      legacyLayoutRevision = seedResult.revision;
+    }
 
     await page.goto(`${origin}${useApp ? "/investment" : mobile ? "/mobile-fixture" : "/investment/terminal"}`);
     if (useApp) await page.locator("iframe[title='投资终端']").waitFor();
@@ -385,7 +411,7 @@ async function pollUntil(check, message, timeout = 30000) {
     await terminal.locator("#terminal-loading").waitFor({ state: "hidden" });
     let chart = terminal.childFrames()[0];
     assert(chart, "TradingView chart iframe missing");
-    assert.equal(new URL(chart.url()).pathname, "/charting_library/quotes-v1/sameorigin.html", "chart must use a real same-origin document");
+    assert.equal(new URL(chart.url()).pathname, "/charting_library/quotes-v2/sameorigin.html", "chart must use a real same-origin document");
     const resolutions = await terminal.evaluate(() => new Promise(resolve => window.__datafeed.onReady(config => resolve(config.supported_resolutions))));
     assert.deepEqual(resolutions, ['1', '5', '15', '30', '1D', '1W', '1M'], '10-minute bars must be absent from the TV datafeed');
     const readPreferences = () => terminal.evaluate(async () => {
@@ -410,6 +436,9 @@ async function pollUntil(check, message, timeout = 30000) {
       }
     };
     if (testPreferences) {
+      const initialReads = preferenceRequests.filter(request => request.method === 'GET');
+      assert(initialReads.length > 0 && initialReads.every(request => new URLSearchParams(request.search).get('includeLayout') === 'false'),
+        'all automatic preference reads must exclude the legacy layout');
       const sessionButton = label => chart.getByRole('button', { name: new RegExp(`^行情时段：${label}。`) });
       const chooseSession = async (label, title, nextLabel) => {
         await sessionButton(label).click();
@@ -433,14 +462,7 @@ async function pollUntil(check, message, timeout = 30000) {
         response.request().method() === 'PUT' && response.request().postDataJSON().state.lists.some(list =>
           list.title === '服务端关注' && JSON.stringify(list.symbols) === JSON.stringify(['###科技', 'MSFT', 'AAPL'])) && response.ok());
       const created = await terminal.evaluate(async () => {
-        const active = window.__widget.activeChart();
-        const studyId = await active.createStudy('Moving Average', false, false, { length: 9 });
-        const range = active.getVisibleRange();
-        const span = Math.max(120, Math.floor((range.to - range.from) / 4));
-        const shapeId = await active.createMultipointShape([
-          { time: range.from + span, price: 99 },
-          { time: range.from + 2 * span, price: 104 },
-        ], { shape: 'trend_line', overrides: { linecolor: '#ef5350', linewidth: 2 } });
+        window.__widget.activeChart().setChartType(3);
         window.__widget.dateFormat().setValue('dd-MM-yyyy');
         window.__widget.timeHoursFormat().setValue('12-hours');
         window.__broker.setCurrentAccount('B');
@@ -448,22 +470,17 @@ async function pollUntil(check, message, timeout = 30000) {
         const watchlistId = lists.getActiveListId();
         lists.renameList(watchlistId, '服务端关注');
         lists.updateList(watchlistId, ['###科技', 'MSFT', 'AAPL']);
-        return { studyId, shapeId, watchlistId };
+        return { watchlistId };
       });
       await workspaceListSaved;
-      assert(created.studyId != null && created.shapeId != null, 'real TradingView indicator and drawing must be created');
       await waitForPreferences(entries => {
         const values = Object.entries(entries).filter(([name]) => name.startsWith('tv:')).map(([, entry]) => entry.value);
-        const savedLayout = JSON.stringify(entries.layout?.value);
         return entries.chart?.value?.symbol === 'AAPL' && entries.chart.value.resolution === '5' && entries.chart.value.session === 'regular' &&
-          entries.layout?.value?.charts?.length && savedLayout.includes(String(created.studyId)) && savedLayout.includes(String(created.shapeId)) &&
           entries.account?.value === 'B' &&
           values.includes('dd-MM-yyyy') && values.includes('12-hours');
-      }, 'created chart objects and preferences were not saved');
+      }, 'chart, account and TradingView user settings were not saved');
       const firstEntries = await readPreferences();
-      const firstLayoutRevision = firstEntries.layout.revision;
-      assert(JSON.stringify(firstEntries.layout.value).includes(String(created.studyId)), 'saved layout must contain the created indicator ID');
-      assert(JSON.stringify(firstEntries.layout.value).includes(String(created.shapeId)), 'saved layout must contain the created drawing ID');
+      assert.deepEqual(firstEntries.layout, { revision: legacyLayoutRevision, value: legacyLayout }, 'the unfiltered API must retain the legacy layout snapshot');
       assert(Object.keys(firstEntries).some(name => name.startsWith('tv:')), 'TradingView settings must reach workspace preferences');
 
       await context.close();
@@ -488,42 +505,26 @@ async function pollUntil(check, message, timeout = 30000) {
       assert.deepEqual(await terminal.evaluate(() => ({
         symbol: window.__widget.activeChart().symbol(),
         resolution: String(window.__widget.activeChart().resolution()),
+        chartType: window.__widget.activeChart().chartType(),
         account: window.__broker.currentAccount(),
         dateFormat: window.__widget.dateFormat().value(),
         timeHoursFormat: window.__widget.timeHoursFormat().value(),
-      })), { symbol: 'AAPL', resolution: '5', account: 'B', dateFormat: 'dd-MM-yyyy', timeHoursFormat: '12-hours' });
-      const restoredObjects = await terminal.evaluate(() => ({
-        studies: window.__widget.activeChart().getAllStudies(),
-        shapes: window.__widget.activeChart().getAllShapes(),
-      }));
-      const restoredStudy = restoredObjects.studies.find(study => /moving average/i.test(study.name));
-      const restoredShape = restoredObjects.shapes.find(shape => shape.id === created.shapeId) || restoredObjects.shapes[0];
-      assert(restoredStudy, 'saved indicator must restore in a clean browser context');
-      assert(restoredShape, 'saved drawing must restore in a clean browser context');
-
-      const removed = { studyId: restoredStudy.id, shapeId: restoredShape.id };
-      await terminal.evaluate(({ studyId, shapeId }) => {
-        const active = window.__widget.activeChart();
-        const study = active.getAllStudies().find(item => item.id === studyId);
-        const shape = active.getAllShapes().find(item => item.id === shapeId);
-        if (!study || !shape) throw new Error('restored chart objects are missing');
-        active.removeEntity(study.id);
-        active.removeEntity(shape.id);
+      })), { symbol: 'AAPL', resolution: '5', chartType: 3, account: 'B', dateFormat: 'dd-MM-yyyy', timeHoursFormat: '12-hours' });
+      await terminal.evaluate(() => {
+        window.__widget.activeChart().setChartType(1);
         window.__widget.dateFormat().setValue('yyyy-MM-dd');
         window.__widget.timeHoursFormat().setValue('24-hours');
         window.__broker.setCurrentAccount('A');
-      }, removed);
+      });
       await terminal.evaluate(() => window.__widget.setSymbol('MSFT', '15'));
       await terminal.waitForFunction(() => window.__widget.activeChart().symbol() === 'MSFT' && window.__widget.activeChart().resolution() === '15' && window.__widget.activeChart().dataReady());
       await chooseSession('常规', '扩展 (ETH)', '扩展');
       await waitForPreferences(entries => {
         const values = Object.entries(entries).filter(([name]) => name.startsWith('tv:')).map(([, entry]) => entry.value);
-        const savedLayout = JSON.stringify(entries.layout?.value);
-        return entries.layout?.revision > firstLayoutRevision && !savedLayout.includes(String(removed.studyId)) && !savedLayout.includes(String(removed.shapeId)) &&
-          entries.chart?.value?.symbol === 'MSFT' &&
+        return entries.chart?.value?.symbol === 'MSFT' &&
           entries.chart.value.resolution === '15' && entries.chart.value.session === 'extended' && entries.account?.value === 'A' &&
           values.includes('yyyy-MM-dd') && values.includes('24-hours');
-      }, 'deleted chart objects and later preferences were not saved');
+      }, 'later chart, account and TradingView user settings were not saved');
       await page.reload();
       await page.locator("iframe[title='投资终端']").waitFor();
       terminal = await (await page.locator("iframe[title='投资终端']").elementHandle()).contentFrame();
@@ -536,12 +537,11 @@ async function pollUntil(check, message, timeout = 30000) {
       assert.deepEqual(await terminal.evaluate(() => ({
         symbol: window.__widget.activeChart().symbol(),
         resolution: String(window.__widget.activeChart().resolution()),
+        chartType: window.__widget.activeChart().chartType(),
         account: window.__broker.currentAccount(),
         dateFormat: window.__widget.dateFormat().value(),
         timeHoursFormat: window.__widget.timeHoursFormat().value(),
-        studies: window.__widget.activeChart().getAllStudies().filter(study => /moving average/i.test(study.name)).length,
-        shapes: window.__widget.activeChart().getAllShapes().length,
-      })), { symbol: 'MSFT', resolution: '15', account: 'A', dateFormat: 'yyyy-MM-dd', timeHoursFormat: '24-hours', studies: 0, shapes: 0 });
+      })), { symbol: 'MSFT', resolution: '15', chartType: 1, account: 'A', dateFormat: 'yyyy-MM-dd', timeHoursFormat: '24-hours' });
       await page.goto(`${origin}/investment/terminal?symbol=AAPL`);
       terminal = page.mainFrame();
       await terminal.waitForFunction(() => window.__broker?.connectionStatus() === 1, null, { timeout: 30000 });
@@ -549,9 +549,13 @@ async function pollUntil(check, message, timeout = 30000) {
       await terminal.locator('#terminal-loading').waitFor({ state: 'hidden' });
       await terminal.waitForFunction(() => window.__widget.activeChart().symbol() === 'AAPL' && window.__widget.activeChart().dataReady());
       await waitForPreferences(entries => entries.chart?.value?.symbol === 'AAPL' && entries.chart.value.resolution === '15' &&
-        entries.chart.value.session === 'extended', 'URL symbol did not override the saved layout');
+        entries.chart.value.session === 'extended', 'URL symbol did not override the saved chart settings');
+      const finalEntries = await readPreferences();
+      assert.deepEqual(finalEntries.layout, { revision: legacyLayoutRevision, value: legacyLayout }, 'the terminal must not change the retained legacy layout');
+      assert.equal(preferenceRequests.some(request => request.method === 'PUT' && request.name === 'layout'), false,
+        'the terminal must never PUT a layout preference');
       assert.deepEqual(errors, []);
-      console.log('PASS (Chromium, Workbench app): workspace chart layout, watchlists, account, indicator, drawing and user settings survive a storage-empty browser context; later edits and deletions survive refresh.');
+      console.log('PASS (Chromium, Workbench app): chart selections, watchlists, account and TradingView user settings survive a storage-empty browser context without loading or saving the retained legacy layout.');
       return;
     }
     if (testChartState) {
@@ -681,7 +685,25 @@ async function pollUntil(check, message, timeout = 30000) {
         assert.equal(quote.cs, 'night');
         assert.equal(quote.ntc_time, null, 'missing overnight trade time must stay missing');
         assert.deepEqual([quote.lp, quote.high_price, quote.low_price, quote.volume], [102, 105, 98, 10000], 'night statistics must not replace the main daily values');
-        await terminal.evaluate(() => { window.__datafeed.now = Date.now; window.__datafeed.publishQuote('AAPL'); });
+        await terminal.evaluate(() => window.dispatchEvent(new CustomEvent('FUTU_QUOTE', { detail: {
+          symbol: 'AAPL', quote: { lp: 105, ch: 9, chp: 99 },
+        } })));
+        await sessionStats.getByText(/105\.00/).waitFor();
+        const moved = await terminal.evaluate(() => window.__datafeed.quote_cache.get('AAPL'));
+        assert.equal(moved.lp, 105, 'the main quote must follow the overnight trade');
+        assert.equal(moved.ch, 3, 'the main change must use the regular price instead of provider change fields');
+        assert(Math.abs(moved.chp - (105 / 102 - 1) * 100) < 1e-9);
+        await terminal.evaluate(() => {
+          window.__datafeed.futuOvernight.set('MSFT', { lp: 200 });
+          window.__datafeed.futuOvernight.delete('AAPL');
+          window.__datafeed.publishQuote('AAPL');
+        });
+        await sessionStats.getByText('没有交易', { exact: true }).waitFor();
+        await terminal.evaluate(() => {
+          window.__datafeed.futuOvernight.delete('MSFT');
+          window.__datafeed.now = Date.now;
+          window.__datafeed.publishQuote('AAPL');
+        });
       }
       const sessionButton = label => chart.getByRole('button', { name: new RegExp(`^行情时段：${label}。`) });
       const chooseSession = async (currentLabel, itemTitle, nextLabel) => {

@@ -108,7 +108,7 @@ Workbench 前端使用统一的页面结构、状态反馈和交互组件。业�
 
 ## 模块导入边界
 
-与后端 `internal/modules/architecture_test.go` 对齐：`web/src/modules/<id>/` 不得 import 其他业务模块，也不得 import `web/src/app/`。总览、设置和应用外壳在 `features/` / `app/` 中组合各模块；模块可复用 `components/`、`shared/` 以及平台 settings 等 features 只读 hooks。该边界由 `web/eslint.config.js` 的 `no-restricted-imports` 强制检查（`npm run lint`）。
+与后端 `internal/modules/architecture_test.go` 对齐：`web/src/modules/<id>/` 不得 import 其他业务模块，也不得 import `web/src/app/`。总览、设置和应用外壳在 `features/` / `app/` 中组合各模块；模块可复用 `components/`、`shared/` 以及平台 settings 等 features 只读 hooks。`web/eslint.config.js` 自动读取模块目录，通过 `no-restricted-imports` 强制检查该边界（`npm run lint`），新增模块无需维护模块名单。
 
 ## 代码要求
 

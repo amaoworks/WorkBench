@@ -17,19 +17,27 @@ mkdir -p "$release_dir"
 staging=$(mktemp -d)
 trap 'rm -rf "$staging"' EXIT HUP INT TERM
 
-cd "$repo_root/web"
-npm ci
-npm run build
-cd "$repo_root"
+if [ -n "${BUILD_ARTIFACTS_DIR:-}" ]; then
+    for arch in amd64 arm64; do
+        source_dir="$BUILD_ARTIFACTS_DIR/$arch"
+        (cd "$source_dir" && sha256sum --check SHA256SUMS)
+        cp "$source_dir/workbench_${VERSION}_linux_${arch}.tar.gz" "$release_dir/"
+    done
+else
+    cd "$repo_root/web"
+    npm ci
+    npm run build
+    cd "$repo_root"
 
-for arch in amd64 arm64; do
-    name="workbench_${VERSION}_linux_${arch}"
-    mkdir -p "$staging/$name"
-    GOOS=linux GOARCH="$arch" OUTPUT="$staging/$name/workbench" ./scripts/compile.sh
-    cp README.md "$staging/$name/"
-    cp -R doc deploy "$staging/$name/"
-    tar -czf "$release_dir/$name.tar.gz" -C "$staging" "$name"
-done
+    for arch in amd64 arm64; do
+        name="workbench_${VERSION}_linux_${arch}"
+        mkdir -p "$staging/$name"
+        GOOS=linux GOARCH="$arch" OUTPUT="$staging/$name/workbench" ./scripts/compile.sh
+        cp README.md "$staging/$name/"
+        cp -R doc deploy "$staging/$name/"
+        tar -czf "$release_dir/$name.tar.gz" -C "$staging" "$name"
+    done
+fi
 tar -czf "$release_dir/workbench_${VERSION}_deployment.tar.gz" compose.image.yaml .env.example deploy doc README.md
 cd "$release_dir"
 sha256sum ./*.tar.gz > SHA256SUMS

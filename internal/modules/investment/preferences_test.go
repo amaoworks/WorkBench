@@ -68,6 +68,29 @@ func TestPreferencesRoundTripAcrossModuleInstances(t *testing.T) {
 	}
 }
 
+func TestPreferencesReadCanExcludeLegacyLayout(t *testing.T) {
+	m := openInvestmentModule(t)
+	layout := fmt.Sprintf(`{"charts":[{}],"opaque":%q}`, strings.Repeat("x", 100000))
+	putPreference(t, m, "layout", 0, 1, "legacy", layout, http.StatusOK)
+	putPreference(t, m, "account", 0, 1, "tab", `"account-hash"`, http.StatusOK)
+	response := httptest.NewRecorder()
+	m.getPreferences(response, httptest.NewRequest(http.MethodGet, "/?includeLayout=false", nil))
+	var view preferencesView
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &view) != nil {
+		t.Fatalf("filtered read: %d %s", response.Code, response.Body.String())
+	}
+	if _, ok := view.Entries["layout"]; ok {
+		t.Fatal("filtered read returned a legacy layout")
+	}
+	if view.Entries["account"].Revision != 1 || response.Body.Len() >= 1000 {
+		t.Fatalf("filtered settings: %s", response.Body.String())
+	}
+	legacy := readPreferences(t, m).Entries["layout"]
+	if legacy.Revision != 1 || !reflect.DeepEqual(compactJSON(t, legacy.Value), compactJSON(t, json.RawMessage(layout))) {
+		t.Fatal("filtered read changed the retained layout")
+	}
+}
+
 func TestPreferencesCASLateReplayAndTombstone(t *testing.T) {
 	m := openInvestmentModule(t)
 	newer := `{"symbol":"AAPL","resolution":"1D","session":"regular"}`

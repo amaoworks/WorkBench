@@ -1,5 +1,5 @@
 {
-  "bundle": "symbol-details.c9b8b9183b542f763ac4.js",
+  "bundle": "symbol-details.a7454a82deebf6dcbfda.js",
   "from": "quotes:{...r.current.detailsInfoProps.quotes,last_price:t",
   "to": "quotes:{...r.current.detailsInfoProps.quotes,ntc:e.values.ntc,nch:e.values.nch,nchp:e.values.nchp,ntc_time:e.values.ntc_time,last_price:t"
 }

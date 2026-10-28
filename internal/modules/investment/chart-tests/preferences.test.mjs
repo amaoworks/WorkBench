@@ -7,7 +7,10 @@ function fixture(initial = {}) {
     let reject, hold;
     const request = async (url, init = {}) => {
         if (url.endsWith('/csrf')) return Response.json({ token: 'token' });
-        if (init.method !== 'PUT') return Response.json({ entries: Object.fromEntries(entries) });
+        if (init.method !== 'PUT') {
+            const filtered = new URL(url, 'http://fixture').searchParams.get('includeLayout') === 'false';
+            return Response.json({ entries: Object.fromEntries([...entries].filter(([name]) => !filtered || name !== 'layout')) });
+        }
         const draft = JSON.parse(init.body);
         calls.push(draft);
         if (reject) return Response.json({ message: 'save failed' }, { status: reject });
@@ -54,6 +57,39 @@ test('removed TradingView settings stay removed when a new browser loads them', 
     assert.equal(store.get('chart').symbol, 'AAPL');
 });
 
+test('loading settings excludes the legacy layout without changing stored data', async () => {
+    const layout = { revision: 7, value: { charts: [{}], opaque: 'x'.repeat(100000) } };
+    const f = fixture({ layout, 'tv:dateFormat': { revision: 2, value: 'yyyy-MM-dd' } });
+    const requests = [];
+    const store = await loadPreferences({ request: (url, init) => {
+        requests.push(url);
+        return f.request(url, init);
+    } });
+    assert(requests.includes('/api/modules/investment/preferences?includeLayout=false'));
+    assert.equal(store.has('layout'), false);
+    assert.equal(store.settingsAdapter().initialSettings.dateFormat, 'yyyy-MM-dd');
+    assert.deepEqual(f.entries.get('layout'), layout);
+    assert.equal(f.calls.length, 0);
+});
+
+test('repeated leave shares an in-flight save and does not replay an acknowledged draft', async () => {
+    const f = fixture();
+    const store = await loadPreferences(f.options);
+    const held = Promise.withResolvers();
+    f.hold(held.promise);
+    store.set('account', 'A');
+    const flushing = store.flush();
+    store.leave();
+    store.leave();
+    assert.equal(f.calls.length, 1);
+    held.resolve();
+    await flushing;
+    store.leave();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f.calls.length, 1);
+    assert.equal(f.entries.get('account').value, 'A');
+});
+
 test('leaving sends a newer selection without waiting for an old save response', async () => {
     const f = fixture();
     const store = await loadPreferences(f.options);
@@ -92,8 +128,45 @@ test('save errors retain memory edits for retry and stale windows cannot replace
     assert.equal(f.reports.at(-1), null);
 });
 
+test('a new edit retries after a transient failure and still respects a conflict', async () => {
+    const f = fixture();
+    const store = await loadPreferences(f.options);
+    f.reject(502);
+    store.set('account', 'A');
+    await store.flush();
+    assert(f.reports.at(-1));
+    f.reject(null);
+    store.set('account', 'B');
+    store.leave();
+    await store.flush();
+    assert.equal(f.entries.get('account').value, 'B');
+    assert.equal(f.reports.at(-1), null);
+
+    f.reject(409);
+    store.set('account', 'C');
+    await store.flush();
+    const failedCalls = f.calls.length;
+    store.set('account', 'D');
+    store.leave();
+    await store.flush();
+    assert.equal(f.calls.length, failedCalls);
+    assert.equal(f.reports.at(-1).conflict, true);
+    assert.equal(f.entries.get('account').value, 'B');
+});
+
 test('malformed server responses never start a chart with defaults', async () => {
     for (const body of [{}, { entries: { chart: { revision: 1, value: { symbol: 'MSFT', resolution: '10', session: 'regular' } } } }, { entries: { layout: { revision: 1, value: {} } } }]) {
         await assert.rejects(loadPreferences({ request: async url => Response.json(url.endsWith('/csrf') ? { token: 'token' } : body) }), /响应无效/);
     }
+});
+
+test('a non-JSON proxy error page keeps its HTTP status in the save error', async () => {
+    const f = fixture();
+    const request = async (url, init = {}) => init.method === 'PUT'
+        ? new Response('<html><body><h1>500 Internal Server Error</h1></body></html>', { status: 500, headers: { 'Content-Type': 'text/html' } })
+        : f.request(url, init);
+    const preferences = await loadPreferences({ ...f.options, request });
+    preferences.set('chart', { symbol: 'DRAM', resolution: '15', session: 'regular' });
+    await preferences.flush();
+    assert.equal(f.reports.at(-1).message, '无法保存投资设置（HTTP 500），请重试。');
 });

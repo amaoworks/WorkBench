@@ -51,7 +51,8 @@ export function schwabStreamQuoteValues(service, snapshot, barQuote) {
         const lp = regular ?? last;
         const daily = change(lp, quote.prev_close_price);
         Object.assign(quote, defined({
-            lp, ch: quoteNumber(snapshot['31']) ?? daily.ch, chp: quoteNumber(snapshot['43']) ?? daily.chp,
+            lp, regular_price: regular,
+            ch: quoteNumber(snapshot['31']) ?? daily.ch, chp: quoteNumber(snapshot['43']) ?? daily.chp,
         }));
         Object.assign(quote, extendedValues(last, regular, quoteNumber(snapshot['35'])));
     } else {
@@ -69,7 +70,7 @@ export function schwabRestQuoteValues(data) {
     const lp = regularPrice ?? last, previous = quoteNumber(source.closePrice);
     const daily = change(lp, previous);
     return defined({
-        lp, ch: quoteNumber(regular.regularMarketNetChange) ?? daily.ch,
+        lp, regular_price: regularPrice, ch: quoteNumber(regular.regularMarketNetChange) ?? daily.ch,
         chp: quoteNumber(regular.regularMarketPercentChange) ?? daily.chp,
         ask: quoteNumber(source.askPrice), bid: quoteNumber(source.bidPrice),
         open_price: quoteNumber(source.openPrice), high_price: quoteNumber(source.highPrice), low_price: quoteNumber(source.lowPrice),
@@ -94,7 +95,7 @@ function equitySession(time, overnightEnabled) {
 }
 
 export function mergeQuoteValues(schwab = {}, futu, { equity = false, overnightEnabled = false, now = Date.now() } = {}) {
-    const quote = defined(schwab);
+    const { regular_price: regularPrice, ...quote } = defined(schwab);
     const daily = change(quote.lp, quote.prev_close_price);
     Object.assign(quote, defined({ ch: quote.ch ?? daily.ch, chp: quote.chp ?? daily.chp }));
     // Futu's current adapter supplies overnight values. They must not replace
@@ -109,9 +110,16 @@ export function mergeQuoteValues(schwab = {}, futu, { equity = false, overnightE
             // OpenD's overnight quote currently has no trade timestamp.
             ntc_time: null, cs: session,
         });
-        if (quote.lp === undefined && night !== undefined) {
+        if (night !== undefined) {
+            // Show the overnight trade as the main price; its change is relative
+            // to the latest Schwab regular price, falling back to the previous close.
+            // Daily OHLC/volume stay Schwab's.
+            const regular = regularPrice > 0 ? regularPrice
+                : quote.prev_close_price > 0 ? quote.prev_close_price : undefined;
+            const delta = change(night, regular);
             quote.lp = night;
-            Object.assign(quote, change(night, quote.prev_close_price));
+            quote.ch = delta.ch ?? null;
+            quote.chp = delta.chp ?? null;
         }
     }
     return quote;

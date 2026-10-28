@@ -1,6 +1,6 @@
 // Theme changes are asynchronous in TradingView. Serialize them and read the
 // latest requested theme when each update runs, including during chart startup.
-export function bindTheme(widget, initialTheme, host = window, onApplied = () => {}) {
+export function bindTheme(widget, initialTheme, host = window) {
     let requested = initialTheme;
     let applied = null;
     let disposed = false;
@@ -21,7 +21,6 @@ export function bindTheme(widget, initialTheme, host = window, onApplied = () =>
             if (disposed) return;
             applied = theme;
             setBackground(theme);
-            onApplied();
         }).catch((error) => host.console.error('无法同步投资终端主题', error));
     };
     const onMessage = (event) => {

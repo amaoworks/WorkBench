@@ -85,16 +85,23 @@ jobs:
           fi
           {
             echo "version=$version"
-            echo "image=workbench:sha-${GITHUB_SHA}"
+            echo "image=workbench:sha-${GITHUB_SHA}-${{ matrix.arch }}"
             echo "go=$(awk '$1 == "go" {print $2}' go.mod)"
             echo "date=$(git show -s --format=%cI HEAD)"
           } >> "$GITHUB_OUTPUT"
+      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        id: meta
+        with:
+          images: workbench
+          tags: type=raw,value=${{ steps.info.outputs.version }}
+          labels: org.opencontainers.image.created=${{ steps.info.outputs.date }}
       - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           load: true
           platforms: linux/${{ matrix.arch }}
           tags: ${{ steps.info.outputs.image }}
+          labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             GO_VERSION=${{ steps.info.outputs.go }}
             VERSION=${{ steps.info.outputs.version }}
@@ -111,14 +118,14 @@ jobs:
           IMAGE: ${{ steps.info.outputs.image }}
         run: python3 scripts/deployment-smoke.py --image "$IMAGE" --database postgres
       - name: Export binary and Docker image
-        if: github.event_name != 'pull_request' && github.ref_type != 'tag'
+        if: github.event_name != 'pull_request'
         env:
           IMAGE: ${{ steps.info.outputs.image }}
           VERSION: ${{ steps.info.outputs.version }}
           ARCH: ${{ matrix.arch }}
         run: ./scripts/export-build.sh
       - name: Verify exported binary
-        if: github.event_name != 'pull_request' && github.ref_type != 'tag'
+        if: github.event_name != 'pull_request'
         env:
           VERSION: ${{ steps.info.outputs.version }}
           ARCH: ${{ matrix.arch }}
@@ -129,7 +136,7 @@ jobs:
           cd ../..
           python3 scripts/deployment-smoke.py --binary "dist/build/workbench_${VERSION}_linux_${ARCH}/workbench"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: github.event_name != 'pull_request' && github.ref_type != 'tag'
+        if: github.event_name != 'pull_request'
         with:
           name: workbench-linux-${{ matrix.arch }}-${{ github.sha }}
           path: |

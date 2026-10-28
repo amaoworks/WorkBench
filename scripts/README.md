@@ -113,7 +113,7 @@ Ctrl+C、SIGTERM、关闭终端产生的 SIGHUP、启动失败或任一服务退
 ./scripts/test.sh
 ```
 
-脚本按顺序检查 sqlc 重新生成前后的平台/全部业务生成目录、运行 Go 测试、开发资源与进程清理测试、前端及终端 JS lint、前后端契约测试、投资适配器 Node 测试和生产构建。它不要求工作区无未提交改动，也不自动运行浏览器测试。
+脚本按顺序检查 sqlc 重新生成前后的平台/全部业务生成目录、运行 Go 测试、开发资源与进程清理及发布产物/版本测试、前端及终端 JS lint、前后端契约测试、投资适配器 Node 测试和生产构建。它不要求工作区无未提交改动，也不自动运行浏览器测试。
 
 `SQLC_BIN` 可指定 sqlc 1.31.x 路径；未设置时查找 `.tools/bin/sqlc`，再使用 PATH。`GO_BIN` 可指定 Go 可执行文件。首次运行前先在 `web/` 执行 `npm ci`。部分 Go 测试使用本机临时 HTTP 服务，测试环境须允许监听 loopback 端口。
 
@@ -145,9 +145,13 @@ SQLC_BIN=/path/to/sqlc ./scripts/test.sh
 
 需要 Go 和 ShellCheck；脚本使用固定版本 actionlint，并检查工作流中的 shell 脚本及构建辅助脚本。可通过 `ACTIONLINT_BIN`、`SHELLCHECK_BIN` 指定本地工具。缺少 ShellCheck 时直接失败，不能把跳过 shell 检查的结果当作 CI 验证通过。
 
+actionlint v1.7.12 尚未识别 GitHub 的 `concurrency.queue`；`.github/actionlint.yaml` 仅对 Release 工作流中的这一属性忽略未知键诊断，其余诊断正常生效。
+
 ## 发布和部署验证
 
 `VERSION=v0.1.1 ./scripts/release.sh` 重新构建前端并生成 Linux amd64、arm64 压缩包、部署文件包及 SHA256 校验文件，输出到 `dist/release/v0.1.1/`。版本号需符合 `vMAJOR.MINOR.PATCH`，可带预发布后缀。Actions 的版本、权限、产物和部署步骤见[部署与发布](../doc/deployment.md)。
+
+Release 工作流传入 `BUILD_ARTIFACTS_DIR`，其 `amd64/`、`arm64/` 子目录分别保存本次 CI 导出的完整 artifact。`release.sh` 校验各目录的 `SHA256SUMS` 后直接复制二进制压缩包，并生成部署包与发布校验文件，不调用 Go 或 npm。`publish-release.sh` 在 Release 串行队列中创建 GitHub Release；仅最高稳定版将 GitHub Release 与 GHCR `latest` 更新到同一版本，旧版和预发布保留当前 `latest`。
 
 主分支推送或在 Actions 手动运行 **CI and Build** 会生成可下载的二进制和 Docker 镜像文件，保留在运行的 Artifacts 中 14 天。`scripts/export-build.sh` 从已构建的本地镜像提取二进制、执行 `docker save`，附带部署包和 SHA256 校验文件，输出到 `dist/build/`：
 
@@ -155,7 +159,7 @@ SQLC_BIN=/path/to/sqlc ./scripts/test.sh
 IMAGE=workbench:local VERSION=v0.0.0-dev.1 ARCH=amd64 ./scripts/export-build.sh
 ```
 
-`ARCH` 必须与镜像架构一致。镜像文件可用 `docker load --input` 导入；导出的二进制与镜像内程序相同。正式标签发布仍使用 `release.sh` 和 Release 工作流。
+`ARCH` 必须与镜像架构一致。镜像文件可用 `docker load --input` 导入；导出的二进制与镜像内程序相同。正式标签调用的 CI 也导出这些产物，后续 Release 复用它们组装发布包和多架构镜像。
 
 `deployment-smoke.py` 仅依赖 Python 3 标准库，使用随机端口、临时密码和独立工作空间，验证首次初始化、登录、健康探针、在线备份、退出，以及重建后的数据和凭据保留。容器模式用 `--pull never` 启动已经构建的应用镜像，支持默认 SQLite 与 `--database postgres`（验证默认 PostgreSQL Compose 健康依赖与数据保留）。PostgreSQL 模式会先拉取 Compose 中的 `postgres` 服务镜像。脚本检查非 root 用户；测试结束清理自己的 Compose 项目和临时卷。
 
@@ -295,9 +299,9 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 
 ### 投资账户管理器
 
-`investment-terminal.e2e.cjs` 在 Chromium 中加载仓库内的终端代码和实际 TradingView 库，验证主题、账户和下单面板，以及完整图表实例保留。增加 `--night` 会运行 Night 与 24H 时段回归；`--24h` 可单独运行全天行情回归。时段回归检查图表顶栏恰有常规、扩展、夜盘、全天四个选项且无说明项，并验证首次从日线常规切到扩展会自动进入 5 分钟并载入非空行情；Night 只用非空 Futu K 线，24H 使用非空虚构 Schwab/Futu K 线并检查 04:00/20:00 ET 边界过滤、跨午夜合并、真实可见图表数据、缓存会话切回、1/5/15/30 分钟及不支持周期回退、夜盘关闭和非正股门控、主题及图表高度。另检查 10 分钟周期已移除；桌面详情面板验证盘前/盘后相对常规收盘的涨跌、夜盘零涨跌、缺失成交时间和日统计不被夜盘替换。库分包补丁与生产代理读取同一兼容规则，Go 测试另覆盖压缩、磁盘资源和 ETag。`--night --mobile`、`--night --webkit` 另外覆盖 320/390/844px 窄屏、横屏和菜单可达性。券商与 Futu API 均由脚本拦截为虚构响应；不读取凭据、不连接真实账户、不提交交易。
+`investment-terminal.e2e.cjs` 在 Chromium 中加载仓库内的终端代码和实际 TradingView 库，验证主题、账户和下单面板，以及完整图表实例保留。增加 `--night` 会运行 Night 与 24H 时段回归；`--24h` 可单独运行全天行情回归。时段回归检查图表顶栏恰有常规、扩展、夜盘、全天四个选项且无说明项，并验证首次从日线常规切到扩展会自动进入 5 分钟并载入非空行情；Night 只用非空 Futu K 线，24H 使用非空虚构 Schwab/Futu K 线并检查 04:00/20:00 ET 边界过滤、跨午夜合并、真实可见图表数据、缓存会话切回、1/5/15/30 分钟及不支持周期回退、夜盘关闭和非正股门控、主题及图表高度。另检查 10 分钟周期已移除；桌面详情面板验证盘前/盘后相对常规收盘的涨跌、夜盘零涨跌、主报价及涨跌基准、缺失成交时间、日统计不被夜盘替换，以及其他标的有报价时当前标的仍能正确显示「没有交易」。库分包补丁与生产代理读取同一兼容规则，Go 测试另覆盖压缩、磁盘资源和 ETag。`--night --mobile`、`--night --webkit` 另外覆盖 320/390/844px 窄屏、横屏和菜单可达性。券商与 Futu API 均由脚本拦截为虚构响应；不读取凭据、不连接真实账户、不提交交易。
 
-`--app --preferences` 使用临时工作空间的真实数据库，验证标的、周期、行情时段、指标、画线、自选表、交易账户和 TradingView 偏好在空白浏览器环境中的恢复；之后修改、删除并刷新，检查服务端保存的新内容。`--state` 检查图表选择的服务端保存和恢复。
+`--app --preferences` 使用临时工作空间的真实数据库，验证标的、周期、行情时段、自选表、交易账户和 TradingView 用户设置在空白浏览器环境中的恢复；之后修改并刷新，检查服务端保存的新内容。同时预存旧版布局快照，确认终端 GET 排除它、没有布局 PUT，且数据库中的原快照和版本保持不变。`--state` 检查图表选择的服务端保存和恢复。
 
 ```bash
 GOCACHE=/tmp/workbench-go-cache go build -o /tmp/workbench-investment-preferences-test ./cmd/workbench

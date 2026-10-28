@@ -18,7 +18,7 @@ function validateEntries(body) {
 
 export async function loadPreferences({ request = fetch, report = () => {} } = {}) {
     const [response, csrf] = await Promise.all([
-        request(ENDPOINT, { credentials: 'same-origin', signal: AbortSignal.timeout(10000) }),
+        request(`${ENDPOINT}?includeLayout=false`, { credentials: 'same-origin', signal: AbortSignal.timeout(10000) }),
         request('/api/auth/csrf', { credentials: 'same-origin', signal: AbortSignal.timeout(10000) }),
     ]);
     if (!response.ok || !csrf.ok) throw new Error('无法读取投资设置，请重新加载。');
@@ -28,11 +28,12 @@ export async function loadPreferences({ request = fetch, report = () => {} } = {
     const writer = Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
     const values = new Map(Object.entries(entries).map(([name, entry]) => [name, entry.value]));
     const writes = new Map(), errors = new Map();
+    const transmitting = new Map();
     let timer, running;
     const notify = () => report([...errors.values()].find(error => error.conflict) || [...errors.values()][0] || null);
-    const transmit = async draft => {
+    const sendDraft = async draft => {
         const body = JSON.stringify(draft);
-        // Fetch keepalive has a 64 KiB quota. Large layouts save during normal use.
+        // Keepalive requests share a 64 KiB quota; larger user settings use a normal request.
         const send = () => request(ENDPOINT, {
             method: 'PUT', credentials: 'same-origin', keepalive: new TextEncoder().encode(body).length < 60000,
             signal: AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token }, body,
@@ -47,11 +48,21 @@ export async function loadPreferences({ request = fetch, report = () => {} } = {
         }
         const result = await response.json().catch(() => null);
         if (!response.ok) {
-            const error = new Error(result?.message || '无法保存投资设置，请重试。');
+            // A proxy error page is not JSON; keep its status so the cause is visible.
+            const error = new Error(result?.message || `无法保存投资设置（HTTP ${response.status}），请重试。`);
             error.conflict = response.status === 409;
             throw error;
         }
         if (!Number.isSafeInteger(result?.revision) || !Number.isSafeInteger(result?.sequence) || result.sequence < draft.sequence) throw new Error('无法确认投资设置已保存，请重试。');
+    };
+    const transmit = draft => {
+        if (transmitting.has(draft)) return transmitting.get(draft);
+        const pending = sendDraft(draft).then(() => {
+            const write = writes.get(draft.name);
+            if (write?.pending === draft) write.pending = null;
+        }).finally(() => { transmitting.delete(draft); });
+        transmitting.set(draft, pending);
+        return pending;
     };
     const flush = () => {
         clearTimeout(timer);
@@ -63,7 +74,6 @@ export async function loadPreferences({ request = fetch, report = () => {} } = {
                 const draft = next.pending;
                 try {
                     await transmit(draft);
-                    if (next.pending === draft) next.pending = null;
                     errors.delete(next.name);
                 } catch (error) {
                     errors.set(next.name, error);
@@ -78,6 +88,10 @@ export async function loadPreferences({ request = fetch, report = () => {} } = {
         has: name => values.has(name),
         set(name, value) {
             if (values.has(name) && JSON.stringify(values.get(name)) === JSON.stringify(value)) return;
+            if (errors.has(name) && !errors.get(name).conflict) {
+                errors.delete(name);
+                notify();
+            }
             values.set(name, structuredClone(value));
             let write = writes.get(name);
             if (!write) {

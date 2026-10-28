@@ -56,7 +56,7 @@ test('Schwab sparse updates preserve daily OHLC and volume in the published quot
 
 test('night quote uses ntc fields without replacing Schwab daily statistics or inventing a time', () => {
     const schwab = {
-        lp: 100, ch: 2, chp: 2.04, prev_close_price: 98,
+        lp: 100, regular_price: 100, ch: 2, chp: 2.04, prev_close_price: 98,
         open_price: 99, high_price: 103, low_price: 97, volume: 5000,
     };
     const merged = mergeQuoteValues(schwab, {
@@ -74,6 +74,89 @@ test('night quote uses ntc fields without replacing Schwab daily statistics or i
         Object.fromEntries(['open_price', 'high_price', 'low_price', 'volume'].map(key => [key, merged[key]])),
         { open_price: 99, high_price: 103, low_price: 97, volume: 5000 },
     );
+    assert.equal(merged.lp, 100, 'the overnight trade is the main price shown by the details widget');
+    assert.deepEqual([merged.ch, merged.chp], [0, 0], 'a zero move from the regular price must be retained');
+});
+
+test('night quote shows the overnight price with change from the latest regular close', () => {
+    const schwab = { lp: 50.52, regular_price: 50.52, ch: 2.19, chp: 4.53, prev_close_price: 48.33, volume: 36996400 };
+    const mismatched = mergeQuoteValues(schwab, { lp: 51.98, ch: 9, chp: 99 }, { equity: true, overnightEnabled: true, now: nightTime });
+    assert.equal(mismatched.lp, 51.98);
+    assert.equal(mismatched.ntc, 51.98);
+    assert.equal(mismatched.volume, 36996400);
+    assert(Math.abs(mismatched.ch - 1.46) < 1e-9);
+    assert(Math.abs(mismatched.chp - (51.98 / 50.52 - 1) * 100) < 1e-9);
+
+    for (const futu of [{ lp: 51.98, ch: 9 }, { lp: 51.98, chp: 99 }, { lp: 51.98 }]) {
+        const partial = mergeQuoteValues(schwab, futu, { equity: true, overnightEnabled: true, now: nightTime });
+        assert(Math.abs(partial.ch - 1.46) < 1e-9);
+        assert(Math.abs(partial.chp - (51.98 / 50.52 - 1) * 100) < 1e-9);
+    }
+
+    const previousClose = mergeQuoteValues({ prev_close_price: 48.33 }, { lp: 51.98, ch: 9 }, { equity: true, overnightEnabled: true, now: nightTime });
+    assert(Math.abs(previousClose.ch - 3.65) < 1e-9);
+    assert(Math.abs(previousClose.chp - (51.98 / 48.33 - 1) * 100) < 1e-9);
+
+    const noBaseline = mergeQuoteValues({}, { lp: 51.98, ch: 9, chp: 99 }, { equity: true, overnightEnabled: true, now: nightTime });
+    assert.deepEqual([noBaseline.lp, noBaseline.ch, noBaseline.chp, noBaseline.nch, noBaseline.nchp], [51.98, null, null, 9, 99]);
+
+    const noFutu = mergeQuoteValues(schwab, undefined, { equity: true, overnightEnabled: true, now: nightTime });
+    assert.deepEqual([noFutu.lp, noFutu.ch, noFutu.ntc], [50.52, 2.19, null]);
+
+    const regularSession = mergeQuoteValues(schwab, { lp: 51.98, ch: 9, chp: 99 }, { equity: true, overnightEnabled: true, now: regularTime });
+    assert.deepEqual([regularSession.lp, regularSession.ch, regularSession.chp, regularSession.ntc], [50.52, 2.19, 4.53, null]);
+    const disabled = mergeQuoteValues(schwab, { lp: 51.98, ch: 9, chp: 99 }, { equity: true, overnightEnabled: false, now: nightTime });
+    assert.deepEqual([disabled.lp, disabled.ch, disabled.chp, disabled.ntc], [50.52, 2.19, 4.53, null]);
+    const nonEquity = mergeQuoteValues(schwab, { lp: 51.98, ch: 9, chp: 99 }, { equity: false, overnightEnabled: true, now: nightTime });
+    assert.deepEqual([nonEquity.lp, nonEquity.ch, nonEquity.chp, nonEquity.ntc], [50.52, 2.19, 4.53, undefined]);
+});
+
+test('night change falls back to previous close when Schwab only has an extended trade', () => {
+    const quotes = [
+        schwabRestQuoteValues({ assetMainType: 'EQUITY', quote: { lastPrice: 105, closePrice: 100 } }),
+        schwabRestQuoteValues({ assetMainType: 'EQUITY', quote: { mark: 105, closePrice: 100 } }),
+        schwabStreamQuoteValues('LEVELONE_EQUITIES', { '3': 105, '12': 100 }, { lp: 105 }),
+    ];
+    for (const schwab of quotes) {
+        assert.equal(schwab.lp, 105, 'the normal quote retains its last-price fallback');
+        const merged = mergeQuoteValues(schwab, { lp: 106 }, { equity: true, overnightEnabled: true, now: nightTime });
+        assert.equal(merged.lp, 106);
+        assert.equal(merged.ch, 6);
+        assert(Math.abs(merged.chp - 6) < 1e-9);
+        assert.equal(Object.hasOwn(merged, 'regular_price'), false, 'the internal baseline is not a TV quote field');
+
+        delete schwab.prev_close_price;
+        const noBaseline = mergeQuoteValues(schwab, { lp: 106 }, { equity: true, overnightEnabled: true, now: nightTime });
+        assert.deepEqual([noBaseline.lp, noBaseline.ch, noBaseline.chp], [106, null, null]);
+    }
+});
+
+test('night change retains the REST regular price across sparse stream updates', async t => {
+    const events = new EventTarget();
+    const feed = new Datafeed({
+        events, stream: { ready: false }, now: () => nightTime, overnightRequest: enabledOvernight,
+        request: async () => Response.json({ AAPL: {
+            assetMainType: 'EQUITY', quote: { lastPrice: 105, closePrice: 100 },
+            regular: { regularMarketLastPrice: 104 },
+        } }),
+    });
+    t.after(() => feed.destroy());
+    await feed.ensureFutuOverlay();
+    await getQuotes(feed, ['AAPL']);
+    const updates = [];
+    feed.subscribeQuotes(['AAPL'], [], quotes => updates.push(...quotes), 'details');
+    events.dispatchEvent(new CustomEvent('FUTU_QUOTE', { detail: { symbol: 'AAPL', quote: { lp: 106 } } }));
+    const emit = fields => events.dispatchEvent(new CustomEvent('LEVELONE_ANY', { detail: {
+        service: 'LEVELONE_EQUITIES', timestamp: nightTime, content: [{ key: 'AAPL', ...fields }],
+    } }));
+
+    emit({ '3': 105, '12': 100 });
+    assert.equal(updates.at(-1).v.ch, 2);
+    assert(Math.abs(updates.at(-1).v.chp - (106 / 104 - 1) * 100) < 1e-9);
+    assert.equal(Object.hasOwn(updates.at(-1).v, 'regular_price'), false);
+
+    emit({ '29': 103 });
+    assert.equal(updates.at(-1).v.ch, 3);
 });
 
 test('pre-market change uses the latest regular price and the provider trade time', () => {

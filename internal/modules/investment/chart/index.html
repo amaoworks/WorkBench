@@ -39,9 +39,8 @@
   <link rel="modulepreload" href="/investment/terminal/watchlists.js">
   <link rel="modulepreload" href="/investment/terminal/chart-state.js">
   <link rel="modulepreload" href="/investment/terminal/preferences.js">
-  <link rel="modulepreload" href="/investment/terminal/chart-layout.js">
   <script>
-    window.terminalPrefetch = Object.fromEntries(["/api/modules/investment/preferences", "/api/auth/csrf"].map(url => {
+    window.terminalPrefetch = Object.fromEntries(["/api/modules/investment/preferences?includeLayout=false", "/api/auth/csrf"].map(url => {
       const response = fetch(url, { credentials: "same-origin", signal: AbortSignal.timeout(10000) });
       response.catch(() => {});
       return [url, response];
@@ -72,7 +71,6 @@
     import { loadWatchlists, bindWatchlists } from "/investment/terminal/watchlists.js";
     import { loadChartState, saveChartState, requiresMinuteResolution } from "/investment/terminal/chart-state.js";
     import { loadPreferences } from "/investment/terminal/preferences.js";
-    import { bindChartLayout } from "/investment/terminal/chart-layout.js";
 
     async function startTerminal() {
     window.terminalLoad.step('preferences');
@@ -88,7 +86,7 @@
       retry.textContent = error.conflict ? '加载工作台版本' : '重试保存';
       retry.onclick = () => {
         if (error.conflict || !preferences) location.reload();
-        else void Promise.resolve(layoutSync?.capture()).then(() => preferences.retry());
+        else void preferences.retry();
       };
     };
     const prefetched = window.terminalPrefetch || {};
@@ -112,7 +110,7 @@
       status.hidden = false;
       window.parent.postMessage({ type: 'workbench.schwab.status_changed' }, location.origin);
     });
-    let broker, widget, unbindTheme, watchlistSync, layoutSync, sessionMenu, intervalSubscription, symbolSubscription, sessionResolutionTimer, sessionToastTimer, disposed = false, chartInitialized = false;
+    let broker, widget, unbindTheme, watchlistSync, sessionMenu, intervalSubscription, symbolSubscription, sessionResolutionTimer, sessionToastTimer, disposed = false, chartInitialized = false;
     let resolvedSession = initialChartState.session, pendingSession = null, latestSessionResolution;
     const sessionToast = document.getElementById('session-toast');
     const showSessionToast = message => {
@@ -125,11 +123,10 @@
     const intervalNotice = session => session === EQUITY_24H_SESSION
       ? '全天行情仅支持 1、5、15、30 分钟，已切换到 5 分钟'
       : session === 'extended' ? '扩展行情已切换到 5 分钟' : '夜盘仅支持 1、5、15、30 分钟，已切换到 5 分钟';
-    const persistChartState = (includeLayout = true) => {
+    const persistChartState = () => {
       if (!chartInitialized || disposed) return;
       const chart = widget.activeChart();
       saveChartState({ symbol: chart.symbol(), resolution: String(chart.resolution()), session: activeSession() }, preferences);
-      if (includeLayout) layoutSync?.schedule();
     };
     const ensureSessionResolution = session => {
       if (!requiresMinuteResolution(session) || NIGHT_RESOLUTIONS.has(String(widget.activeChart().resolution()))) return;
@@ -270,9 +267,7 @@
     };
     window.addEventListener('pagehide', () => {
       persistChartState();
-      const capturedLayout = layoutSync?.dispose();
       preferences.leave();
-      void capturedLayout?.then(() => preferences.leave());
       disposed = true;
       clearTimeout(sessionResolutionTimer);
       clearTimeout(sessionToastTimer);
@@ -284,9 +279,7 @@
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState !== 'hidden' || disposed) return;
       persistChartState();
-      const capturedLayout = layoutSync?.capture();
-      if (capturedLayout) void capturedLayout.then(() => preferences.flush());
-      else void preferences.flush();
+      void preferences.flush();
       void watchlistSync?.flush();
     });
     const onIntervalChanged = interval => {
@@ -315,14 +308,12 @@
     widget = new tvWidget({
       datafeed,
       container: "tv_chart_container",
-      library_path: "/charting_library/quotes-v1/",
+      library_path: "/charting_library/quotes-v2/",
       custom_css_url: "/investment/terminal/custom.css",
       symbol: initialSymbol,
       interval: initialChartState.resolution,
       overrides: { 'mainSeriesProperties.sessionId': initialChartState.session },
-      saved_data: preferences.get('layout') || undefined,
       settings_adapter: preferences.settingsAdapter(),
-      auto_save_delay: 1,
       theme,
       locale: "zh",
       custom_translate_function: (originalText) => {
@@ -383,7 +374,7 @@
       onError: error => console.error('创建行情时段菜单失败', error),
     });
     if (latestSessionResolution) sessionMenu.setResolvedSession(latestSessionResolution.session, latestSessionResolution.nightAvailable, latestSessionResolution.fullDayAvailable);
-    unbindTheme = bindTheme(widget, theme, window, () => layoutSync?.schedule());
+    unbindTheme = bindTheme(widget, theme, window);
     const showWatchlistError = message => {
       const panel = document.getElementById('watchlist-status');
       panel.hidden = false;
@@ -392,8 +383,7 @@
     widget.chartReady().then(async () => {
       releaseBroker();
       if (disposed) return;
-      // A saved layout includes its interval and session. Keep the separately
-      // saved selections authoritative, including a newer URL symbol.
+      // Restore the saved selections; an explicit URL symbol takes precedence.
       if (widget.activeChart().symbol() !== initialSymbol) {
         await widget.activeChart().setSymbol(initialSymbol);
       }
@@ -413,10 +403,6 @@
       chartInitialized = true;
       const symbolInfo = widget.activeChart().symbolExt();
       if (symbolInfo) onSymbolChanged(symbolInfo);
-      layoutSync = bindChartLayout(widget, preferences, {
-        beforeCapture: () => persistChartState(false), report: reportPreferences,
-      });
-      layoutSync.capture();
       // The chart can paint before watchlist restoration. Keeping the cover up
       // waits on another widget bundle and hides an already drawn chart.
       window.terminalLoad.ready();

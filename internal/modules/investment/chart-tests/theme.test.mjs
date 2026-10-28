@@ -103,13 +103,3 @@ test('a failed theme change does not block later updates', async () => {
     assert.equal(f.host.document.documentElement.style.colorScheme, 'dark');
     dispose();
 });
-
-test('the shell theme is reapplied after loading a differently themed saved layout', async () => {
-    const f = fixture();
-    let applied = 0;
-    const dispose = bindTheme(f.widget, 'light', f.host, () => applied++);
-    await setImmediate();
-    assert.deepEqual(f.calls, ['light']);
-    assert.equal(applied, 1);
-    dispose();
-});

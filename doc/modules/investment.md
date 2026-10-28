@@ -56,7 +56,7 @@ OpenD 容器封装在源码仓库根目录 [futu-opend](https://github.com/amaow
 
 之后的十五秒轮询与 ACCT_ACTIVITY 刷新通常读取最近 3 天；订阅确认（ACCT_ACTIVITY 的命令响应和 `SUBSCRIBED` 消息）不是账户变化，不触发刷新。若有更早的非终态订单，则从该订单起读取，最多覆盖 180 天，按订单 ID 合并进已有结果。同一终端内的并发订单读取复用同一请求。Schwab 没有订单游标，单次请求 `maxResults=1000`，达到上限时递归拆分时间范围并按订单 ID 去重；无法完整读取时明确报错，不展示被截断的完整列表。
 
-图表的标的、周期、行情时段、指标、画线和布局自动保存到工作台数据库，刷新、重启工作台或换浏览器后恢复。TradingView 的图表外观、收藏、交易显示、下单偏好和面板布局通过设置适配器保存在服务端；不再写入浏览器本地存储。首次使用默认 AAPL、日线、常规时段；终端网址的 `symbol` 参数优先于保存的标的，保存的周期和行情时段优先于图表布局中的旧选择。夜盘覆盖关闭或标的不支持保存的 Night/24H 时，恢复到常规时段并更新保存状态。恢复图表后重新应用工作台主题。
+图表的标的、周期和行情时段按项保存到工作台数据库，刷新、重启工作台或换浏览器后恢复。TradingView 通过 `settings_adapter` 输出的用户设置（图表样式、收藏、交易显示、下单偏好和面板设置等）独立保存到服务端，不写入浏览器本地存储。终端不保存或加载完整图表布局，已添加的指标和画线不会在刷新后自动恢复；旧 `layout` 快照保留在数据库中，终端读取设置时通过 `includeLayout=false` 排除。首次使用默认 AAPL、日线、常规时段；终端网址的 `symbol` 参数优先于保存的标的。夜盘覆盖关闭或标的不支持保存的 Night/24H 时，恢复到常规时段并更新保存状态。图表主题跟随工作台。
 
 无法读取服务端设置时显示重新加载入口；保存失败时显示「重试保存」，其他窗口已保存同一项时显示「加载工作台版本」。各项独立保存，同一页面迟到的请求不会覆盖较新的改动；换浏览器在打开或刷新时恢复。
 
@@ -84,9 +84,9 @@ OpenD 容器封装在源码仓库根目录 [futu-opend](https://github.com/amaow
 
 Night 视图只读取 Futu 的历史数据；24H 历史并发读取 Schwab 与 Futu，任一请求失败都会报错；读取期间任一行情连接变更都会丢弃旧结果。24H 实时更新按 ET 时段分源，并以独立会话缓存，避免 Night、24H 和普通时段互相污染。
 
-图表、自选表和详情使用同一 Datafeed 提供行情。主报价、当日开高低及成交量优先使用 Schwab；冷启动缺少报价时批量读取 Schwab REST，随后接收 Streamer 更新，迟到的 REST 不覆盖新报价。盘前/盘后报价映射为 TV 的 `rtc/rch/rchp/rtc_time`，涨跌以最近常规时段价格为基准，时间使用源端成交时间。富途夜盘映射为当前库使用的 `ntc/nch/nchp`，不把夜盘高低价或成交量替换为当日统计；夜盘没有可确认的成交时间，因此不填 `ntc_time`。字段缺失保持缺失，零涨跌保留，无任何有效报价时返回暂无行情数据。自选表和详情单独订阅富途 BASIC 报价，无需依赖夜盘 K 线订阅；取消一个报价监听不会释放仍有用户的 K 线租约。时段状态沿用终端声明的美东时间表，夜盘状态随夜盘开关和工作日边界变化。
+图表、自选表和详情使用同一 Datafeed 提供行情。常规主报价、当日开高低及成交量使用 Schwab；冷启动缺少报价时批量读取 Schwab REST，随后接收 Streamer 更新，迟到的 REST 不覆盖新报价。盘前/盘后报价映射为 TV 的 `rtc/rch/rchp/rtc_time`，涨跌以最近常规时段价格为基准，时间使用源端成交时间。富途夜盘映射为当前库使用的 `ntc/nch/nchp`；夜盘期间，有效的富途夜盘成交价同时作为主报价，主报价的涨跌额和涨跌幅统一按 Schwab 最近常规价格计算，缺少该价格时使用前收盘价，再缺少则留空。当日开高低和成交量仍使用 Schwab。夜盘没有可确认的成交时间，因此不填 `ntc_time`。字段缺失保持缺失，零涨跌保留，无任何有效报价时返回暂无行情数据。自选表和详情单独订阅富途 BASIC 报价，无需依赖夜盘 K 线订阅；取消一个报价监听不会释放仍有用户的 K 线租约。时段状态沿用终端声明的美东时间表，夜盘状态随夜盘开关和工作日边界变化。
 
-当前 TV 的 `symbol-details.c9b8b9183b542f763ac4.js` 在详情状态中遗漏四个夜盘报价字段。库代理按 `chart/tv-quotes-compat.json` 对这一已确认分包补齐字段，未知分包保持原样；不改面板布局。终端采用 `quotes-v1/` 库路径刷新浏览器已有分包，服务端仍复用原始上游资源缓存。库升级时用真实 TV 回归确认该兼容修复是否仍有必要。
+当前 TV 的 `symbol-details.a7454a82deebf6dcbfda.js` 在详情状态中遗漏四个夜盘报价字段。库代理按 `chart/tv-quotes-compat.json` 对这一已确认分包补齐字段，未知分包保持原样；不改面板布局。终端采用 `quotes-v2/` 库路径刷新浏览器已有分包，服务端仍复用原始上游资源缓存并兼容 `quotes-v1/` 请求。库升级时用真实 TV 回归确认分包和兼容修复，回归脚本遇到未验证的详情分包会报错。
 
 自选表自动保存到工作台数据库。新增、删除、重命名、标的顺序、分组和当前选中的列表，在刷新、重启工作台或另一台设备打开时恢复。第一次使用时保存图表库的默认列表；之后以工作台保存的内容为准，空列表也会保留。接入使用 [TradingView Watchlist API](https://www.tradingview.com/charting-library-docs/latest/trading_terminal/Watch-List/)。
 
@@ -117,7 +117,7 @@ Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | GET/PUT | `/api/modules/investment/watchlists` | 工作台自选表读取/保存（需要编辑版本、会话和序号） |
-| GET/PUT | `/api/modules/investment/preferences` | 投资偏好读取/按项保存；`chart`、`layout`、`account`、`view` 和 `tv:` 设置键，保存需要编辑版本、会话和序号 |
+| GET/PUT | `/api/modules/investment/preferences` | 投资偏好读取/按项保存；`chart`、`account`、`view` 和 `tv:` 设置键，保存需要编辑版本、会话和序号。`layout` 保留旧版兼容，终端 GET 使用 `?includeLayout=false` 排除旧快照 |
 | GET | `/api/modules/investment/schwab` | 应用配置、连接状态、`reauthorizationRequired` 及最近错误 |
 | PUT | `/api/modules/investment/schwab` | 保存 `appKey`、`appSecret`、`callbackUrl` |
 | POST | `/api/modules/investment/schwab/disconnect` | 清除令牌和连接 |
@@ -168,7 +168,7 @@ Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后
 
 模块构造时要求数据库和通知服务。价格监控通过行情接口读取交易时段与报价，Schwab 适配器在提交前保护授权版本检查。Streamer 接收凭据读取、上游地址和日志依赖；Futu 网关接收配置读取、查询、OpenD 服务和日志依赖。配置表为 `investment_schwab` 与 `investment_futu`，夜盘 K 线缓存在 `investment_futu_bars`。升级迁移移除历史演示表 `investment_quotes` 和 `investment_summary`，旧迁移文件保留。SQL 和 sqlc 生成代码均在模块目录。
 
-React 投资页目前不读取偏好的 `view` 项（接口与 schema 保留，供后续页面铺满使用）；图表、布局、账户和 TradingView 设置由终端各自校验。删除偏好后的空值保留版本号，后续保存仍参与版本冲突检查。
+React 投资页目前不读取偏好的 `view` 项（接口与 schema 保留，供后续页面铺满使用）；图表选择、账户和 TradingView 设置由终端各自校验。删除偏好后的空值保留版本号，后续保存仍参与版本冲突检查。
 
 Go 测试覆盖配置、OAuth、代理、连接确认、断线恢复和配置变更竞态；Node 测试直接导入终端 JS，覆盖交易语义、未确认的交易结果、真实持仓、订单时间分段、跨账户异步响应、订阅重放及历史/实时 K 线衔接。`./scripts/test.sh` 执行 sqlc 漂移检查、Go 测试、React/终端 JS lint、Node 测试与生产构建。模拟服务验证不替代真实券商端到端验收。
 

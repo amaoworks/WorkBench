@@ -77,7 +77,7 @@ contracts → 标准库
 
 前端业务目录使用共享组件、HTTP 客户端和平台描述类型，通过 `*.module.ts` 提供页面、Widget、图标和可选设置。Shell 根据平台返回的标识映射本地注册项，不包含具体业务页面实现。模块之间不直接导入彼此实现。组件选型、页面状态、可达性和响应式约定见[前端界面规范](frontend-guidelines.md)。
 
-[架构测试](../internal/modules/architecture_test.go) 当前检查后端业务跨模块导入和直接依赖能力/app 实现。SQL 表归属及前端导入边界仍需审查；共享数据库连接没有提供模块级权限隔离。
+[架构测试](../internal/modules/architecture_test.go) 检查后端业务跨模块导入和直接依赖能力/app 实现；[ESLint 配置](../web/eslint.config.js) 按模块目录生成前端跨模块及 app 导入限制。SQL 表归属仍需审查；共享数据库连接没有提供模块级权限隔离。
 
 ## 装配与启停
 

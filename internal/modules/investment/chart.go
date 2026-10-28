@@ -30,9 +30,12 @@ func newTVProxy(origin, cacheDir string) *httputil.ReverseProxy {
 		director(req)
 		// Versioned library_path refreshes browser bundles while retaining the
 		// original upstream/cache paths and the existing terminal layout.
-		if rest, ok := strings.CutPrefix(req.URL.Path, "/charting_library/quotes-v1/"); ok {
-			req.URL.Path = "/charting_library/" + rest
-			req.URL.RawPath = ""
+		for _, prefix := range []string{"/charting_library/quotes-v1/", "/charting_library/quotes-v2/"} {
+			if rest, ok := strings.CutPrefix(req.URL.Path, prefix); ok {
+				req.URL.Path = "/charting_library/" + rest
+				req.URL.RawPath = ""
+				break
+			}
 		}
 		if path.Base(req.URL.Path) == detailsQuotesPatch.Bundle {
 			req.Header.Del("Range")
