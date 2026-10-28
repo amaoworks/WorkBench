@@ -282,7 +282,6 @@ function ArticlesEmpty({
     return (
       <EmptyState
         title="暂无订阅源"
-        description="添加 RSS 或新闻搜索订阅源后，资讯会显示在这里。"
         action={
           <Button onClick={onAddSource}>
             <Plus size={15} />
@@ -295,8 +294,7 @@ function ArticlesEmpty({
     return (
       <EmptyState
         icon={<Search size={22} />}
-        title="没有符合条件的资讯"
-        description="调整或清除筛选条件后重试。"
+        title="无匹配资讯"
         action={
           <Button variant="secondary" onClick={onClearFilters}>
             清除筛选
@@ -307,7 +305,6 @@ function ArticlesEmpty({
   return (
     <EmptyState
       title="暂无资讯"
-      description="订阅源尚未抓取到资讯，可立即刷新。"
       action={
         <Button variant="secondary" disabled={refreshing} onClick={onRefresh}>
           <RefreshCw size={15} />

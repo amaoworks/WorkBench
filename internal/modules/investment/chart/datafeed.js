@@ -6,6 +6,7 @@ import { get24HourBars, getFutuNightBars, getSchwabBars } from './datafeed-bars.
 import { mergeQuoteValues, quoteData, schwabRestQuoteValues, schwabStreamQuoteValues } from './datafeed-quotes.js';
 
 const SUPPORTED_RESOLUTIONS = ['1', '5', '15', '30', '1D', '1W', '1M'];
+const SUBSCRIBE_BATCH_MS = 100;
 
 function olderFutuGeneration(candidate, current) {
     const parts = generation => {
@@ -402,7 +403,10 @@ export default class Datafeed {
             for (const symbol of symbols) this.publishQuote(symbol);
         }, 30_000);
     }
-    queueSubscriptions(delay = 0) {
+    // Widgets subscribe one after another while the terminal starts (watchlist,
+    // chart, details, order panel). A short batch window sends their symbols in
+    // one ADD per service instead of one command per widget.
+    queueSubscriptions(delay = SUBSCRIBE_BATCH_MS) {
         if (!this.streamReady || this.subscribeTimer || this.destroyed) return;
         this.subscribeTimer = setTimeout(async () => {
             this.subscribeTimer = undefined;

@@ -268,7 +268,7 @@ async function run() {
       await page.evaluate(id => { window.__startupVisitId = id; }, visit);
       const started = process.hrtime.bigint();
       await page.getByRole("link", { name: "投资", exact: true }).click();
-      const terminal = page.frameLocator("iframe[title='TradingView 投资终端']");
+      const terminal = page.frameLocator("iframe[title='投资终端']");
       await terminal.locator("#terminal-loading").waitFor({ state: "hidden", timeout: startupTimeout });
       await terminal.locator("#tv_chart_container iframe").first().waitFor({ state: "attached", timeout: startupTimeout });
       const chart = terminal.frameLocator("#tv_chart_container iframe").first();
@@ -308,7 +308,7 @@ async function run() {
     async function goHome() {
       await page.getByRole("link", { name: "总览", exact: true }).click();
       await page.getByRole("heading", { name: OVERVIEW_HEADING, exact: true }).waitFor({ timeout: startupTimeout });
-      await page.locator("iframe[title='TradingView 投资终端']").waitFor({ state: "detached", timeout: 10000 });
+      await page.locator("iframe[title='投资终端']").waitFor({ state: "detached", timeout: 10000 });
     }
 
     await openInvestment("cold-first", "冷首次打开");
@@ -329,7 +329,7 @@ async function run() {
     await terminalRequest;
     await page.getByRole("link", { name: "总览", exact: true }).click();
     await page.getByRole("heading", { name: OVERVIEW_HEADING, exact: true }).waitFor({ timeout: startupTimeout });
-    await page.locator("iframe[title='TradingView 投资终端']").waitFor({ state: "detached", timeout: 10000 });
+    await page.locator("iframe[title='投资终端']").waitFor({ state: "detached", timeout: 10000 });
     fullResourceTimings.push({ visit: "quick-abandon", resources: await visitResourceTimings(page, "quick-abandon") });
     await openInvestment("quick-reopen", "快速离开后重开");
 

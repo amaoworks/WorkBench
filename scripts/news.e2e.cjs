@@ -394,10 +394,8 @@ async function expectFormControlStyles(page, reference, label) {
       if (width < 600) await page.getByRole("button", { name: "打开导航", exact: true }).waitFor();
       for (const dark of [false, true]) {
         if (await page.evaluate(() => document.documentElement.classList.contains("dark")) !== dark) {
-          // Theme choices live in the account menu of the top bar.
-          await page.getByRole("button", { name: "账户菜单", exact: true }).click();
-          await page.getByRole("menuitemradio", { name: dark ? "深色" : "浅色", exact: true }).click();
-          await page.keyboard.press("Escape");
+          // The theme follows the system by default; switch the system scheme.
+          await page.emulateMedia({ colorScheme: dark ? "dark" : "light" });
           await page.waitForFunction((expected) => document.documentElement.classList.contains("dark") === expected, dark);
         }
         for (const text of ["", "搜索标题或内容"]) {

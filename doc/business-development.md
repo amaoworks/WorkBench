@@ -101,7 +101,7 @@ Registry 通过 `./*/*.module.ts` 收集声明，校验模块和资源标识。�
 
 ## 外部模块
 
-当前仅从项目代码和文件注册新业务，不开放通过网址新增外部模块。已保存的外部模块仍以独立 HTTP 服务运行，不导入 `workbench/internal/...`，也不编入核心二进制；宿主保留管理和页面加载兼容。现行接口见[接口与契约](contracts.md)，远端 v1 类型见 [contracts/external.go](../internal/contracts/external.go)，第一阶段设计与验收见[历史记录](archive/external-modules-phase-1.md)。[examples/external-module](../examples/external-module/README.md) 用于兼容测试。
+当前仅从项目代码和文件注册新业务，不开放通过网址新增外部模块。已保存的外部模块仍以独立 HTTP 服务运行，不导入 `workbench/internal/...`，也不编入核心二进制；宿主保留管理和页面加载兼容。现行接口见[接口与契约](contracts.md)，远端 v1 类型见 [contracts/external.go](../internal/contracts/external.go)，第一阶段设计与协议见[历史记录](archive/external-modules-phase-1.md)。[examples/external-module](../examples/external-module/README.md) 用于兼容测试。
 
 前端 `web/src/modules/registry.ts` 仍只收集内置页面。外部页面走 `/apps/{id}/{pageName}` 和通用 iframe；未知图标回退到宿主默认图标。设置弹窗在业务停用时保持可开；启用超时显示 pending，不能显示成功。
 

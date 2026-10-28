@@ -3,7 +3,7 @@
 > **Deprecated（已废弃）**：通过网址在设置页动态接入外部模块的能力已取消；`POST /api/modules/external` 返回 404。现行方式是进程内模块（见 [`examples/external-module`](../../examples/external-module) 仅作兼容测试样例，以及 `internal/modules/<id>/` + `web/src/modules/<id>/`）。下文为 2026-09-13 阶段历史记录，不作为当前开发指南。
 
 
-记录时间：2026-09-13。本文保留第一阶段当时的设计、执行计划与验收结果。
+记录时间：2026-09-13。本文保留第一阶段当时的设计与协议。
 
 ## 当前兼容范围
 
@@ -12,7 +12,7 @@
 - 兼容测试通过内部 `Registry.Attach` 构造注册记录，不代表产品存在公开新增入口。测试方法见 [外部模块示例](../../examples/external-module/README.md) 和 [脚本说明](../../scripts/README.md#外部模块)。
 - 现行行为见[架构与目录](../architecture.md)、[接口与契约](../contracts.md)和[安全边界](../security.md)。
 
-以下第 1–11 节记录历史阶段的目标与实现，其中动态新增接入、执行顺序及验收结果属于当时版本，不作为当前开发任务。历史落地对照见第 11 节。
+以下第 1–6 节保留第一阶段的目标、设计决策与 v1 协议，供兼容代码参考；其中动态新增接入属于当时版本。当时的执行计划、验收矩阵和落地对照已随实现完成删除。
 
 ## 1. 历史目标与范围
 
@@ -40,21 +40,9 @@ Workbench 保留登录、应用外壳、模块目录、导航、总览及模块�
 
 本阶段采用模块自带的设置页，满足统一入口与独立发布。后续可以增加 schema 表单模式。本阶段不重写调度器或消息系统。
 
-## 2. 实施前的代码边界
+## 2. 第一阶段设计决策
 
-| 入口 | 当时情况 | 第一阶段改动 |
-|---|---|---|
-| [app.go](../../internal/app/app.go) | 编译时创建 Todo、Investment；投资专属字段处理回调、静态资源和关闭 | 保留内置模块装配，改为通用路由和生命周期遍历，增加外部模块管理服务 |
-| [module.go](../../internal/contracts/module.go) | Go 接口包含 Manifest、迁移与函数注册 | 保留内置契约，新增独立的外部 HTTP 协议类型及可选的通用生命周期/路由接口 |
-| [registry.go](../../internal/foundation/modules/registry.go) | 初始化时构建目录，开关只作用于已知模块 | 内置目录与可变外部目录合并查询；外部注册信息与状态持久化 |
-| [modules.sql](../../internal/foundation/database/query/modules.sql) | 内置模块同步和 enabled 状态 | 支持来源类型、外部连接及状态查询，防止启动同步覆盖外部记录 |
-| [前端注册表](../../web/src/modules/registry.ts) | 构建时收集页面、设置、Widget | 保留内置组件注册，外部模块使用宿主内置的通用容器 |
-| [Layout.tsx](../../web/src/app/Layout.tsx) | pageKey 必须对应编译时组件 | 增加动态外部页面路由；同步命令面板导航 |
-| [模块设置](../../web/src/features/settings/ModulesPanel.tsx) | 启停开关与内置设置组件 | 增加连接管理、状态反馈和外部设置页 |
-
-## 3. 第一阶段设计决策
-
-### 3.1 内置与外部模块并存
+### 2.1 内置与外部模块并存
 
 统一对前端返回模块描述，增加 `kind: builtin | external`。现有 `enabled` 字段保留，明确表示用户期望状态；实际运行状态使用独立字段。
 
@@ -64,7 +52,7 @@ Workbench 保留登录、应用外壳、模块目录、导航、总览及模块�
 
 模块 ID 全局唯一，沿用现有 ID 校验，禁止覆盖 `core`、内置模块或其他外部模块。外部协议使用独立的 `protocolVersion`，不混同现有 Go `contractVersion` 或业务 `version`。
 
-### 3.2 模块管理和容器管理
+### 2.2 模块管理和容器管理
 
 | 用户操作 | 本阶段语义 |
 |---|---|
@@ -78,7 +66,7 @@ Workbench 保留登录、应用外壳、模块目录、导航、总览及模块�
 
 业务停用不能撤销已经提交的外部操作，例如已发送的订单。模块应停止新的业务活动并按约定完成或取消在途任务，准确上报状态。
 
-### 3.3 前端独立发布
+### 2.3 前端独立发布
 
 - 外部模块自己提供业务页和设置页，Workbench 用通用 iframe 容器嵌入。
 - 第一阶段只接入用户管理的可信服务。同源 iframe 与宿主共享浏览器信任边界，不宣称它能隔离恶意模块脚本。
@@ -88,11 +76,11 @@ Workbench 保留登录、应用外壳、模块目录、导航、总览及模块�
 - 设置页不得因业务停用而被卸载或拒绝访问。远端离线时显示错误，宿主仍可编辑服务地址、凭据及重试。
 - 自定义图标第一阶段使用宿主内置图标 ID，未知值使用默认图标。
 
-## 4. 第一阶段外部模块协议 v1
+## 3. 第一阶段外部模块协议 v1
 
 以下记录第一阶段的协议与管理入口。远端 v1 协议仍用于已有记录兼容；当前宿主管理入口以[接口与契约](../contracts.md#http-入口)为准。
 
-### 4.1 注册信息（历史新增流程）
+### 3.1 注册信息（历史新增流程）
 
 用户在 Workbench 中填写 `baseUrl`、`serviceToken` 和可选的 `allowNonLocal`。`baseUrl` 第一阶段只允许 HTTP/HTTPS origin，不允许用户名密码、路径前缀、查询或片段。默认只连接 loopback；Compose 服务名或其他地址需要显式允许非本机连接。
 
@@ -100,7 +88,7 @@ Workbench 保留登录、应用外壳、模块目录、导航、总览及模块�
 
 Workbench 使用专用服务凭据访问下表接口；外部服务负责验证。首次接入必须成功读取并验证 manifest，再保存记录和停用意图。数据库保存失败不得留下已发布的内存目录。
 
-### 4.2 远端管理接口
+### 3.2 远端管理接口
 
 | 方法与路径 | 语义 |
 |---|---|
@@ -110,7 +98,7 @@ Workbench 使用专用服务凭据访问下表接口；外部服务负责验证�
 | `GET /_workbench/config` | 返回模块业务配置的脱敏视图 |
 | `PUT /_workbench/config` | 模块校验并保存业务配置，返回脱敏结果或结构化错误 |
 
-管理接口在业务停用时保持可用。控制代数规则见第 6 节；`status`、`state` 返回值应包含 `registrationId`、`generation`、`enabled`，宿主只接受匹配当前连接的结果。
+管理接口在业务停用时保持可用。控制代数规则见第 5 节；`status`、`state` 返回值应包含 `registrationId`、`generation`、`enabled`，宿主只接受匹配当前连接的结果。
 
 配置 JSON 的业务结构由模块定义。未提交的密钥字段表示保留，清空使用模块明确约定的操作；更换目标地址时不能自动把旧密钥发送给新目标。模块负责配置校验，宿主限制请求大小且不记录配置正文。
 
@@ -142,7 +130,7 @@ Manifest 示例：
 
 初始接入遇到不支持的 `protocolVersion` 时拒绝保存。已接入模块刷新后不兼容，保留最后有效描述与连接配置，标记 `incompatible` 并关闭业务代理；不能把无效描述覆盖进有效目录。
 
-### 4.3 Workbench 管理 API
+### 3.3 Workbench 管理 API
 
 | 方法与路径 | 语义 |
 |---|---|
@@ -154,13 +142,13 @@ Manifest 示例：
 | `GET /api/modules/{id}/status` | 返回已缓存的状态及最后检查时间 |
 | `GET /api/modules/{id}/config` | 经认证的远端配置读取 |
 | `PUT /api/modules/{id}/config` | 经认证与 CSRF 校验的远端配置保存 |
-| `DELETE /api/modules/external/{id}` | 解除外部接入，受第 3.2 节条件约束 |
+| `DELETE /api/modules/external/{id}` | 解除外部接入，受第 2.2 节条件约束 |
 
 所有管理入口遵循现有登录、Host、Origin、CSRF 和结构化错误约定。外部专用操作作用于内置模块时返回明确错误。
 
 连接更新先验证候选配置，成功后原子替换并使旧请求、旧 WebSocket 与旧状态响应失效。更换 origin 必须重新提供服务凭据。旧端点失联时允许修正连接，但保留“旧端点未确认停用”的提示，不把新端点的确认当作旧端点已停止。
 
-### 4.4 通用访问代理
+### 3.4 通用访问代理
 
 | 宿主路径 | 远端路径 | 门控 |
 |---|---|---|
@@ -181,7 +169,7 @@ WebSocket 升级前执行认证、Origin 与业务状态校验；升级后纳入
 
 第一阶段不开放外部模块声明匿名回调路径。现有内置 Schwab OAuth 回调通过通用内置路由契约保留；投资迁出时再扩展外部回调协议。
 
-## 5. 第一阶段持久化与信息归属
+## 4. 第一阶段持久化与信息归属
 
 继续使用现有 `modules` 记录统一身份和期望开关，增加来源类型；外部明细以独立表保存，避免内置启动同步改变外部身份。具体列名可随现有 sqlc 风格调整，但以下语义必须持久化：
 
@@ -198,9 +186,9 @@ WebSocket 升级前执行认证、Origin 与业务状态校验；升级后纳入
 
 新增迁移必须兼容已有数据库，保留内置模块 enabled 值和总览布局。SQL 经 sqlc 生成，禁止手改生成文件。核心备份只覆盖宿主注册数据，不表示已经备份外部模块业务数据。
 
-## 6. 第一阶段启停、故障和并发规则
+## 5. 第一阶段启停、故障和并发规则
 
-### 6.1 分开表示三类状态
+### 5.1 分开表示三类状态
 
 - `enabled`：用户期望开关，数据库保存成功后才更新。
 - `observedEnabled`：远端最近确认的实际开关，可为未知；附带确认代数和时间。
@@ -208,7 +196,7 @@ WebSocket 升级前执行认证、Origin 与业务状态校验；升级后纳入
 
 例如期望停用、远端不可达时，显示“业务入口已关闭，等待服务确认停用”。启用未确认时显示“正在启用”，不能提前显示成功。
 
-### 6.2 状态应用
+### 5.2 状态应用
 
 1. 每次期望状态改变，事务保存状态并递增 `generation`。同一注册身份的代数跨宿主重启持续递增。
 2. 停用意图保存后立即关闭宿主业务门控并清理现有代理连接，然后调用远端。启用需等当前代数得到确认再开放。
@@ -221,7 +209,7 @@ WebSocket 升级前执行认证、Origin 与业务状态校验；升级后纳入
 
 本阶段不实现“宿主失联就自动停业务”的租约。宿主无法联系远端时，只保证宿主入口关闭并保存重试意图，不能保证远端任务已经停止；必须在界面和文档中如实表达。
 
-### 6.3 有界等待与资源清理
+### 5.3 有界等待与资源清理
 
 默认控制/探测请求超时 5 秒，周期检查间隔 30 秒，失败重试使用退避，间隔上限 30 秒；参数集中定义并可在测试中注入。并发探测默认最多 4 个，避免离线模块占满资源。
 
@@ -229,7 +217,7 @@ WebSocket 升级前执行认证、Origin 与业务状态校验；升级后纳入
 
 宿主关闭有总超时，释放自身 HTTP/WS、后台探测和重试任务，不把“宿主退出”持久化为用户停用外部业务。删除注册后停止其后台任务，不允许旧任务重新发布目录或状态。
 
-## 7. 第一阶段内置模块适配
+## 6. 第一阶段内置模块适配
 
 将投资的路由和生命周期特殊处理抽象为可选的标准契约，建议集中在 `internal/contracts`：
 
@@ -240,95 +228,3 @@ WebSocket 升级前执行认证、Origin 与业务状态校验；升级后纳入
 App 只负责构造内置模块并遍历这些契约。`investment.New(...)` 可以保留在装配处；路由、停用、Shutdown 路径不得再检查 `id == "investment"`，也不得保存专供这些分支使用的投资实例字段。
 
 投资实现生命周期时，停用仍关闭 Schwab Streamer 与 Futu gateway；退出释放所有连接。普通业务请求、Job、AI Tool、事件消费者保持现有门控语义。保留 `/oauth/schwab`、`/investment/terminal`、`/charting_library/*` 及现有业务 API 的兼容行为。
-
-## 8. 历史执行顺序与交付物
-
-当时的执行计划按下列依赖顺序推进，逐项记录实际改动、验证结果与剩余问题。
-
-| 步骤 | 工作 | 交付与退出条件 |
-|---|---|---|
-| P1-01 | 核对当时的代码和基线 | 保留已有工作区改动；确认构建与测试入口；已有失败与新增失败分开记录 |
-| P1-02 | 定义协议与状态模型 | Go/TypeScript 类型、manifest 校验、API 错误和示例一致；本地契约版本与外部协议版本分开 |
-| P1-03 | 通用化内置路由和生命周期 | App 中投资专属路由/启停/退出分支消失，现有投资和平台回归通过 |
-| P1-04 | 持久化注册与动态目录 | 新增迁移与 sqlc 查询；注册、连接更新、刷新、解除、重启恢复可测试；远端离线不阻塞核心启动 |
-| P1-05 | 控制客户端、状态协调与代理 | 认证、路径约束、超时、状态代数和 WS 清理落实；管理与业务门控分开 |
-| P1-06 | 前端管理与通用页面 | 设置中接入服务；动态导航与命令面板可达；停用后仍能配置；失败状态明确 |
-| P1-07 | 独立示例与完整验收 | 示例在独立进程运行；不重构建宿主即可接入和更新示例前端；自动化覆盖第 9 节 |
-| P1-08 | 文档和交接 | 更新 architecture、contracts、business-development、security、data-model 和相关运行说明；给出实际测试结果 |
-
-外部管理实现优先放在 `internal/foundation/modules` 的职责文件或其专属子包，避免在 `app.go` 堆积网络协议、状态机和持久化细节。示例建议放 `examples/external-module/`，不得导入 `workbench/internal/...`，不得编译进入核心生产二进制。
-
-示例应包含页面、设置页、持久化配置、可启停计数任务和 WebSocket 推送；支持使用测试参数模拟超时、旧代数响应与故障。使用模拟数据，不连接真实券商。附可复制的本地启动与接入步骤。
-
-## 9. 历史实现指标与验收矩阵
-
-以下为第一阶段当时的完成条件。时间指标在本机健康示例和约定默认间隔下验证；状态机测试优先注入时钟/定时器，避免依赖长时间 sleep。
-
-| 编号 | 验收场景 | 通过标准与证据 |
-|---|---|---|
-| A01 | 运行时接入 | 核心只构建一次；启动后接入此前未知 ID 的示例，5 秒内出现导航和设置；记录 PID 与产物 hash 未改变 |
-| A02 | 外部页面独立更新 | 仅修改/重启示例，刷新后看到新内容；宿主 Go/React 源码、产物和 PID 均不变 |
-| A03 | 持久化与离线启动 | 重启核心后注册与期望开关保留；示例不可达时核心可就绪、Todo 可用；旧健康状态不直接放行业务 |
-| A04 | 启用确认 | 仅当前连接、当前代数确认后业务 API 和 WS 可用；超时返回 pending，前端不显示启用成功 |
-| A05 | 停用业务 | 意图保存后新请求返回 503/module_disabled；1 秒内关闭本机代理 WS；健康示例在控制超时内停止计数任务 |
-| A06 | 停用后配置 | 停用时仍能打开设置页、保存配置并刷新读回；示例业务 API 始终不可访问 |
-| A07 | 离线停用与恢复 | 离线时入口立即关闭、实际状态未确认；恢复后下一次协调完成停用；模块失联不冒充停止成功 |
-| A08 | 并发与旧响应 | 快速启用/停用/启用，最终状态等于最高代数；晚到响应、旧连接回包不能覆盖新状态；race 检查通过 |
-| A09 | 连接更换 | ID 不一致拒绝；更换 origin 未提供新凭据拒绝；旧连接关闭，旧状态不污染新状态，更新不自动启用 |
-| A10 | 认证和路径边界 | 未登录、无 CSRF、错误服务 token、跨模块路径、路径穿越、恶意重定向和未许可非本机目标均被拒绝；上游收不到宿主 Cookie |
-| A11 | 协议和命名冲突 | 重复 ID、core/内置 ID、非法页面入口、不支持版本/能力均有结构化错误；无半成品目录；刷新无效描述不覆盖最后有效值 |
-| A12 | 解除接入 | 已确认停用后可解除；导航/连接/重试移除，远端数据保留；旧异步任务不能使记录复活 |
-| A13 | 内置兼容 | Todo、Wallos、Dashboard、内置投资设置、OAuth、终端资源和 WS 清理回归通过；不存在运行路径中的投资 ID 特判 |
-| A14 | 故障隔离与清理 | 单个探测一直超时时，模块列表不发起同步远端调用，其他模块仍可管理；关闭和解除后无遗留探测/代理连接 |
-| A15 | 数据与凭据 | 从旧数据库升级保留已有开关、配置和布局；外部凭据不出现在列表、配置读回、日志或浏览器 URL 中 |
-| A16 | 前端可用性 | 页面深链接刷新可达；外部导航出现在命令面板；未知图标可降级；设置弹窗与错误状态在桌面/移动端可操作 |
-
-自动化验证分三层：Go 使用本机模拟服务测试协议、状态和代理；浏览器测试验证登录后的接入、页面、设置与启停；独立进程测试验证示例与宿主没有编译依赖。
-
-实现完成后运行现有完整检查入口 `rtk proxy ./scripts/test.sh`，并对新增并发状态、代理和内置生命周期运行适当的 `go test -race`。新增浏览器脚本必须有实际运行入口和所需环境说明；现有脚本不会自动覆盖新场景。
-
-不要用真实券商授权或交易作为本阶段验收前提。现有投资浏览器回归中依赖外部资源的检查若无法运行，明确记录原因，不能写成通过。示例端到端验证必须可在本机完成。
-
-## 10. 当时的 AI agent 执行与交接要求
-
-1. 先阅读本文及现有 AGENTS/RTK 指令，核对工作区；本阶段只实施第 1.1 节，不顺带执行投资数据迁移或容器管理。
-2. 以本计划的协议和验收语义作为基线，按仓库实际风格调整代码组织；发现实质矛盾时记录原因和统一后的决策，避免同时保留冲突协议。
-3. 每个步骤完成时用具体代码位置、测试命令与结果交接。用户原有改动不得丢失，也不能将原有富途功能算作本阶段新增交付。
-4. 交付说明区分已实现、已验证、未验证和后续阶段。未满足的 A01–A16 必须逐项说明，不得仅以单元测试通过宣布本阶段完成。
-5. 完成后把本文状态更新为实际进度，并让现行主题文档反映真实实现；本计划不长期替代接口和架构文档。
-
-当时设想第二阶段沿用这套协议将投资前后端和数据迁入独立应用，再安排独立镜像发布与券商接入服务拆分；该迁移不属于当前兼容范围，投资仍是内置模块。
-
-## 11. 2026-09-13 历史落地对照（A01–A16）
-
-下表保留当时的验证记录。当前 `scripts/external-module-process.sh` 验证公开新增入口返回 404，浏览器脚本仅用于已有外部记录的兼容回归。
-
-| 编号 | 状态 | 证据 |
-|---|---|---|
-| A01 | 已实现，Go 独立进程测试已验证 | `TestIndependentExampleProcessAttachTwice`；`scripts/external-module-process.sh` |
-| A02 | 已实现，进程测试已验证 | 仅重启示例子进程后页面标题变化，宿主 Handler 不变 |
-| A03 | 已实现，已验证 | `TestStartupDoesNotClobberExternalOrUseStaleHealth`、`TestRestartReconfirmsEnabledModuleWithoutWaitingProbeInterval`、`TestExternalModuleHTTPAttachEnableConfigAndRestart` |
-| A04 | 已实现，已验证 | `TestEnableTimeoutReturnsPending`、`TestExternalEnablePendingDoesNotLookLikeSuccess` |
-| A05 | 已实现，已验证 | `TestEnableConfirmAndDisableGate`、`TestWebSocketClosedOnDisable` |
-| A06 | 已实现，已验证 | `TestConfigWhileDisabled`；停用后 settings/config 可用、业务 proxy 503 |
-| A07 | 已实现，已验证 | `TestOfflineDisableDoesNotClaimSuccessAndReconcilesAfterRecovery`、`TestIncompatibleDisableRetriesAfterRecovery`；不兼容状态下仍重试停用，业务入口保持关闭 |
-| A08 | 已实现，已验证 | `TestStaleGenerationDoesNotOverwrite`、`TestConcurrentEnableSettlesOnLatestIntent`；需 `go test -race` |
-| A09 | 已实现，已验证 | `TestConnectionUpdateRequiresDisableAndNewToken`、`TestWebSocketRejectsOldConnectionSnapshot`；拨号前、握手后和连接登记时校验注册身份、连接版本及启停代次 |
-| A10 | 已实现，已验证 | `TestProxyAuthBoundsAndCookieStrip`、`TestProxyRejectsUnsafeRedirectAndNonLocal`、`TestExternalAuthCSRFAndBuiltinGuard` |
-| A11 | 已实现，已验证 | `TestDuplicateAndReservedIDsRejected`、`TestUnsupportedProtocolKeepsLastGoodManifest`、`TestFailedPersistDoesNotPublishCatalog` |
-| A12 | 已实现，已验证 | `TestUnregisterRemovesRecordAndDoesNotResurrect` |
-| A13 | 已实现，已验证 | 现有 platform/investment/todo 测试；`TestRuntimePathsDoNotSpecialCaseInvestmentID` |
-| A14 | 已实现，已验证 | `TestAttachUnknownIDShowsNavigationAndDoesNotBlockList`；Registry.Close 取消探测 |
-| A15 | 已实现，已验证 | `TestUpgradePreservesBuiltinEnabled`；列表 JSON 不含 token |
-| A16 | 已实现，浏览器验证已通过 | `scripts/external-module.e2e.cjs` 已使用本机独立示例与 Chromium 实际执行成功；不能用静态存在或 API 测试替代 |
-
-现有投资浏览器脚本若因缺少 Schwab/TradingView 外部资源无法运行，记为跳过并说明原因，不得记为通过。富途功能已在前序提交中保留，不计入本阶段交付。
-
-### 2026-09-13 修复验证
-
-- 不兼容模块离线停用后，恢复服务会自动补发停用指令，且继续保留 incompatible 状态；见 `recovery_test.go`。
-- WebSocket 在拨号前、握手后和登记连接时验证同一注册身份、连接版本、Epoch 与控制 generation，拒绝配置切换前取得的旧快照；保留握手中停用的回归覆盖。
-- `SQLC_BIN=/root/go/bin/sqlc ./scripts/test.sh` 通过，包括 Go 测试、SQLC 一致性、前端 lint、38 项 JavaScript 测试及生产构建。
-- `go test -race ./internal/foundation/modules ./internal/app ./internal/modules/investment` 与示例模块的 `go test -race ./...` 通过。
-- 本机 Chromium 外部模块端到端脚本通过；独立示例启用、停用、解除接入、重新接入和再次启用均返回预期成功状态。
-- 本轮未执行依赖真实券商授权的投资浏览器流程；不能将其算作已验证。

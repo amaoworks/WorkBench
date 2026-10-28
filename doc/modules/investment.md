@@ -14,7 +14,7 @@
 
 每条规则每个 `America/New_York` 交易日最多触发一次。涨跌两向可以分别建规则；编辑、暂停和重新启用同一规则不会清除当日记录。后台请求期间删除/修改规则、停用投资或变更授权，会阻止迟到结果触发提醒。触发快照、通知和通知事件在同一事务提交，重启后去重仍有效。删除规则会保留历史。
 
-提醒保留在站内；可在「设置 → 通知推送」配置 Telegram，见 [Telegram 通知](../notifications.md)。页面展示最新价、前收盘价、涨跌幅、行情时间、检查状态和分页触发记录。后台超过三分钟未检查会显示中断。
+提醒保留在站内；可在「设置 → 通知推送」配置 Telegram，见 [Telegram 通知](../notifications.md)。监控页不重复 Telegram 的启用状态和设置入口，只在已启用的推送最近失败时提示；规则卡片不显示「已用/上限」条数，后台检查空闲时也不显示状态标记，没有规则时显示空状态。页面展示最新价、前收盘价、涨跌幅、行情时间、检查状态和分页触发记录。后台超过三分钟未检查会显示中断。
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
@@ -52,7 +52,9 @@ OpenD 容器封装在源码仓库根目录 [futu-opend](https://github.com/amaow
 
 ## 行情与交易
 
-连接后用 iframe 打开 `/investment/terminal`。终端从 Schwab 获取历史与实时行情，读取所选账户的真实多空持仓；终端启动、切换账户或重连时读取最近 180 天订单。之后的十五秒轮询与 ACCT_ACTIVITY 刷新通常读取最近 3 天；若有更早的非终态订单，则从该订单起读取，最多覆盖 180 天，按订单 ID 合并进已有结果。同一终端内的并发订单读取复用同一请求。Schwab 没有订单游标，达到单次 3000 条上限时递归拆分时间范围并按订单 ID 去重；无法完整读取时明确报错，不展示被截断的完整列表。
+连接后用 iframe 打开 `/investment/terminal`。终端从 Schwab 获取历史与实时行情，读取所选账户的真实多空持仓；终端启动、切换账户或重连时并行读取最近 30 天的全部订单和 30–180 天内 `status=WORKING` 的订单（Schwab 的 `status` 参数一次只能指定一个状态）。随后补读 30–180 天的全部订单（TradingView 打开账户管理器时请求订单历史即触发；未请求时在启动约 3 秒后进行），确保其他非终态订单（如等待条件的单、括号单中的子单）不遗漏。「订单」列表先显示近期订单及较早的 WORKING 订单，「订单历史」等补读完成后返回；补读失败时历史查询返回错误，切换账户或关闭终端时旧查询也不会返回其他账户的数据。后台补读失败每次连接只提示一次，后续轮询重试；成功结果静默并入，不覆盖较新的订单。
+
+之后的十五秒轮询与 ACCT_ACTIVITY 刷新通常读取最近 3 天；订阅确认（ACCT_ACTIVITY 的命令响应和 `SUBSCRIBED` 消息）不是账户变化，不触发刷新。若有更早的非终态订单，则从该订单起读取，最多覆盖 180 天，按订单 ID 合并进已有结果。同一终端内的并发订单读取复用同一请求。Schwab 没有订单游标，单次请求 `maxResults=1000`，达到上限时递归拆分时间范围并按订单 ID 去重；无法完整读取时明确报错，不展示被截断的完整列表。
 
 图表的标的、周期、行情时段、指标、画线和布局自动保存到工作台数据库，刷新、重启工作台或换浏览器后恢复。TradingView 的图表外观、收藏、交易显示、下单偏好和面板布局通过设置适配器保存在服务端；不再写入浏览器本地存储。首次使用默认 AAPL、日线、常规时段；终端网址的 `symbol` 参数优先于保存的标的，保存的周期和行情时段优先于图表布局中的旧选择。夜盘覆盖关闭或标的不支持保存的 Night/24H 时，恢复到常规时段并更新保存状态。恢复图表后重新应用工作台主题。
 
@@ -60,11 +62,11 @@ OpenD 容器封装在源码仓库根目录 [futu-opend](https://github.com/amaow
 
 页面已有窄屏布局，终端使用 TradingView 的触屏自适应界面。Schwab 和 Futu 行情连接根据当前页面生成绝对 `ws://` / `wss://` 地址，保留域名与端口，避免旧版 Safari/WebView 不接受相对 WebSocket 地址而在创建图表前中断。浏览器回归包含真实图表的手机模拟模式，见[脚本说明](../../scripts/README.md#投资账户管理器)。
 
-内部图表启用 TradingView 官方的 `iframe_loading_same_origin`，通过同源代理 `/charting_library/sameorigin.html` 创建子页面，避免依赖 `blob:` iframe 导航。加载提示保留到图表 `chartReady()` 完成，行情 WebSocket 就绪不会提前隐藏它。加载屏显示当前步骤：加载图表库、读取图表设置、初始化图表、查询标的信息、读取 K 线数据、绘制图表。约 20 秒后提示「还在加载」并提供重新加载，图表继续加载；约 90 秒没有步骤进展时显示失败及停留步骤。首个标的查询超时为 45 秒，常规/扩展时段首批 K 线超时为 75 秒。Night/24H 的首批 K 线明确报错时切回常规时段，无响应时由 90 秒无进展计时处理。图表模块加载失败或初始化异常显示重试入口。外层投资页在终端文档没有回报时另行计时：20 秒提示，90 秒显示失败和重新加载入口。参见[官方 Featuresets](https://www.tradingview.com/charting-library-docs/latest/customization/Featuresets/#iframe_loading_same_origin)。
+内部图表启用 TradingView 官方的 `iframe_loading_same_origin`，通过同源代理 `/charting_library/sameorigin.html` 创建子页面，避免依赖 `blob:` iframe 导航。加载提示保留到图表 `chartReady()` 完成，行情 WebSocket 就绪不会提前隐藏它。加载屏显示当前步骤：加载图表库、读取图表设置、初始化图表、查询标的信息、读取 K 线数据、绘制图表。约 20 秒后提示「还在加载」并提供重新加载，图表继续加载；约 90 秒没有步骤进展时显示失败及停留步骤。首个标的查询超时为 45 秒，常规/扩展时段首批 K 线超时为 75 秒。Night/24H 的首批 K 线明确报错时切回常规时段，无响应时由 90 秒无进展计时处理。图表模块加载失败或初始化异常显示重试入口。外层投资页在终端文档没有回报时另行计时：20 秒提示，90 秒显示失败和重新加载入口。终端启动时，并发的持仓读取共用一次 Schwab 请求；同一账户 2 秒内先后发生的持仓读取复用上一次结果，账户事件、轮询或下单后的刷新会提升订单代次并重新读取，设置与自选表加载共用预取的 CSRF 令牌。参见[官方 Featuresets](https://www.tradingview.com/charting-library-docs/latest/customization/Featuresets/#iframe_loading_same_origin)。
 
 `/investment` 只显示图表，铺满顶部导航下方的全部区域，图表上不叠加工作台自己的按钮。券商未连接或需要重新授权时，图表区域居中显示提示和设置/授权入口。旧链接中的 `view` 网址参数会被忽略，`?tab=monitor` 跳转到 `/investment/monitor`。页面铺满、浏览器全屏和新窗口打开暂不提供，见[后续计划](#后续计划)。
 
-账户初始化在 `broker_factory` 返回后的异步任务中等待 `chartReady()`，但最长延后 15 秒，两者先到者开始读取；连接状态通知发生在 TradingView 完成适配器注册后。需要后端配合的首屏优化见[前端改版实现](../frontend-redesign-backend-requirements.md#首屏加载需要后端或部署配合)。持仓与订单的标的列使用数据中的 `symbol` 字段，分别传给券商标的和图表标的参数，避免渲染异常或将订单 ID 当作图表标的。
+账户初始化在 `broker_factory` 返回后的异步任务中等待 `chartReady()`，但最长延后 15 秒，两者先到者开始读取；连接状态通知发生在 TradingView 完成适配器注册后。尚未实现的首屏优化见[后续计划](#后续计划)。持仓与订单的标的列使用数据中的 `symbol` 字段，分别传给券商标的和图表标的参数，避免渲染异常或将订单 ID 当作图表标的。
 
 账户管理器显示末四位账号、净值、现金和购买力，不把完整账号当成金额。持仓方向用「持有 / 卖空」，避免 TradingView 把普通多头译成「做多」。下单保留两个独立字段：TradingView 原生「有效期」提供DAY(当天有效)、GTC(取消前有效)、FOK(立即全部成交，否则取消) 和 IOC(立即成交，否则取消)，FOK/IOC 仅在限价单中显示；「交易时段」提供常规(9:30-16:00 ET)、盘前(7:00-9:25 ET)、盘后(16:05-20:00 ET)、延长时段(7:00-20:00 ET)，分别映射 `NORMAL`、`AM`、`PM`、`SEAMLESS`。新订单默认当天有效、常规时段。延长时段包含盘前、常规和盘后，不含隔夜；时间范围内仍有常规开盘前、收盘后各五分钟的暂停，参见[嘉信时段说明](https://www.schwab.com/stocks/extended-hours-trading)。
 
@@ -92,7 +94,7 @@ Night 视图只读取 Futu 的历史数据；24H 历史并发读取 Schwab 与 F
 
 ## 长连接恢复
 
-Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后才通知浏览器 ready。行情服务首次使用 SUBS，之后使用 ADD；HTTP 成功仅在 Schwab 确认订阅后返回。
+Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后才通知浏览器 ready。行情服务首次使用 SUBS，之后使用 ADD；HTTP 成功仅在 Schwab 确认订阅后返回。浏览器端把 100 毫秒内各组件（自选表、图表、详情、下单面板）新增的品种合并为每个服务一条 ADD，已在订阅或待确认的品种不重复发送。
 
 上游断开时同时关闭浏览器连接，浏览器三秒后重连。首次 ready 只建立订阅，不重置正在加载的历史 K 线。断线后重新 ready 时恢复所有活动品种订阅、清空行情快照，并调用 TradingView 的 `resetCache` 与各图表的 `resetData` 重载历史，同时重新读取账户状态。历史回补即使不是首次请求也会恢复实时 K 线基准；断线前的历史响应和已关闭 WebSocket 的迟到事件会被丢弃。终端显示连接恢复中的状态提示。慢客户端不静默丢弃订单事件，而是断开后重新获取状态。参见 [TradingView 数据恢复约定](https://www.tradingview.com/charting-library-docs/latest/connecting_data/Datafeed-Issues/#internet-connection-issues)。
 
@@ -135,19 +137,19 @@ Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后
 | GET | `/investment/terminal`、`/investment/terminal/*` | 终端 HTML 与适配器 |
 | GET/HEAD | `/charting_library/*` | 图表库静态文件代理 |
 
-导航 pageKey 和 Widget kind 保留 `investment.overview`，使已有布局兼容。
+导航 pageKey 为 `investment.overview`。总览卡片为 `investment.snapshot`（资产快照）、`investment.quotes`（持仓与自选行情）和 `investment.alerts`（提醒与异动），分别读取 `/api/modules/investment/overview/snapshot`、`overview/quotes`、`overview/alerts`。
 
 ### 持仓与订单子页面
 
-前端 `investment.module.ts` 通过 `subpages` 注册了三个页面，入口在顶部导航「投资」的下拉菜单中，菜单项包括 图表（`/investment`）、价格监控（`/investment/monitor`）、持仓、订单、券商连接。TradingView 终端内部结构没有改动。
+前端 `investment.module.ts` 通过 `subpages` 注册了三个页面，入口在顶部导航「投资」的下拉菜单中，菜单项包括 图表（`/investment`）、价格监控（`/investment/monitor`）、持仓、订单。TradingView 终端内部结构没有改动。
 
 - `/investment/monitor`（`MonitorPage`）：价格监控规则与触发记录；`/investment?tab=monitor` 重定向到这里，站内通知的 `actionRoute` 仍可使用旧地址。
 
 - `/investment/positions`（`PositionsPage`）：显示账户总值、持仓市值、现金、今日盈亏和持仓盈亏，下面是持仓表，列出代码、数量、均价、现价、市值、今日盈亏、持仓盈亏和占比。有多个账户时可以切换账户。点击代码会在交易终端中打开对应标的。每 30 秒刷新一次。
-- `/investment/orders`（`OrdersPage`）：按最近 1、7、30、90 天（`?range=`）和 全部/working/filled/canceled（`?status=`）筛选委托。条件单和组合单会按 `childOrderStrategies` 展开。页面只读，改单和撤单仍在交易终端中操作。
+- `/investment/orders`（`OrdersPage`）：页头不放「打开交易终端」，终端从顶部导航「投资 → 图表」进入。按最近 1、7、30、90 天（`?range=`）和 全部/working/filled/canceled（`?status=`）筛选委托。条件单和组合单会按 `childOrderStrategies` 展开。页面只读，改单和撤单仍在交易终端中操作。
 - 两个页面分别读取 `/api/modules/investment/positions` 和 `/api/modules/investment/orders?days=1|7|30|90&status=all|working|filled|canceled&tz=`，使用模块的 Zod schema 校验。`BrokerGate` 处理未配置、读取失败和需要重新授权的状态；页面提供手动刷新、重试和最近更新时间。
 - 持仓现价来自行情报价，缺失数值返回 `null` 并显示 `—`；账户标识使用 Schwab 哈希，界面仅显示掩码标签。订单达到 500 条时按时间拆分读取并去重，无法完整读取时返回错误。多腿订单按买卖方向、腿比例和实际成交计算净价，同时展示每腿委托数量、成交数量与均价；成交比例不匹配时不显示组合净价。止损限价单同时显示限价和触发价。
-- 子页面不能命名为 `terminal`，因为后端已经占用 `/investment/terminal*`。Widget 改为展示 Schwab 连接状态及终端入口，数据路由使用配置状态接口。Vite 同时代理终端资源和 `/api` WebSocket。
+- 子页面不能命名为 `terminal`，因为后端已经占用 `/investment/terminal*`。Vite 同时代理终端资源和 `/api` WebSocket。
 
 ### 净值历史
 
@@ -155,11 +157,12 @@ Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后
 
 启动、重新启用业务及每个工作日美东时间 16:15 采集账户净值、现金、持仓市值和当日盈亏，同一账户同一天覆盖更新。仅保存字段完整的账户，部分账户缺值时保留其他账户记录并报告失败。数据存放于 `investment_networth_snapshots`，当前授权可见账户由 `investment_networth_account_scopes` 限定。切换授权后保留历史存储，并按新授权账户范围读取。
 
-曲线在缺记录或账户集合变化时断开，避免将账户范围变动显示为投资收益。每日明细提供对应日期、账户数与净值；尚无记录时显示空态。接口及验证说明见[前端改版实现](../frontend-redesign-backend-requirements.md)。
+曲线在缺记录或账户集合变化时断开，避免将账户范围变动显示为投资收益。每日明细提供对应日期、账户数与净值；尚无记录时显示空态。浏览器回归见[脚本说明](../../scripts/README.md#前端改版回归)。
 
 ## 后续计划
 
-- 新窗口打开、页面铺满（隐藏工作台导航）、浏览器全屏等图表窗口操作后续再做。原先左下角的悬浮工具条已移除；恢复时沿用服务端 `view` 偏好（`expanded`）记住页面铺满，入口位置另定，不遮挡 TradingView 工具栏和时间轴。
+- 新窗口打开、页面铺满（隐藏工作台导航）、浏览器全屏等图表窗口操作后续再做；恢复时沿用服务端 `view` 偏好（`expanded`）记住页面铺满，入口位置另定，不遮挡 TradingView 工具栏和时间轴。
+- 首屏加载待评估：合并首屏所需的账户摘要读取；预取首个标的的报价与 K 线；订单跨页缓存（按授权代次、账户和范围隔离并失效，首屏未完成订单覆盖全部非终态，`fromEnteredTime` 按下单时间）；服务端记录 `/investment/terminal` 相关接口耗时，便于与 `investment-startup.e2e.cjs` 的浏览器耗时对照；Schwab 订单代理加短时缓存（数秒至十几秒，按授权代次、账户和查询参数隔离，账户活动时失效），并由服务端按非终态状态汇总未完成订单，减少终端启动和补读的请求耗时。
 
 ## 数据、验证与参考
 

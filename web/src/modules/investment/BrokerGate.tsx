@@ -16,12 +16,10 @@ export function BrokerGate({ status, message, onRetry, children }: {
   if (status === "reauth") return (
     <Notice tone="warning" title="Schwab 授权已失效" action={
       <ButtonLink to="/api/modules/investment/schwab/oauth/login" reloadDocument variant="secondary" size="sm">重新授权</ButtonLink>
-    }>
-      重新授权后即可读取持仓与订单。
-    </Notice>
+    } />
   );
   if (status === "unconfigured") return (
-    <Card><EmptyState title="尚未连接券商" action={
+    <Card><EmptyState title="未连接券商" action={
       <ButtonLink to="/settings?tab=modules&module=investment" variant="secondary">连接券商</ButtonLink>
     } /></Card>
   );

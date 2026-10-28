@@ -247,7 +247,7 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 
 ### 外部模块
 
-`scripts/external-module.e2e.cjs` 仅用于已经保存 `demo_external` 注册记录的旧测试工作空间，覆盖深链接刷新、侧栏导航、停用后设置和桌面/移动视口；不再尝试网址接入，缺少旧记录时明确失败。旧记录 fixture 与独立进程兼容由 Go 测试中的 `Registry.Attach` 建立。
+`scripts/external-module.e2e.cjs` 仅用于已经保存 `demo_external` 注册记录的旧测试工作空间，覆盖深链接刷新、主导航、停用后设置和桌面/移动视口；不再尝试网址接入，缺少旧记录时明确失败。旧记录 fixture 与独立进程兼容由 Go 测试中的 `Registry.Attach` 建立。
 
 `scripts/external-module-process.sh` 验证公开网址注册返回 404、未创建模块以及宿主文件哈希保持不变。示例启动步骤见 [examples/external-module/README.md](../examples/external-module/README.md)。
 
@@ -281,7 +281,7 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 
 ### 投资价格监控与 Telegram
 
-`investment-monitor.e2e.cjs` 使用临时数据库，验证 TG 配置保存及密钥不回显、设置标签草稿保留、规则创建/编辑/暂停/刷新/删除，以及桌面和手机布局。测试发送 API 在浏览器中拦截，不访问 Telegram；不配置真实券商。后端行情、触发事务、重启去重和投递重试由 Go 测试覆盖。
+`investment-monitor.e2e.cjs` 使用临时数据库，验证 TG 配置保存及密钥不回显、切换设置分区后草稿保留、规则创建/编辑/暂停/刷新/删除，以及桌面和手机布局。测试发送 API 在浏览器中拦截，不访问 Telegram；不配置真实券商。后端行情、触发事务、重启去重和投递重试由 Go 测试覆盖。
 
 ```bash
 npm --prefix web run build
@@ -376,7 +376,7 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
   node scripts/investment-loading.e2e.cjs
 ```
 
-`investment-page.e2e.cjs` 自行启动使用临时数据库的工作台，模拟已连接的 Schwab 设置并嵌入带状态标记的测试终端。它验证连续切换主题、图表加载中切换和跟随系统时的颜色同步，以及图表铺满导航下方区域、没有悬浮窗口按钮、手机尺寸和旧 `?tab=monitor` 链接跳转，并确认主题切换不重建图表。使用端口 18138，无需券商凭据；截图写入 `/tmp/workbench-investment-mobile.png`。
+`investment-page.e2e.cjs` 自行启动使用临时数据库的工作台，模拟已连接的 Schwab 设置并嵌入带状态标记的测试终端。它通过切换系统配色（默认跟随系统）验证连续切换主题、图表加载中切换时的颜色同步，并验证设置页选择跟随系统，以及图表铺满导航下方区域、没有悬浮窗口按钮、手机尺寸和旧 `?tab=monitor` 链接跳转，并确认主题切换不重建图表。使用端口 18138，无需券商凭据；截图写入 `/tmp/workbench-investment-mobile.png`。
 
 ```bash
 go build -o /tmp/workbench-investment-page-test ./cmd/workbench

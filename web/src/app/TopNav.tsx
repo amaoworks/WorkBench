@@ -1,27 +1,22 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Aperture, Check, ChevronDown, Menu, Monitor, Moon, Paintbrush, Fingerprint, Sparkles, Sun, UserRound, X } from "lucide-react";
+import { Aperture, ChevronDown, LogOut, Menu, Sparkles, UserRound, X } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { cn } from "../shared/cn";
 import { aiShortcut } from "../shared/keyboard";
-import { matchesLocation, type NavEntry } from "./navigation";
+import { matchesLocation, settingsIcon, type NavEntry } from "./navigation";
+import { api, apiValidated } from "../shared/api";
+import { authStatusSchema } from "../shared/schema";
 import type { ModuleMenuItem } from "../modules/registry";
-
-type ThemeChoice = "light" | "dark" | "system";
 
 export function TopNav({
   entries,
   onOpenAI,
-  theme,
-  onTheme,
-  themeDisabled,
 }: {
   entries: NavEntry[];
   onOpenAI: () => void;
-  theme: ThemeChoice;
-  onTheme: (theme: ThemeChoice) => void;
-  themeDisabled: boolean;
 }) {
   return (
     <header className="workspace-topbar">
@@ -54,7 +49,7 @@ export function TopNav({
             <span>问 AI</span>
             <kbd className="workspace-kbd">{aiShortcut.label}</kbd>
           </button>
-          <UserMenu theme={theme} onTheme={onTheme} disabled={themeDisabled} />
+          <UserMenu />
         </div>
       </div>
     </header>
@@ -223,13 +218,8 @@ function MenuLink({ item, active, onSelect }: { item: ModuleMenuItem; active: bo
   );
 }
 
-const themeChoices = [
-  { id: "light", label: "浅色", icon: Sun },
-  { id: "dark", label: "深色", icon: Moon },
-  { id: "system", label: "跟随系统", icon: Monitor },
-] as const;
-
-function UserMenu({ theme, onTheme, disabled }: { theme: ThemeChoice; onTheme: (theme: ThemeChoice) => void; disabled: boolean }) {
+// Theme and palette live on the settings page; the menu only leads there and signs out.
+function UserMenu() {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
@@ -237,6 +227,21 @@ function UserMenu({ theme, onTheme, disabled }: { theme: ThemeChoice; onTheme: (
   const id = useId();
   const close = useCallback(() => setOpen(false), []);
   useDismiss(open, root, close);
+  const location = useLocation();
+  const onSettings = location.pathname === "/settings";
+  // Same query as App, so this reads the cached status. Signing out only means something with a password.
+  const auth = useQuery({ queryKey: ["auth"], queryFn: () => apiValidated("/api/auth/status", authStatusSchema), staleTime: 60_000 });
+  const [leaving, setLeaving] = useState(false);
+  async function logout() {
+    setLeaving(true);
+    try {
+      await api("/api/auth/logout", { method: "POST", body: "{}" });
+      window.location.assign("/");
+    } catch (error) {
+      setLeaving(false);
+      toast.error(error instanceof Error ? error.message : "退出失败");
+    }
+  }
   function closeAndFocus() {
     setOpen(false);
     button.current?.focus();
@@ -248,7 +253,7 @@ function UserMenu({ theme, onTheme, disabled }: { theme: ThemeChoice; onTheme: (
       <button
         ref={button}
         type="button"
-        className="workspace-avatar focus-ring"
+        className={cn("workspace-avatar focus-ring", onSettings && "is-active")}
         aria-label="账户菜单"
         aria-haspopup="menu"
         aria-expanded={open}
@@ -271,30 +276,21 @@ function UserMenu({ theme, onTheme, disabled }: { theme: ThemeChoice; onTheme: (
           ref={menu} id={id} role="menu" aria-label="账户菜单" className="workspace-menu workspace-user-menu"
           onKeyDown={(event) => menuKeys(event, menu.current, closeAndFocus)}
         >
-          <p className="workspace-menu-heading" id={`${id}-theme`}>主题</p>
-          <div role="group" aria-labelledby={`${id}-theme`}>
-            {themeChoices.map(({ id: value, label, icon: Icon }) => (
+          <MenuLink item={{ label: "设置", to: "/settings", icon: settingsIcon }} active={onSettings} onSelect={() => setOpen(false)} />
+          {auth.data?.mode === "password" && (
+            <>
+              <div className="workspace-menu-sep" role="separator" />
               <button
-                key={value}
-                type="button"
-                role="menuitemradio"
-                tabIndex={-1}
-                aria-checked={theme === value}
-                disabled={disabled}
-                className="workspace-menu-item is-compact focus-ring"
-                onClick={() => onTheme(value)}
+                type="button" role="menuitem" tabIndex={-1} disabled={leaving}
+                className="workspace-menu-item is-compact focus-ring" onClick={logout}
               >
                 <span className="workspace-menu-icon" aria-hidden="true">
-                  <Icon size={17} />
+                  <LogOut size={17} />
                 </span>
-                <span className="workspace-menu-label flex-1">{label}</span>
-                {theme === value && <Check size={16} className="text-brand" aria-hidden="true" />}
+                <span className="workspace-menu-label flex-1">退出登录</span>
               </button>
-            ))}
-          </div>
-          <div className="workspace-menu-sep" role="separator" />
-          <MenuLink item={{ label: "外观", to: "/settings?tab=appearance", icon: Paintbrush }} active={false} onSelect={() => setOpen(false)} />
-          <MenuLink item={{ label: "账户安全", to: "/settings?tab=security", icon: Fingerprint }} active={false} onSelect={() => setOpen(false)} />
+            </>
+          )}
         </div>
       )}
     </div>

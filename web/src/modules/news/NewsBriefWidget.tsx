@@ -37,7 +37,6 @@ export default function NewsBriefWidget({ widget }: { widget: Widget }) {
           title: "资讯",
           value: summaryData.unread,
           unit: "篇未读文章",
-          phrase: summaryData.unread > 0 ? `${summaryData.unread} 篇未读文章` : undefined,
           detail: summaryData.digest ? "AI 简报已生成" : `${summaryData.sources} 个订阅源`,
           to: "/news",
         }

@@ -547,7 +547,7 @@ test('24H realtime subscribes both providers once and releases Futu only after t
     events.dispatchEvent(new CustomEvent('FUTU_STREAM_READY', { detail: { generation: 'gateway:1', owner: 'owner:1' } }));
     feed.subscribeBars({ name: 'AAPL', subsession_id: EQUITY_24H_SESSION }, '5', () => {}, 'full');
     feed.subscribeBars({ name: 'AAPL', subsession_id: 'night' }, '5', () => {}, 'night');
-    await new Promise(resolve => setTimeout(resolve, 20));
+    await new Promise(resolve => setTimeout(resolve, 150)); // past the subscription batch window
     assert.equal(schwabCalls.filter(call => call.command === 'ADD').length, 1);
     assert.deepEqual(futuCalls.map(call => call.command), ['ADD']);
     feed.unsubscribeBars('night');

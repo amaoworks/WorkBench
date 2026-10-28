@@ -117,7 +117,6 @@ export default function SourcesTab({ startAdding = false }: { startAdding?: bool
           <div className="feed feed-empty">
             <div className="fd-t">
               <b>暂无订阅源</b>
-              <span>添加 RSS 或新闻搜索订阅源。</span>
             </div>
           </div>
         )}

@@ -88,7 +88,7 @@ export default function DigestsTab() {
             {digests.error.message}
           </Notice>
         )}
-        {digests.data && items.length === 0 && <EmptyState title="暂无简报" description="选择范围后生成第一份简报。" />}
+        {digests.data && items.length === 0 && <EmptyState title="暂无简报" />}
         {latest && <DigestRow digest={latest} featured />}
         {older.length > 0 && (
           <div className="news-digest-list">

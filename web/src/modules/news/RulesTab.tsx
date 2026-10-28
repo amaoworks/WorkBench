@@ -89,7 +89,7 @@ export default function RulesTab() {
           {sources.error.message}
         </Notice>
       )}
-      {rules.data && items.length === 0 && !editing && <EmptyState title="暂无关注规则" description="按关键词、订阅源或主题筛选资讯。" />}
+      {rules.data && items.length === 0 && !editing && <EmptyState title="暂无关注规则" />}
       <div className="news-rule-list">
         {items.map((rule) => {
           const scope = rule.sourceIds.length

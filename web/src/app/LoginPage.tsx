@@ -27,7 +27,6 @@ export function LoginPage() {
           <span>Workbench</span>
         </div>
         <h1>欢迎回来</h1>
-        <p>登录你的个人工作空间。</p>
         <form onSubmit={submit} className="mt-6 space-y-4">
           <Field label="密码" error={login.isError ? login.error.message : undefined}>
             <input

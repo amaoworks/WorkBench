@@ -31,19 +31,9 @@ export default function NewsPage() {
     setParams(next, { replace: true });
   }
 
-  const summary = stats.data
-    ? [
-        `来自 ${stats.data.sources} 个订阅源`,
-        stats.data.unread > 0 ? `${stats.data.unread} 篇未读` : stats.data.articles > 0 ? "全部已读" : null,
-        `今日 AI ${stats.data.aiCallsToday} / ${stats.data.aiLimit}`,
-      ]
-        .filter(Boolean)
-        .join(" · ")
-    : undefined;
-
   return (
     <div className="page news-page">
-      <PageHeader title="资讯" description={summary} />
+      <PageHeader title="资讯" />
       <nav className="rtabs news-tabs" aria-label="资讯视图">
         {tabs.map((tab) => (
           <button

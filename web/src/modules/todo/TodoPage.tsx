@@ -176,8 +176,10 @@ export default function TodoPage() {
 
   return (
     <div className="page todo-page">
-      <PageHeader title="待办" description={summaryText(agenda.data?.total, groups?.week, agenda.data?.completedToday)} />
+      <PageHeader title="待办" />
 
+      {/* Today stays quiet when nothing is due: the section simply isn't shown. */}
+      {!(agenda.data && todayItems.length === 0) && (
       <section className="sec" aria-labelledby="todo-today">
         <h2 id="todo-today" className="sec-title">今天</h2>
         {agenda.isPending && (
@@ -187,12 +189,6 @@ export default function TodoPage() {
           </div>
         )}
         {agenda.isError && <Notice tone="danger" title="今日待办加载失败">{agenda.error.message}</Notice>}
-        {agenda.data && todayItems.length === 0 && (
-          <div className="cal cal-empty">
-            <b>今天没有到期的待办</b>
-            <span>{agenda.data.completedToday ? `今天已完成 ${agenda.data.completedToday} 项。` : "在下方添加一项，或给待办设置截止时间。"}</span>
-          </div>
-        )}
         {todayItems.length > 0 && (
           <div className="cal-grid">
             {todayItems.slice(0, 8).map((task) => (
@@ -201,6 +197,7 @@ export default function TodoPage() {
           </div>
         )}
       </section>
+      )}
 
       <section className="sec" aria-labelledby="todo-all">
         <h2 id="todo-all" className="sec-title">全部待办</h2>
@@ -286,8 +283,7 @@ export default function TodoPage() {
         )}
         {tasks.data && items.length === 0 && (
           <EmptyState
-            title={view.id === "all" && !filtered ? "清单还是空的" : `「${view.label}」里没有待办`}
-            description="切换视图或筛选条件，或在上方添加一项。"
+            title="暂无待办"
           />
         )}
         <div className="todo-groups">
@@ -411,12 +407,4 @@ function TaskRow({
       </div>
     </div>
   );
-}
-
-function summaryText(dueThroughToday?: number, week?: number, completedToday?: number) {
-  if (dueThroughToday == null) return undefined;
-  const parts = [dueThroughToday ? `今天及逾期 ${dueThroughToday} 项待完成` : "今天没有到期的待办"];
-  if (week) parts.push(`本周还有 ${week} 项`);
-  if (completedToday) parts.push(`今天已完成 ${completedToday} 项`);
-  return parts.join(" · ");
 }

@@ -76,20 +76,20 @@ export WORKBENCH_DATA='./data/data.db'
 
 `WORKBENCH_CORS_ALLOW_ORIGIN` 为浏览器跨来源访问设置白名单。每项必须是完整 HTTP/HTTPS origin；不支持通配符。启用 HTTPS 外部地址时，白名单也必须全部使用 HTTPS。中间件处理预检请求、凭据响应头和 CSRF 来源白名单。HTTPS 部署配置 CORS 白名单时，Session 和 CSRF Cookie 使用 `SameSite=None`；其他部署保持 `SameSite=Strict`。纯 HTTP 跨站请求仍可能受浏览器 Cookie 限制，可使用同站点的不同端口。Session/CSRF 安全属性依据 `public-url` 计算，应用不信任动态 `X-Forwarded-*` 请求头。反代 Nginx/Caddy 配置、WebSocket 与 SSE 缓冲要求详见[部署与发布 - 反向代理](deployment.md#反向代理)，请求保护边界见[安全边界](security.md)。
 
-旧的 `-tls-cert` 和 `-tls-key` 参数已移除，TLS 统一由反向代理终止。可在设置的「数据与运行」查看当前生效的监听地址、数据库类型、数据库路径或本地数据路径、认证模式与外部 Host。
+旧的 `-tls-cert` 和 `-tls-key` 参数已移除，TLS 统一由反向代理终止。可在设置的「数据与运行」查看当前生效的监听地址、数据库类型、数据库路径（仅 SQLite；PostgreSQL 不显示本地数据路径）、认证模式与外部 Host。
 
 ## 设置页面
 
-`/settings?tab=modules|ai|notifications|security|appearance|data` 可定位六个标签：
+设置是单页，左侧分类导航，右侧依次为以下分区；`/settings?tab=appearance|modules|ai|notifications|security|data` 滚动到对应分区，`?module=<id>` 打开业务设置弹窗：
 
+- 外观：风格可选 宝蓝（默认）或 陶橙，主题可选浅色、深色或跟随系统（默认），并可减少动态效果；自动保存。头像菜单不提供主题切换。
 - 业务模块：启停已编译业务；模块提供设置组件时可打开独立弹窗。
 - AI 配置：开关、端点、模型、密钥，支持测试连接与保存。端点须兼容 Responses API；测试会发送简短请求，可能产生费用。保存后新请求使用新 Provider。
 - 通知推送：Telegram Bot Token、Chat ID、启停、测试发送和投递状态，见 [Telegram 通知](notifications.md)。
 - 账户安全：验证当前密码后修改密码，已有登录全部失效。
-- 外观：风格可选 TradingView（默认）或暖陶（Claude），主题可选浅色、深色或跟随系统（默认），并可减少动态效果；自动保存。头像菜单中的主题切换写入同一设置。
 - 数据与运行：切换日志等级，查看数据库类型和部署参数；SQLite 可创建在线备份，PostgreSQL 显示外部备份提示。
 
-切换设置标签会保留当前页面内的表单草稿；刷新或离开页面不会持久化未保存输入。AI、Wallos、Schwab 和 Telegram 密钥只写入、不回显，留空通常保留已有值；更换端点、App Key 或回调须重新提供密钥。详细边界见[安全说明](security.md)。
+在分区间切换不会丢失当前页面内的表单草稿；刷新或离开页面不会持久化未保存输入。AI、Wallos、Schwab 和 Telegram 密钥只写入、不回显，留空通常保留已有值；更换端点、App Key 或回调须重新提供密钥。详细边界见[安全说明](security.md)。
 
 ## 前端开发和验证
 

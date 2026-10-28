@@ -17,9 +17,9 @@ export default {
   },
   icons: { "investment.chart": ChartNoAxesCombined },
   menu: [
-    { label: "图表", to: "/investment", description: "图表、下单与账户管理", icon: CandlestickChart },
-    { label: "价格监控", to: "/investment/monitor", description: "价格规则与触发记录", icon: BellRing },
-    { label: "持仓", to: "/investment/positions", description: "账户净值与持仓明细", icon: Wallet },
-    { label: "订单", to: "/investment/orders", description: "委托与成交记录", icon: ClipboardList },
+    { label: "图表", to: "/investment", icon: CandlestickChart },
+    { label: "价格监控", to: "/investment/monitor", icon: BellRing },
+    { label: "持仓", to: "/investment/positions", icon: Wallet },
+    { label: "订单", to: "/investment/orders", icon: ClipboardList },
   ],
 } satisfies ModuleUI;

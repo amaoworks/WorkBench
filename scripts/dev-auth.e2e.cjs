@@ -70,7 +70,7 @@ async function verifyInvestmentChart(page) {
     const firstModule = page.waitForResponse(response => new URL(response.url()).pathname === "/investment/terminal/datafeed.js");
     await page.getByRole("link", { name: "投资", exact: true }).click();
     assert([200, 304].includes((await firstModule).status()), "terminal modules must pass HTTPS origin checks through Vite");
-    const terminal = page.frameLocator("iframe[title='TradingView 投资终端']");
+    const terminal = page.frameLocator("iframe[title='投资终端']");
     await terminal.locator("#terminal-loading").waitFor({ state: "hidden", timeout: 90000 });
     await terminal.frameLocator("#tv_chart_container iframe").first().locator("canvas").first().waitFor({ state: "visible", timeout: 90000 });
     assert(historyCandles > 0, "chart must load non-empty historical candles");

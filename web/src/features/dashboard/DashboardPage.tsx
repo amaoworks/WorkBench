@@ -31,7 +31,7 @@ const widgetIcons: Record<string, ComponentType<{ size?: number }>> = {
 
 const WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
 const todayLabel = (date = new Date()) => `${date.getMonth() + 1} 月 ${date.getDate()} 日 ${WEEKDAYS[date.getDay()]}`;
-// Order of the 今日概况 tiles and of the phrases in the headline.
+// Order of the 今日概况 tiles.
 const SUMMARY_ORDER = ["todo.today", "notifications.summary", "news.brief"];
 const summaryRank = (id: string) => (SUMMARY_ORDER.includes(id) ? SUMMARY_ORDER.indexOf(id) : SUMMARY_ORDER.length);
 const sameSymbols = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((value, index) => value === b[index]);
@@ -76,15 +76,11 @@ export default function DashboardPage() {
   const lead = widgets[0]?.size === "large" ? widgets[0] : undefined;
   const rest = widgets.filter((widget) => widget !== lead);
   const tiles = Object.entries(summaries).sort(([a], [b]) => summaryRank(a) - summaryRank(b));
-  const phrases = tiles.map(([, summary]) => summary.phrase).filter(Boolean);
   return (
     <div className="page overview-page">
       <header className="overview-hero">
         <h1>今天，一目了然</h1>
-        <p>
-          {todayLabel()}
-          {phrases.length > 0 && ` · ${phrases.join("、")}`}
-        </p>
+        <p>{todayLabel()}</p>
         <Button className="overview-edit" variant="ghost" size="sm" aria-pressed={editing} onClick={() => setEditing(!editing)}>
           <LayoutGrid size={14} />
           {editing ? "完成" : "配置卡片"}
@@ -116,7 +112,7 @@ export default function DashboardPage() {
       )}
       {dashboard.data && configured.length === 0 && (
         <Card>
-          <EmptyState title="暂无卡片" description="可在配置总览中选择卡片，或前往设置启用业务。" />
+          <EmptyState title="暂无卡片" />
         </Card>
       )}
       <DashboardSignalsContext.Provider value={signals}>
@@ -144,7 +140,7 @@ export default function DashboardPage() {
         </div>
         {widgets.length > 0 && (
           <Card className="dashboard-all-empty">
-            <EmptyState title="暂时没有需要关注的内容" description="连接券商、添加待办或订阅源后，相关卡片会自动出现。" />
+            <EmptyState title="暂无内容" />
           </Card>
         )}
       </DashboardSignalsContext.Provider>

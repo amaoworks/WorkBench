@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Bell, Plus, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "../../components/ui/Badge";
-import { Button, ButtonLink } from "../../components/ui/Button";
+import { Button } from "../../components/ui/Button";
 import { Card, CardHeader } from "../../components/ui/Card";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { EmptyState } from "../../components/ui/EmptyState";
@@ -19,7 +19,7 @@ import { formatDateTime } from "../../shared/format";
 import { moduleQueryKey } from "../../shared/queryKeys";
 
 const states = {
-  idle: "尚未启用规则",
+  idle: "",
   waiting: "等待下一次检查",
   monitoring: "监控运行中",
   closed: "常规交易时段外",
@@ -66,16 +66,18 @@ export function InvestmentMonitor() {
               <h2 className="flex items-center gap-2 font-medium">
                 <Bell size={18} />
                 监控状态
-                <Badge
-                  tone={
-                    data?.status === "error" || data?.status === "stale" ? "danger" : data?.status === "monitoring" ? "success" : "neutral"
-                  }
-                >
-                  {data ? states[data.status] : "状态未知"}
-                </Badge>
+                {data?.status !== "idle" && (
+                  <Badge
+                    tone={
+                      data?.status === "error" || data?.status === "stale" ? "danger" : data?.status === "monitoring" ? "success" : "neutral"
+                    }
+                  >
+                    {data ? states[data.status] : "状态未知"}
+                  </Badge>
+                )}
               </h2>
             )}
-            <p className="mt-1 text-xs text-[var(--muted)]">常规交易时段每分钟检查 · 最近检查：{time(data?.checkedAt ?? null)}</p>
+            <p className="mt-1 text-xs text-[var(--muted)]">最近检查 {time(data?.checkedAt ?? null)}</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button
@@ -100,23 +102,6 @@ export function InvestmentMonitor() {
             {monitor.error?.message || data?.lastError}
           </Notice>
         )}
-        <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
-          {telegram.isPending ? (
-            <Skeleton className="h-5 w-28" />
-          ) : (
-            <Badge tone={telegram.data?.enabled ? "success" : "neutral"}>
-              {telegram.data?.enabled ? "Telegram 推送已启用" : "Telegram 推送未启用"}
-            </Badge>
-          )}
-          <ButtonLink variant="ghost" size="sm" to="/settings?tab=notifications">
-            配置 Telegram
-          </ButtonLink>
-        </div>
-        {telegram.isError && (
-          <Notice className="mt-2" tone="danger" title="Telegram 状态读取失败">
-            {telegram.error.message}
-          </Notice>
-        )}
         {telegram.data?.enabled && telegram.data.status.lastError && (
           <Notice className="mt-2" tone="danger" title="Telegram 推送异常">
             {telegram.data.status.lastError}
@@ -135,14 +120,14 @@ export function InvestmentMonitor() {
         />
       )}
       <Card>
-        <CardHeader title="监控规则" description={`${data?.items.length ?? 0} / 100 条`} />
+        <CardHeader title="监控规则" />
         {monitor.isPending && (
           <div className="space-y-3 p-5">
             <Skeleton className="h-28" />
             <Skeleton className="h-28" />
           </div>
         )}
-        {data?.items.length === 0 && <EmptyState title="暂无监控规则" description="添加股票或 ETF，例如 AAPL、SPY。" />}
+        {data?.items.length === 0 && <EmptyState title="暂无监控规则" />}
         <div className="divide-y divide-[var(--hair)] hover-rows">
           {data?.items.map((rule) => (
             <div key={rule.id} className="p-5">
@@ -214,7 +199,7 @@ export function InvestmentMonitor() {
         </div>
       </Card>
       <Card>
-        <CardHeader title="触发记录" description="保留触发时的价格快照" />
+        <CardHeader title="触发记录" />
         {history.isPending && (
           <div className="space-y-3 p-5">
             <Skeleton className="h-20" />
@@ -226,7 +211,7 @@ export function InvestmentMonitor() {
             {history.error.message}
           </Notice>
         )}
-        {history.data?.pages[0]?.items.length === 0 && <EmptyState title="暂无触发记录" description="达到规则阈值后会记录在这里。" />}
+        {history.data?.pages[0]?.items.length === 0 && <EmptyState title="暂无触发记录" />}
         <div className="divide-y divide-[var(--hair)] hover-rows">
           {history.data?.pages
             .flatMap((page) => page.items)

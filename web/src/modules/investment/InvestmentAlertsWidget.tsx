@@ -44,7 +44,7 @@ function SchwabHealth({ schwab, now }: { schwab: OverviewAlerts["schwab"]; now: 
           </p>
         </>
       ) : (
-        <p className="ov-note">授权到期时间未知，重新授权一次后显示倒计时。</p>
+        <p className="ov-note">授权到期时间未知</p>
       )}
       {schwab.lastError && <p className="ov-note ov-down">{schwab.lastError}</p>}
     </div>
@@ -101,7 +101,7 @@ export default function InvestmentAlertsWidget({ widget }: { widget: Widget }) {
           ))}
         </ul>
       ) : (
-        <p className="ov-empty-line">暂无价格异动。</p>
+        <p className="ov-empty-line">暂无价格异动</p>
       )}
       {(showSchwab || futu.enabled) && (
         <>

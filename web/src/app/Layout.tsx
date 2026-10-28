@@ -11,10 +11,9 @@ import { Skeleton } from "../components/ui/States";
 import { useModules } from "./queries";
 import { AIPanel } from "../features/ai/AIPanel";
 import { useNotificationStream } from "../features/notifications/useNotificationStream";
-import { useSettings, useAppearance } from "../features/settings/queries";
-import { toast } from "sonner";
+import { useSettings } from "../features/settings/queries";
 import { TopNav } from "./TopNav";
-import { matchesLocation, settingsIcon, type NavEntry } from "./navigation";
+import { matchesLocation, type NavEntry } from "./navigation";
 
 const DashboardPage = lazy(() => import("../features/dashboard/DashboardPage"));
 const NotificationsPage = lazy(() => import("../features/notifications/NotificationsPage"));
@@ -55,7 +54,6 @@ export function Layout() {
   const modules = useModules();
   const [aiOpen, setAIOpen] = useState(false);
   const settings = useSettings();
-  const appearance = useAppearance();
   const location = useLocation();
   const theme = settings.data?.appearance.theme ?? "system";
   const motion = settings.data?.appearance.motion ?? "full";
@@ -145,19 +143,16 @@ export function Layout() {
       { key: "overview", label: "总览", to: "/", icon: LayoutDashboard, menu: [] },
       ...moduleEntries,
       { key: "notifications", label: "通知", to: "/notifications", icon: Bell, badge: unread.data?.count, menu: [] },
-      { key: "settings", label: "设置", to: "/settings", icon: settingsIcon, menu: [] },
     ];
   }, [modules.data, moduleNav, navCache, unread.data?.count]);
-  const context = pageContext(entries, location.pathname, location.search);
+  // Settings lives in the account menu rather than the top bar, so name it here for the AI context.
+  const context = location.pathname === "/settings" ? "设置" : pageContext(entries, location.pathname, location.search);
   return (
     <ThemeContext.Provider value={dark ? "dark" : "light"}>
       <div className="workbench-shell min-h-screen">
         <TopNav
           entries={entries}
           onOpenAI={() => setAIOpen(true)}
-          theme={theme}
-          themeDisabled={!settings.data}
-          onTheme={(next) => appearance.mutate({ theme: next, motion, palette }, { onError: (err) => toast.error(err.message) })}
         />
         <div className="workspace-body">
           <main className="workspace-main mx-auto w-full">

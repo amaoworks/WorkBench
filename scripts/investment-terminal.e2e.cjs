@@ -376,8 +376,8 @@ async function pollUntil(check, message, timeout = 30000) {
     await installPageRoutes(context, page);
 
     await page.goto(`${origin}${useApp ? "/investment" : mobile ? "/mobile-fixture" : "/investment/terminal"}`);
-    if (useApp) await page.locator("iframe[title='TradingView 投资终端']").waitFor();
-    let terminal = useApp ? await (await page.locator("iframe[title='TradingView 投资终端']").elementHandle()).contentFrame() : mobile ? page.frame("investment-terminal") : page.mainFrame();
+    if (useApp) await page.locator("iframe[title='投资终端']").waitFor();
+    let terminal = useApp ? await (await page.locator("iframe[title='投资终端']").elementHandle()).contentFrame() : mobile ? page.frame("investment-terminal") : page.mainFrame();
     assert(terminal, "terminal iframe missing");
     await terminal.waitForFunction(() => window.__broker?.connectionStatus() === 1, null, { timeout: 30000 });
     assert(calls.some(call => call.path.endsWith("/accountNumbers")), "account initialization must reach Schwab");
@@ -471,8 +471,8 @@ async function pollUntil(check, message, timeout = 30000) {
       page = await context.newPage();
       await installPageRoutes(context, page);
       await page.goto(`${origin}/investment`);
-      await page.locator("iframe[title='TradingView 投资终端']").waitFor();
-      terminal = await (await page.locator("iframe[title='TradingView 投资终端']").elementHandle()).contentFrame();
+      await page.locator("iframe[title='投资终端']").waitFor();
+      terminal = await (await page.locator("iframe[title='投资终端']").elementHandle()).contentFrame();
       await terminal.waitForFunction(() => window.__broker?.connectionStatus() === 1, null, { timeout: 30000 });
       await terminal.evaluate(() => window.__widget.chartReady());
       await terminal.locator('#terminal-loading').waitFor({ state: 'hidden' });
@@ -525,8 +525,8 @@ async function pollUntil(check, message, timeout = 30000) {
           values.includes('yyyy-MM-dd') && values.includes('24-hours');
       }, 'deleted chart objects and later preferences were not saved');
       await page.reload();
-      await page.locator("iframe[title='TradingView 投资终端']").waitFor();
-      terminal = await (await page.locator("iframe[title='TradingView 投资终端']").elementHandle()).contentFrame();
+      await page.locator("iframe[title='投资终端']").waitFor();
+      terminal = await (await page.locator("iframe[title='投资终端']").elementHandle()).contentFrame();
       await terminal.waitForFunction(() => window.__broker?.connectionStatus() === 1, null, { timeout: 30000 });
       await terminal.evaluate(() => window.__widget.chartReady());
       await terminal.locator('#terminal-loading').waitFor({ state: 'hidden' });
@@ -572,8 +572,8 @@ async function pollUntil(check, message, timeout = 30000) {
           await page.goto(`${origin}/state-away`);
           await page.goto(`${origin}${useApp ? '/investment?view=terminal' : mobile ? '/mobile-fixture' : '/investment/terminal'}`);
         }
-        if (useApp) await page.locator("iframe[title='TradingView 投资终端']").waitFor();
-        terminal = useApp ? await (await page.locator("iframe[title='TradingView 投资终端']").elementHandle()).contentFrame() : mobile ? page.frame('investment-terminal') : page.mainFrame();
+        if (useApp) await page.locator("iframe[title='投资终端']").waitFor();
+        terminal = useApp ? await (await page.locator("iframe[title='投资终端']").elementHandle()).contentFrame() : mobile ? page.frame('investment-terminal') : page.mainFrame();
         await terminal.waitForFunction(() => Boolean(window.__widget));
         await terminal.evaluate(() => window.__widget.chartReady());
         try { await terminal.locator('#terminal-loading').waitFor({ state: 'hidden' }); }
@@ -817,7 +817,7 @@ async function pollUntil(check, message, timeout = 30000) {
       await terminal.evaluate(() => { window.__originalWidget = window.__widget; });
       for (const theme of ['dark', 'light']) {
         await page.evaluate(value => {
-          const frame = document.querySelector('iframe[title="TradingView 投资终端"], iframe[name="investment-terminal"]');
+          const frame = document.querySelector('iframe[title="投资终端"], iframe[name="investment-terminal"]');
           (frame?.contentWindow || window).postMessage({ type: 'workbench.theme', theme: value }, location.origin);
         }, theme);
         await terminal.waitForFunction(value => window.__widget.getTheme() === value && document.documentElement.style.colorScheme === value, theme);
@@ -877,7 +877,7 @@ async function pollUntil(check, message, timeout = 30000) {
         await page.getByRole("heading", { name: "投资", exact: true }).waitFor();
         assert.equal(await terminal.evaluate(() => window.__widget === window.__originalWidget), true);
         assert.equal(await terminal.locator("#terminal-loading").isHidden(), true);
-        assert((await page.locator("iframe[title='TradingView 投资终端']").boundingBox()).height > 200);
+        assert((await page.locator("iframe[title='投资终端']").boundingBox()).height > 200);
       }
       const nextPaints = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       await nextPaints();

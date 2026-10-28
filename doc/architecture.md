@@ -45,7 +45,7 @@ web/src/
     todo/                      Todo 页面、Widget、设置、查询、schema
     investment/                行情页面、持仓与订单子页面、Widget、Schwab 设置、查询、schema
     news/                      资讯、来源、规则、简报、设置、查询、schema
-  components/ui/               Button、Card、PageHeader、ConfirmDialog、Skeleton、Switch、Badge、Notice、Field、EmptyState、useConfirmDelete
+  components/ui/               Badge、Button、Card、Checkbox、ConfirmDialog、EmptyState、Field、Notice、PageHeader、Select、Skeleton、Switch、useConfirmDelete
   shared/                      HTTP 客户端、平台共享 schema、工具
   styles.css                   主题变量与共享样式
 futu-opend/                    可搬走的 Futu OpenD 容器封装（行情网关，非交易）

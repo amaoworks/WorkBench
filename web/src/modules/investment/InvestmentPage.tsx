@@ -109,9 +109,7 @@ function InvestmentChart() {
                   {login}
                 </>
               }
-            >
-              授权后可使用图表与交易。
-            </Notice>
+            />
           </div>
         )}
         {connected && <InvestmentTerminal theme={theme} symbol={symbol} />}
@@ -191,7 +189,7 @@ function InvestmentTerminal({ theme, symbol }: { theme: Theme; symbol?: string }
       <iframe
         key={attempt}
         ref={frame}
-        title="TradingView 投资终端"
+        title="投资终端"
         className="investment-terminal"
         allowFullScreen
         src={src}
@@ -202,7 +200,7 @@ function InvestmentTerminal({ theme, symbol }: { theme: Theme; symbol?: string }
       {(load === "slow" || load === "stalled") && (
         <div className="investment-terminal-cover" role={load === "stalled" ? "alert" : "status"}>
           <strong>{load === "stalled" ? "图表加载失败" : "还在加载图表…"}</strong>
-          <p>{load === "stalled" ? "图表超过 90 秒没有任何进展。" : "首次打开可能较慢，可以继续等待，或重新加载。"}</p>
+          {load === "stalled" && <p>超过 90 秒没有进展</p>}
           <Button variant={load === "stalled" ? "primary" : "secondary"} size="sm" onClick={() => {
             setLoad("loading");
             setAttempt((value) => value + 1);

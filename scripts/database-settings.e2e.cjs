@@ -27,10 +27,11 @@ assert(["sqlite", "postgres"].includes(driver));
       const notice = page.getByRole("status").filter({ hasText: "备份已创建" });
       await notice.waitFor();
       assert.match(await notice.innerText(), /backups\/.+/);
+      assert(await page.getByText("数据库路径", { exact: true }).isVisible());
     } else {
       assert.equal(await backup.count(), 0);
       assert(await page.getByText("由数据库服务管理", { exact: true }).isVisible());
-      assert(await page.getByText("本地数据路径", { exact: true }).isVisible());
+      assert.equal(await page.getByText(/本地数据路径|数据库路径/).count(), 0, "PostgreSQL hides the local data path");
     }
     await page.reload();
     await page.getByText(driver === "postgres" ? "PostgreSQL" : "SQLite", { exact: true }).waitFor();

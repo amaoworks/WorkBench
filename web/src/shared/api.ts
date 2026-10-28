@@ -10,14 +10,22 @@ export class APIError extends Error {
   }
 }
 
-async function getCSRFToken(): Promise<string> {
-  if (csrfToken) return csrfToken;
-  const response = await fetch("/api/auth/csrf", { credentials: "same-origin" });
-  if (!response.ok) throw new Error("无法初始化安全令牌");
-  const body = (await response.json()) as { token?: unknown } | null;
-  if (typeof body?.token !== "string" || !body.token) throw new Error("安全令牌响应格式不正确");
-  csrfToken = body.token;
-  return body.token;
+let csrfPending: Promise<string> | null = null;
+
+// Concurrent first writes share one token read.
+function getCSRFToken(): Promise<string> {
+  if (csrfToken) return Promise.resolve(csrfToken);
+  csrfPending ??= (async () => {
+    const response = await fetch("/api/auth/csrf", { credentials: "same-origin" });
+    if (!response.ok) throw new Error("无法初始化安全令牌");
+    const body = (await response.json()) as { token?: unknown } | null;
+    if (typeof body?.token !== "string" || !body.token) throw new Error("安全令牌响应格式不正确");
+    csrfToken = body.token;
+    return body.token;
+  })().finally(() => {
+    csrfPending = null;
+  });
+  return csrfPending;
 }
 
 export async function apiResponse(path: string, init: RequestInit = {}): Promise<Response> {

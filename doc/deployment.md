@@ -188,6 +188,8 @@ sudo chmod 700 data
 
 Schwab 的回调地址填写 `https://实际域名/oauth/schwab`，与 Developer Portal 登记完全一致；从同一个 HTTPS 入口开始授权。回调流程及排查见[配置与运行](configuration.md)。
 
+应用把 Schwab 连接失败返回为 JSON 格式的 502。浏览器收到代理生成的 HTML 502 时，检查代理到工作台的连接、工作台日志和实际加载的代理配置。
+
 ## 健康检查和运行信息
 
 `GET /health/live` 表示 HTTP 服务响应，`GET /health/ready` 检查数据库。健康路由无需登录，但仍受 Host 校验保护。

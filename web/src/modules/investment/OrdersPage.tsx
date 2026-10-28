@@ -1,5 +1,5 @@
 import { Link, useSearchParams } from "react-router-dom";
-import { Button, ButtonLink } from "../../components/ui/Button";
+import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { Notice } from "../../components/ui/Notice";
@@ -19,7 +19,7 @@ const RANGES = [
 ] as const;
 
 const STATUSES = [
-  { id: "all", label: "全部" },
+  { id: "all", label: "全部状态" },
   { id: "working", label: "进行中" },
   { id: "filled", label: "已成交" },
   { id: "canceled", label: "已撤销" },
@@ -43,15 +43,7 @@ const qty = new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 });
 export default function OrdersPage() {
   return (
     <div className="page orders-page">
-      <PageHeader
-        title="订单"
-        description="只读记录；下单、改单与撤单请在交易终端中操作。"
-        action={
-          <ButtonLink to="/investment" variant="secondary" size="sm">
-            打开交易终端
-          </ButtonLink>
-        }
-      />
+      <PageHeader title="订单" />
       <Orders />
     </div>
   );
@@ -75,7 +67,7 @@ function Orders() {
   const rows = orders.data?.items ?? [];
   return (
     <>
-      <div className="mb-5 flex flex-wrap items-center gap-3">
+      <div className="filter-toolbar">
         <div className="rtabs" role="group" aria-label="时间范围">
           {RANGES.map((item) => (
             <button
@@ -89,6 +81,7 @@ function Orders() {
             </button>
           ))}
         </div>
+        <span className="filter-sep" aria-hidden="true" />
         <div className="chip-row" role="group" aria-label="订单状态">
           {STATUSES.map((item) => (
             <button
@@ -119,7 +112,7 @@ function Orders() {
         <BrokerGate status={orders.data.status} message={orders.data.message} onRetry={() => orders.refetch()}>
         <Card className="data-table-card">
           {rows.length === 0 ? (
-            <EmptyState title="没有符合条件的订单" description={`${range.label}内没有${status.id === "all" ? "" : `「${status.label}」的`}订单。`} />
+            <EmptyState title="暂无订单" />
           ) : (
             <div className="data-table-scroll" tabIndex={0} aria-label="订单表格">
               <table className="data-table">

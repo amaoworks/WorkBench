@@ -1,0 +1,1 @@
+import{$ as e,nt as t}from"./Notice-CekgPcpX.js";var n=t(e(),1),r=(0,n.createContext)(null);function i(){return(0,n.useContext)(r)}function a(e){let t=i();(0,n.useEffect)(()=>{t?.setDirty(e)},[t,e]),(0,n.useEffect)(()=>()=>t?.setDirty(!1),[t])}export{a as n,i as r,r as t};

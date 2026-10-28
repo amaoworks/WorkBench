@@ -55,7 +55,6 @@ export default function TodoTodayWidget({ widget }: { widget: Widget }) {
           title: "今日待办",
           value: summaryCompleted,
           unit: `/ ${summaryTotal} 项完成${summaryData.overdue > 0 ? ` · ${summaryData.overdue} 项逾期` : ""}`,
-          phrase: `${summaryCompleted}/${summaryTotal} 项完成`,
           detail: nextItem ? `下一项：${nextItem.title}` : undefined,
           to: "/todo?view=today",
         }

@@ -53,7 +53,7 @@ Tool 风险分为 read_only、low_write、high_write。写工具需要幂等键�
 
 [WidgetDefinition](../internal/contracts/widget.go) 声明 ID、模块、schemaVersion、标题、widgetKind、dataRoute、尺寸和默认顺序。尺寸为 small/medium/large。导航用 `pageKey` 关联页面。
 
-前端 [ModuleUI](../web/src/modules/registry.ts) 提供 pages、widgets、可选 icons 和 settings。后端只能通过这些稳定标识选择本地编译的组件。Widget 接收 `{ widget }`，业务设置接收 `{ enabled }`。
+前端 [ModuleUI](../web/src/modules/registry.ts) 提供 pages、widgets，以及可选的 icons、settings、menu（顶部导航下拉项）和 subpages（子页面）。后端只能通过这些稳定标识选择本地编译的组件。Widget 接收 `{ widget }`，业务设置接收 `{ enabled }`。
 
 Dashboard 保存完整的 Widget 配置集合，包含 ID、visible、size、order；目录查询保留停用业务以便编辑偏好，展示查询只返回启用且可见的卡片。
 
@@ -80,8 +80,8 @@ JSON 错误使用 `code`、`message`，并可含 `details`、`requestId`，定�
 | * | `/api/modules/{id}/proxy/*` | 外部业务 API/WebSocket 代理，需已启用并确认 |
 | GET | `/api/dashboard`、`/api/dashboard/widgets` | 可见卡片、完整卡片目录 |
 | PUT / DELETE | `/api/dashboard/layout` | 保存 `{ items }` / 恢复默认布局 |
-| GET | `/api/notifications` | 支持 unread、limit、cursor 的列表 |
-| GET | `/api/notifications/unread-count`、`/api/notifications/stream` | 未读数、SSE |
+| GET | `/api/notifications` | 支持 source、unread、limit、cursor 的列表 |
+| GET | `/api/notifications/unread-count`、`/api/notifications/stream` | 未读数（可按 source 过滤）、SSE |
 | PUT | `/api/notifications/read`、`/api/notifications/archive` | 提交 `{ ids }` |
 | PUT | `/api/notifications/read-all` | 标记当前已有通知为已读 |
 | GET | `/api/ai/status` | AI 是否可用 |

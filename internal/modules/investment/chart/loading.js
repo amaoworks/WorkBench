@@ -79,7 +79,7 @@
     window.addEventListener('pagehide', cleanup, { once: true });
     slowTimer = setTimeout(() => {
         if (ready || failed) return;
-        message.textContent = '还在加载，首次打开可能较慢。可以继续等待，或重新加载。';
+        message.textContent = '还在加载';
         actions.hidden = false;
         notify('workbench.terminal.slow');
     }, SLOW_MS);

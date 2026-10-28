@@ -26,7 +26,6 @@ export function NotificationsOverview() {
           title: "通知",
           value: unread.data.count,
           unit: "条未读",
-          phrase: unread.data.count > 0 ? `${unread.data.count} 条未读通知` : undefined,
           detail: `${newest.title} · ${formatRelative(newest.createdAt)}`,
           to: unread.data.count > 0 ? "/notifications?filter=unread" : "/notifications",
         }

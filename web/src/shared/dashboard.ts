@@ -15,14 +15,12 @@ export type DashboardSignals = {
 
 /**
  * Compact figure a card contributes to the 今日概况 column and the headline sentence, e.g.
- * `{ title: "今日待办", value: 3, unit: "项待完成", phrase: "3 项待办" }`.
+ * `{ title: "今日待办", value: 3, unit: "项待完成" }`.
  */
 export type OverviewSummary = {
   title: string;
   value: number;
   unit: string;
-  /** Fragment for the headline sentence; omitted when the figure is not worth mentioning. */
-  phrase?: string;
   detail?: string;
   to: string;
 };

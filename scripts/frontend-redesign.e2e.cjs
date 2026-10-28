@@ -229,6 +229,22 @@ async function openModuleMenu(page, label) {
     await page.keyboard.press("Control+j");
     await aiPanel.waitFor({ state: "detached" });
 
+    // Settings is reached from the account menu only; the menu holds 设置 (and 退出登录 with a password) and nothing that duplicates settings.
+    assert.equal(await page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "设置", exact: true }).count(), 0);
+    await page.getByRole("button", { name: "账户菜单", exact: true }).click();
+    const accountMenu = page.getByRole("menu", { name: "账户菜单", exact: true });
+    for (const removed of ["外观", "账户安全"]) assert.equal(await accountMenu.getByRole("menuitem", { name: removed }).count(), 0, `account menu duplicates ${removed}`);
+    assert.equal(await accountMenu.getByRole("menuitemradio").count(), 0, "theme is chosen in settings, not the account menu");
+    assert.deepEqual((await accountMenu.getByRole("menuitem").allInnerTexts()).map((text) => text.trim()), ["设置"]);
+    await accountMenu.getByRole("menuitem", { name: "设置", exact: true }).click();
+    await expectURL(page, "/settings");
+    const palettes = page.getByRole("group", { name: "风格", exact: true });
+    await palettes.getByRole("button").first().waitFor();
+    assert.deepEqual((await palettes.getByRole("button").allInnerTexts()).map((text) => text.trim()), ["宝蓝", "陶橙"]);
+    assert.equal(await page.getByText(/TradingView|Claude/).count(), 0, "palette names must not expose third-party brands");
+    assert.equal(await page.locator(".workspace-avatar.is-active").count(), 1);
+    await page.goto(baseURL);
+
     // Desktop pointer and keyboard navigation.
     // Only 投资 declares a dropdown; the other top-level entries are plain links.
     let nav = await openModuleMenu(page, "投资");
@@ -276,7 +292,7 @@ async function openModuleMenu(page, label) {
 
     // Source and unread filters are server-side; a selected zero-result source remains clearable.
     await page.goto(`${baseURL}/notifications?filter=unread&source=todo`);
-    await page.getByText("此来源没有未读通知", { exact: true }).waitFor();
+    await page.getByText("暂无未读", { exact: true }).waitFor();
     assert.equal(await page.getByRole("button", { name: "待办", exact: true }).getAttribute("aria-pressed"), "true");
     await page.getByRole("button", { name: "清除来源", exact: true }).click();
     await page.waitForFunction(() => !new URL(location.href).searchParams.has("source"));
@@ -292,7 +308,9 @@ async function openModuleMenu(page, label) {
       }));
     }
     await page.goto(`${baseURL}/todo`);
-    await page.getByText("今天及逾期 10 项待完成", { exact: true }).waitFor();
+    await page.locator(".todo-page .cal-grid .cal").first().waitFor();
+    // Pages carry no status/summary line in the toolbar.
+    assert.equal(await page.locator(".page-toolbar-info").count(), 0);
     assert.equal(await page.locator(".todo-page .cal-grid .cal").count(), 8,
       "the agenda must show eight cards without truncating its total");
     for (const task of overdueTasks) await api(page, `/api/modules/todo/tasks/${task.id}`, "DELETE");
@@ -331,7 +349,7 @@ async function openModuleMenu(page, label) {
       }
     }
     for (const [status, expected] of [
-      ["unconfigured", "尚未连接券商"],
+      ["unconfigured", "未连接券商"],
       ["reauth", "Schwab 授权已失效"],
       ["error", "券商数据加载失败"],
     ]) {

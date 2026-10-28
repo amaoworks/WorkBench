@@ -38,7 +38,7 @@ PostgreSQL 另外保留一个连接会话，以 advisory lock 限制同一数据
 | 对话 | `ai_conversations`、`ai_messages` | 对话元数据和消息 |
 | 工具运行时 | `ai_tool_calls` | 工具执行、参数审计、幂等键和结果 |
 | 工作空间设置 | `workspace_settings` | 按 section 存储 JSON：`ai`、`appearance`、`dashboard`、`logging`、`telegram`、`telegram_status`；日志内容写入 stderr |
-| Todo | `todo_tasks` | 标题、说明、提醒时间、完成状态和创建/更新时间 |
+| Todo | `todo_tasks` | 标题、说明、提醒时间、优先级、分类、完成状态和创建/更新时间 |
 | Todo / Wallos | `todo_wallos_settings` | 联动配置、密钥、最近成功同步和错误 |
 | Todo / Wallos | `todo_wallos_occurrences` | 外部来源、订阅 ID、付款日期与待办映射 |
 | Investment | `investment_schwab` | App Key/Secret、回调、访问/刷新令牌、streamer 缓存和 OAuth state |
@@ -48,6 +48,7 @@ PostgreSQL 另外保留一个连接会话，以 advisory lock 限制同一数据
 | Investment | `investment_price_triggers` | `(rule_id, trading_date)` 唯一的触发快照、站内通知 ID；删除规则后保留 |
 | Investment | `investment_price_monitor` | 最近后台检查时间、状态和错误 |
 | Investment | `investment_watchlists` | 自选列表、分组和顺序、当前列表，以及防止迟到请求和旧窗口覆盖的编辑版本/会话/序号 |
+| Investment | `investment_networth_snapshots`、`investment_networth_account_scopes` | 账户每日净值快照；当前授权可见的账户范围 |
 | Investment | `investment_preferences` | 图表选择、完整图表与指标/画线、TradingView 偏好、当前交易账户、页面视图，以及各项独立的编辑版本/会话/序号 |
 | News | `news_sources`、`news_origins` | 来源配置、条件请求与退避状态、条目身份和出处 |
 | News | `news_articles`、`news_rules` | 文章、阅读状态、匹配规则、翻译摘要及缓存 |
@@ -61,7 +62,7 @@ PostgreSQL 另外保留一个连接会话，以 advisory lock 限制同一数据
 
 两个方言的迁移文件随归属包保存在同一个嵌入文件系统中，使用相同版本号表达相同结构。PostgreSQL DDL 使用 `BIGINT` 保持 Go `int64` 和 Unix 毫秒语义，二进制与浮点列分别使用 `BYTEA` 和 `DOUBLE PRECISION`，JSON 继续以 `TEXT` 保存并在约束中校验。业务已有数据库升级应为两个方言添加后续迁移，避免改写已执行迁移的含义。模块迁移在注册目录构建前执行，注册失败不自动回滚先前迁移。
 
-[sqlc.yaml](../sqlc.yaml) 使用 SQLite engine 为平台、Todo、Investment 分别配置 schema、query 和生成目录。固定查询集中在各自 `query/`，生成代码在 `sqlc/`，由两种数据库共用；PostgreSQL 驱动在执行和预处理时将 `?`、`?N` 占位符转换为 `$N`。动态 IN、SQLite PRAGMA 及当前设置等少量方言 SQL 直接在实现中执行。测试脚本比较重新生成前后的所有 sqlc 目录，检测漂移。
+[sqlc.yaml](../sqlc.yaml) 使用 SQLite engine 为平台、资讯、Todo、Investment 分别配置 schema、query 和生成目录。固定查询集中在各自 `query/`，生成代码在 `sqlc/`，由两种数据库共用；PostgreSQL 驱动在执行和预处理时将 `?`、`?N` 占位符转换为 `$N`。动态 IN、SQLite PRAGMA 及当前设置等少量方言 SQL 直接在实现中执行。测试脚本比较重新生成前后的所有 sqlc 目录，检测漂移。
 
 ## 事务和幂等
 

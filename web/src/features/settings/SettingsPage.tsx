@@ -398,8 +398,9 @@ function AppearanceForm({ value }: { value: Settings }) {
   const save = useAppearance();
   const { theme, motion, palette = "default" } = value.appearance;
   const palettes = [
-    { id: "default", title: "TradingView（默认）", color: "#2962ff" },
-    { id: "claude", title: "暖陶（Claude）", color: "#cc785c" },
+    // Stored ids stay "default" / "claude" so saved choices keep working; only the labels are colour names.
+    { id: "default", title: "宝蓝", color: "#2962ff" },
+    { id: "claude", title: "陶橙", color: "#cc785c" },
   ] as const;
   const themes = [
     { id: "light", title: "浅色", icon: Sun },
@@ -472,7 +473,7 @@ function DataPanel({ value }: { value: Settings }) {
       </SettingsRow>
       {!deployment.backupSupported && (
         <p className="settings-note">
-          使用数据库服务的备份或 <code>pg_dump</code>；本地数据路径中的运行文件需另行备份。
+          用 <code>pg_dump</code> 或数据库服务备份，运行文件另行备份
         </p>
       )}
       {file && (
@@ -493,10 +494,12 @@ function DataPanel({ value }: { value: Settings }) {
             <dt>数据库</dt>
             <dd>{deployment.databaseDriver === "postgres" ? "PostgreSQL" : "SQLite"}</dd>
           </div>
-          <div>
-            <dt>{deployment.databaseDriver === "postgres" ? "本地数据路径" : "数据库路径"}</dt>
-            <dd>{deployment.dataPath}</dd>
-          </div>
+          {deployment.databaseDriver !== "postgres" && (
+            <div>
+              <dt>数据库路径</dt>
+              <dd>{deployment.dataPath}</dd>
+            </div>
+          )}
           <div>
             <dt>认证模式</dt>
             <dd>{deployment.authMode === "password" ? "密码登录" : "本机免登录"}</dd>

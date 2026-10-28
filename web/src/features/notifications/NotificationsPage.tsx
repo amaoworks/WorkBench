@@ -85,23 +85,8 @@ export default function NotificationsPage() {
   };
   return (
     <div className="page notifications-page">
-      <PageHeader
-        title="通知"
-        description={unread.data ? `${unreadCount > 0 ? `${unreadCount} 条未读` : "没有未读通知"} · 待办、资讯、投资与系统消息` : undefined}
-        action={
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={markAll.isPending || unreadCount === 0}
-            title={unreadCount === 0 ? "没有未读通知" : undefined}
-            onClick={() => markAll.mutate()}
-          >
-            <CheckCheck size={15} />
-            全部已读
-          </Button>
-        }
-      />
-      <div className="mb-5 flex flex-wrap items-center gap-3">
+      <PageHeader title="通知" />
+      <div className="filter-toolbar">
         <nav className="rtabs" aria-label="通知筛选">
           <Link to={link({ filter: null })} className={cn("rtab sm focus-ring", !unreadOnly && "is-active")} aria-current={!unreadOnly ? "page" : undefined}>
             全部
@@ -110,6 +95,7 @@ export default function NotificationsPage() {
             未读
           </Link>
         </nav>
+        {(source || sources.length > 1) && <span className="filter-sep" aria-hidden="true" />}
         {(source || sources.length > 1) && (
           <div className="chip-row" role="group" aria-label="来源">
             <button
@@ -131,6 +117,17 @@ export default function NotificationsPage() {
             ))}
           </div>
         )}
+        <Button
+          className="ml-auto"
+          variant="secondary"
+          size="sm"
+          disabled={markAll.isPending || unreadCount === 0}
+          title={unreadCount === 0 ? "没有未读通知" : undefined}
+          onClick={() => markAll.mutate()}
+        >
+          <CheckCheck size={15} />
+          全部已读
+        </Button>
       </div>
       {notifications.isLoading && (
         <Card className="space-y-3 p-4">
@@ -146,10 +143,7 @@ export default function NotificationsPage() {
       {notifications.data && items.length === 0 && (
         <Card>
           <EmptyState
-            title={source ? (unreadOnly ? "此来源没有未读通知" : "此来源暂无通知") : unreadOnly ? "没有未读通知" : "暂无通知"}
-            description={
-              source ? undefined : unreadOnly ? "所有通知都已读过。" : "待办到期或工作空间有重要变化时，会在这里提醒你。"
-            }
+            title={unreadOnly ? "暂无未读" : "暂无通知"}
             action={
               source ? (
                 <Button variant="secondary" size="sm" onClick={() => setParams(nextParams({ source: null }), { replace: true })}>

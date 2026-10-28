@@ -48,7 +48,7 @@ export function NetWorthHistory() {
       ) : history.data.status !== "ready" ? (
         <Notice title={history.data.message ?? "净值历史暂不可用"} />
       ) : chart.dots.length === 0 ? (
-        <EmptyState title="暂无净值记录" description="记录将在账户连接后及每个工作日美东时间 16:15 更新。" />
+        <EmptyState title="暂无净值记录" />
       ) : (
         <>
           <svg viewBox="0 0 600 180" className="block w-full text-[var(--brand)]" role="img" aria-labelledby={id + "-chart"}>

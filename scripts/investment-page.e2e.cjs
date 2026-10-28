@@ -7,12 +7,11 @@ const { join } = require("node:path");
 const { spawn } = require("node:child_process");
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 
-// Theme choices live in the top-bar account menu; pick the opposite of the current theme.
+// Theme is chosen on the settings page; the default follows the system, so flip the
+// system scheme to switch themes without leaving the investment page.
 async function toggleTheme(page) {
   const dark = await page.evaluate(() => document.documentElement.classList.contains("dark"));
-  await page.getByRole("button", { name: "账户菜单", exact: true }).click();
-  await page.getByRole("menuitemradio", { name: dark ? "浅色" : "深色", exact: true }).click();
-  await page.keyboard.press("Escape");
+  await page.emulateMedia({ colorScheme: dark ? "light" : "dark" });
 }
 
 (async () => {
@@ -60,7 +59,7 @@ async function toggleTheme(page) {
     });
     const page = await context.newPage();
     await page.goto(`${baseURL}/investment`, { waitUntil: "domcontentloaded" });
-    const iframe = page.locator("iframe[title='TradingView 投资终端']");
+    const iframe = page.locator("iframe[title='投资终端']");
     await iframe.waitFor();
     await firstTerminalRequested;
     // Messages sent before the terminal document loads must be recovered on load.
@@ -71,7 +70,7 @@ async function toggleTheme(page) {
       await page.waitForFunction(expected => document.documentElement.classList.contains("dark") === (expected === "dark"), loadingTheme);
     }
     releaseFirstTerminal();
-    const chart = page.frameLocator("iframe[title='TradingView 投资终端']");
+    const chart = page.frameLocator("iframe[title='投资终端']");
     await chart.getByText("终端布局测试").waitFor();
     await iframe.evaluate(element => { window.originalChart = element; element.contentWindow.chartState.interval = "5m"; });
     let original = await iframe.evaluate(element => element.contentWindow.chartState);
@@ -81,7 +80,7 @@ async function toggleTheme(page) {
     };
     const checkTheme = async theme => {
       await page.waitForFunction(expected => document.documentElement.classList.contains("dark") === (expected === "dark"), theme);
-      await page.waitForFunction(expected => document.querySelector("iframe[title='TradingView 投资终端']")?.contentWindow.chartTheme === expected, theme, { timeout: 5000 });
+      await page.waitForFunction(expected => document.querySelector("iframe[title='投资终端']")?.contentWindow.chartTheme === expected, theme, { timeout: 5000 });
       await checkChartPreserved();
     };
     await checkTheme(loadingTheme);
@@ -113,7 +112,9 @@ async function toggleTheme(page) {
     await page.screenshot({ path: join(tmpdir(), "workbench-investment-mobile.png"), fullPage: true });
     await page.setViewportSize({ width: 1440, height: 1000 });
     // System appearance changes must propagate without navigating or reloading the chart.
-    await page.getByRole("link", { name: "设置", exact: true }).click();
+    // Settings lives in the account menu, not the top bar.
+    await page.getByRole("button", { name: "账户菜单", exact: true }).click();
+    await page.getByRole("menuitem", { name: "设置", exact: true }).click();
     await page.getByRole("link", { name: "外观", exact: true }).click();
     await Promise.all([
       page.waitForResponse(response => response.url().endsWith("/api/settings/appearance") && response.request().method() === "PUT"),

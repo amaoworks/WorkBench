@@ -1,11 +1,18 @@
 import { schwabFetch } from './schwab.js';
 import { buildOrder, flattenOrders, mapOrder, mapPositions } from './broker-models.js';
 
-const ORDER_LIMIT = 3000;
+// Schwab has no cursor; a full page is split by time (see _readRange).
+const ORDER_LIMIT = 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const YEAR_MS = 365 * DAY_MS;
-// The terminal keeps a 180-day order snapshot; older history stays in Schwab.
+// The terminal keeps up to 180 days of orders; older history stays in Schwab.
 const ORDER_WINDOW_MS = 180 * DAY_MS;
+// Startup reads all orders of the last 30 days plus WORKING orders back to 180
+// days (Schwab filters one status per request). The rest of the 180 days, which
+// also holds any other old non-terminal order, is read after startup settles or
+// when the order history is requested, whichever comes first.
+const STARTUP_MS = 30 * DAY_MS;
+const HISTORY_DELAY_MS = 3000;
 // Polls and account activity re-read only recent orders (plus any older working
 // order) and merge them into the startup snapshot instead of the whole window.
 const RECENT_MS = 3 * DAY_MS;
@@ -27,13 +34,23 @@ const byRecent = (a, b) => (b.updateTime || 0) - (a.updateTime || 0);
 // itself an order change and must not turn every poll into an update event.
 const orderSignature = order => JSON.stringify({ ...order, updateTime: undefined });
 
+function isAccountChange(item) {
+    if (!item) return true;
+    if (!Array.isArray(item.content)) return false;
+    return item.content.some(entry => entry?.['2'] !== 'SUBSCRIBED');
+}
+// Positions read by the chart, the account manager and the refresh loop within a
+// moment of each other share one Schwab response. Account activity and polls
+// bump the order generation and therefore always read fresh positions.
+const POSITIONS_REUSE_MS = 2000;
+
 function accountLabel(accountNumber) {
     const digits = String(accountNumber).replace(/\D/g, '');
     return digits ? `Schwab …${digits.slice(-4)}` : 'Schwab';
 }
 
 export default class Broker {
-    constructor(host, { request = schwabFetch, events = window, pollInterval = 15000, preferredAccount = '', onAccountChanged = () => {}, startAfter } = {}) {
+    constructor(host, { request = schwabFetch, events = window, pollInterval = 15000, historyDelay = HISTORY_DELAY_MS, preferredAccount = '', onAccountChanged = () => {}, startAfter } = {}) {
         this.host = host;
         this.request = request;
         this.events = events;
@@ -50,11 +67,15 @@ export default class Broker {
         this._orderSignatures = undefined;
         this._ordersGeneration = 0;
         this._pollInterval = pollInterval;
+        this._historyDelay = historyDelay;
         this._controller = new AbortController();
         // Stream ready during the constructor's first init must not start a second
         // account load. A ready event after that init is a real reconnect.
         this._boot = true;
-        this._onActivity = () => this._scheduleRefresh();
+        // The stream confirms the ACCT_ACTIVITY subscription with a command response
+        // and a SUBSCRIBED message. Neither is an account change, so neither may
+        // add an order re-read on top of the startup snapshot.
+        this._onActivity = event => { if (isAccountChange(event?.detail)) this._scheduleRefresh(); };
         this._onReady = () => {
             if (this._boot || this._destroyed) return;
             this._ready = this._init();
@@ -67,8 +88,8 @@ export default class Broker {
         // Calling connectionStatusUpdate in this constructor aborts initialization
         // inside TradingView before even requesting the account list. A new task
         // lets the host's promise continuations finish; a microtask alone is too early.
-        // `startAfter` lets the terminal hold the account reads (accounts, 180 days
-        // of orders, positions, executions) until the first chart is drawn, so
+        // `startAfter` lets the terminal hold the account reads (accounts, recent
+        // orders, positions, executions) until the first chart is drawn, so
         // they do not compete with the chart's own startup requests.
         const start = startAfter ? Promise.resolve(startAfter).catch(() => {}) : undefined;
         this._ready = new Promise(resolve => setTimeout(resolve, 0)).then(() => start).then(() => {
@@ -86,6 +107,10 @@ export default class Broker {
         this._ordersSnapshot = undefined;
         this._ordersInflight = undefined;
         this._orderSignatures = undefined;
+        this._historyInflight = undefined;
+        this._historyFrom = undefined;
+        clearTimeout(this._historyTimer);
+        this._historyTimer = undefined;
     }
     async _init() {
         const preferredAccount = this._preferredAccount;
@@ -112,7 +137,7 @@ export default class Broker {
             this._setStatus(1);
             this.host.currentAccountUpdate();
             // The library is about to call orders() and ordersHistory() itself.
-            // Reuse that read instead of starting a second 180-day download.
+            // Reuse that read instead of starting a second startup download.
             this._scheduleRefresh(true);
         } catch (error) {
             if (epoch !== this._epoch) return;
@@ -213,7 +238,7 @@ export default class Broker {
     }
     _armPoll() {
         // The interval starts only after the first order read settles, so a short
-        // poll cannot add another 180-day request while that read is in flight.
+        // poll cannot add another startup-sized request while that read is in flight.
         if (this._poll || this._destroyed || !(this._pollInterval > 0)) return;
         this._poll = setInterval(() => this._scheduleRefresh(), this._pollInterval);
     }
@@ -229,7 +254,7 @@ export default class Broker {
             // including fills and events with no identifiable account in their payload.
             // The startup refresh reuses the read already started for orders()/ordersHistory().
             if (!reuse) this._ordersSnapshot = undefined;
-            const [orders, positions] = await Promise.all([this._loadOrders({ incremental: !reuse }), this.positions()]);
+            const [orders, positions] = await Promise.all([this._loadOrders(), this.positions()]);
             if (epoch !== this._epoch || this._destroyed) return;
             for (const order of orders) {
                 const signature = orderSignature(order);
@@ -238,6 +263,7 @@ export default class Broker {
                 this.host.orderUpdate(order);
             }
             positions.forEach(position => this.host.positionUpdate?.(position));
+            this._scheduleHistory();
             if (this._ordersGeneration !== joined && !this._refreshTimer) void this._refresh(false);
         } catch (error) {
             if (epoch !== this._epoch || this._destroyed) return;
@@ -269,18 +295,34 @@ export default class Broker {
     }
     async positions() {
         const context = await this._context();
-        const data = await this._json(context, '?fields=positions');
-        const account = data.securitiesAccount;
-        if (!account || (account.positions != null && !Array.isArray(account.positions))) throw new Error('Schwab 持仓响应无效');
-        this._applyBalances(account);
-        return mapPositions(account.positions || []);
+        // The chart and the refresh loop ask for positions at the same moment on
+        // startup and after account events. Concurrent callers share one read.
+        const generation = this._ordersGeneration;
+        let pending = this._positionsInflight;
+        const fresh = pending && pending.epoch === context.epoch && pending.account === context.account
+            && pending.generation === generation && (!pending.settledAt || Date.now() - pending.settledAt < POSITIONS_REUSE_MS);
+        if (!fresh) {
+            const promise = this._json(context, '?fields=positions').then(data => {
+                const account = data.securitiesAccount;
+                if (!account || (account.positions != null && !Array.isArray(account.positions))) throw new Error('Schwab 持仓响应无效');
+                this._applyBalances(account);
+                return account.positions || [];
+            });
+            const entry = pending = this._positionsInflight = { epoch: context.epoch, account: context.account, generation, promise };
+            promise.then(() => { entry.settledAt = Date.now(); }, () => {
+                if (this._positionsInflight === entry) this._positionsInflight = undefined;
+            });
+        }
+        return mapPositions(await pending.promise);
     }
-    async _loadOrders({ incremental = false } = {}) {
+    async _loadOrders() {
         const context = await this._context();
         const generation = this._ordersGeneration;
         if (this._ordersSnapshot?.epoch === context.epoch && this._ordersSnapshot.generation === generation) return this._ordersSnapshot.mapped;
         if (this._ordersInflight?.epoch === context.epoch) return this._ordersInflight.promise;
-        const promise = this._readOrders(context, generation, incremental && this._fullOrdersEpoch === context.epoch);
+        // After the startup read of an account, every read updates the stored
+        // orders instead of replacing them (and dropping loaded history).
+        const promise = this._readOrders(context, generation, this._fullOrdersEpoch === context.epoch);
         this._ordersInflight = { epoch: context.epoch, generation, promise };
         // The caller observes `promise`. This side chain must not surface the same rejection again.
         promise.finally(() => {
@@ -298,42 +340,121 @@ export default class Broker {
         }
         return Math.max(from, to - ORDER_WINDOW_MS);
     }
+    async _readRange(context, from, until, status, budget) {
+        if (++budget.requests > 128) throw new Error('订单过多，无法完整读取，请在 Schwab 查看');
+        const params = new URLSearchParams({ fromEnteredTime: new Date(from).toISOString(), toEnteredTime: new Date(until).toISOString(), maxResults: String(ORDER_LIMIT) });
+        if (status) params.set('status', status);
+        const data = await this._json(context, `/orders?${params}`);
+        if (!Array.isArray(data)) throw new Error('Schwab 订单响应无效');
+        if (data.length < ORDER_LIMIT) return data;
+        // Schwab has a result cap but no cursor. Split the time range, overlap the
+        // boundary, then deduplicate. Never report a truncated list as complete.
+        if (until - from <= 1) throw new Error('订单结果达到上限，无法完整读取');
+        const middle = Math.floor((from + until) / 2);
+        return [...await this._readRange(context, from, middle, status, budget), ...await this._readRange(context, middle, until, status, budget)];
+    }
+    _storeOrders(all) {
+        const mapped = [...all.values()].filter(o => o.orderLegCollection?.length).map(mapOrder).sort(byRecent);
+        this._rawOrders = all;
+        this._orders = new Map(mapped.map(order => [order.id, order]));
+        return mapped;
+    }
     async _readOrders(context, generation, incremental = false) {
         const to = Date.now();
-        let requests = 0;
-        const readRange = async (from, until) => {
-            if (++requests > 128) throw new Error('订单过多，无法完整读取，请在 Schwab 查看');
-            const params = new URLSearchParams({ fromEnteredTime: new Date(from).toISOString(), toEnteredTime: new Date(until).toISOString(), maxResults: String(ORDER_LIMIT) });
-            const data = await this._json(context, `/orders?${params}`);
-            if (!Array.isArray(data)) throw new Error('Schwab 订单响应无效');
-            if (data.length < ORDER_LIMIT) return data;
-            // Schwab has a result cap but no cursor. Split the time range, overlap the
-            // boundary, then deduplicate. Never report a truncated list as complete.
-            if (until - from <= 1) throw new Error('订单结果达到上限，无法完整读取');
-            const middle = Math.floor((from + until) / 2);
-            return [...await readRange(from, middle), ...await readRange(middle, until)];
-        };
-        const raw = flattenOrders(await readRange(incremental ? this._incrementalFrom(to) : to - ORDER_WINDOW_MS, to));
+        const budget = { requests: 0 };
+        let raw;
+        if (incremental) {
+            raw = await this._readRange(context, this._incrementalFrom(to), to, '', budget);
+        } else {
+            // Startup: everything recent, plus older WORKING orders (the usual
+            // long-lived GTC case) so they show up without the full history read.
+            const recentFrom = to - STARTUP_MS;
+            const [recent, working] = await Promise.all([
+                this._readRange(context, recentFrom, to, '', budget),
+                this._readRange(context, to - ORDER_WINDOW_MS, recentFrom, 'WORKING', budget),
+            ]);
+            raw = [...working, ...recent];
+            this._historyFrom = recentFrom;
+        }
+        raw = flattenOrders(raw);
         this._checkContext(context);
-        // An incremental read updates the recent part of the startup snapshot; older
+        // An incremental read updates the recent part of the stored orders; older
         // orders outside its range are final and keep their stored state.
         const all = new Map(incremental ? this._rawOrders : []);
         for (const order of raw) all.set(String(order.orderId), order);
         if (!incremental) this._fullOrdersEpoch = context.epoch;
-        const mapped = [...all.values()].filter(o => o.orderLegCollection?.length).map(mapOrder).sort(byRecent);
-        this._rawOrders = all;
-        this._orders = new Map(mapped.map(order => [order.id, order]));
+        const mapped = this._storeOrders(all);
         // Initial data is returned through orders()/ordersHistory(). Replaying
         // it through orderUpdate would announce old fills/cancellations again.
         this._orderSignatures ??= new Map(mapped.map(order => [order.id, orderSignature(order)]));
         this._ordersSnapshot = { epoch: context.epoch, generation, mapped };
         return mapped;
     }
+    _scheduleHistory() {
+        if (this._historyEpoch === this._epoch || this._historyTimer || this._destroyed) return;
+        this._historyTimer = setTimeout(() => {
+            this._historyTimer = undefined;
+            // A background prefetch reports through _loadHistory and retries on a
+            // later poll, but must not create an unhandled rejected promise.
+            void this._loadHistory().catch(() => {});
+        }, this._historyDelay);
+    }
+    // Reads the rest of the 180-day window once per account connection and adds
+    // it silently: these orders are not news. A full update makes the library
+    // re-read orders(), which adds older working orders found here.
+    async _loadHistory() {
+        if (this._historyEpoch === this._epoch || this._historyInflight?.epoch === this._epoch) return this._historyInflight?.promise;
+        clearTimeout(this._historyTimer);
+        this._historyTimer = undefined;
+        const entry = { epoch: this._epoch };
+        entry.promise = (async () => {
+            try {
+                await this._loadOrders();
+                const context = await this._context();
+                if (context.epoch !== entry.epoch) throw new Error('账户已切换，请重试');
+                const until = this._historyFrom ?? Date.now();
+                const raw = flattenOrders(await this._readRange(context, Date.now() - ORDER_WINDOW_MS, until, '', { requests: 0 }));
+                this._checkContext(context);
+                // Orders already stored came from a newer read; keep them.
+                const all = new Map(this._rawOrders);
+                let added = 0;
+                for (const order of raw) {
+                    const id = String(order.orderId);
+                    if (!all.has(id)) { all.set(id, order); added++; }
+                }
+                this._historyEpoch = context.epoch;
+                if (!added) return;
+                const mapped = this._storeOrders(all);
+                for (const order of mapped) if (!this._orderSignatures?.has(order.id)) this._orderSignatures?.set(order.id, orderSignature(order));
+                if (this._ordersSnapshot?.epoch === context.epoch) this._ordersSnapshot = { ...this._ordersSnapshot, mapped };
+                this.host.ordersFullUpdate();
+            } catch (error) {
+                // The next poll retries. Report a failure once per connection.
+                if (entry.epoch === this._epoch && !this._destroyed && this._historyErrorEpoch !== entry.epoch) {
+                    this._historyErrorEpoch = entry.epoch;
+                    this._notify(error);
+                }
+                throw error;
+            } finally {
+                if (this._historyInflight === entry) this._historyInflight = undefined;
+            }
+        })();
+        this._historyInflight = entry;
+        return entry.promise;
+    }
     async orders() {
         return (await this._loadOrders()).filter(order => order.status === WORKING);
     }
     async ordersHistory() {
-        return (await this._loadOrders()).filter(order => order.status !== WORKING);
+        // The library asks for the history once when the account manager opens
+        // and does not ask again on ordersFullUpdate(), so the answer waits for
+        // the older range. orders() does not wait and shows working orders first.
+        const initialContext = await this._context();
+        await this._loadOrders();
+        await this._loadHistory();
+        const orders = await this._loadOrders();
+        this._checkContext(initialContext);
+        return orders.filter(order => order.status !== WORKING);
     }
     async executions(symbol) {
         const context = await this._context();
@@ -410,6 +531,7 @@ export default class Broker {
         this._invalidate();
         clearInterval(this._poll);
         clearTimeout(this._refreshTimer);
+        clearTimeout(this._historyTimer);
         this.events.removeEventListener('ACCT_ACTIVITY', this._onActivity);
         this.events.removeEventListener('SCHWAB_STREAM_READY', this._onReady);
         this.events.removeEventListener('SCHWAB_STREAM_CLOSED', this._onDisconnect);

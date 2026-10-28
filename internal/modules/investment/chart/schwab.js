@@ -1,14 +1,20 @@
 const PREFIX = "/api/modules/investment/schwab";
 
 let csrfToken = null;
+let csrfPending = null;
 
-async function csrf() {
-  if (csrfToken) return csrfToken;
-  const response = await fetch("/api/auth/csrf", { credentials: "same-origin" });
-  if (!response.ok) throw new Error("无法获取 CSRF");
-  const body = await response.json();
-  csrfToken = body.token;
-  return csrfToken;
+// Concurrent first writes share one token read.
+function csrf() {
+  if (csrfToken) return Promise.resolve(csrfToken);
+  csrfPending ??= fetch("/api/auth/csrf", { credentials: "same-origin" })
+    .then(async (response) => {
+      if (!response.ok) throw new Error("无法获取 CSRF");
+      const body = await response.json();
+      csrfToken = body.token;
+      return csrfToken;
+    })
+    .finally(() => { csrfPending = null; });
+  return csrfPending;
 }
 
 export async function schwabFetch(path, init = {}) {

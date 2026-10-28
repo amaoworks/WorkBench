@@ -32,13 +32,13 @@ export default function InvestmentSnapshotWidget({ widget }: { widget: Widget })
   if (data.status === "disconnected")
     return (
       <WidgetSetup action={<ButtonLink size="sm" variant="secondary" to="/settings?tab=modules">去配置</ButtonLink>}>
-        尚未连接 Schwab，连接后显示净值、当日盈亏和持仓贡献。
+        未连接 Schwab
       </WidgetSetup>
     );
   if (data.status === "reauth")
     return (
       <WidgetSetup action={<Button size="sm" onClick={() => { window.location.href = "/api/modules/investment/schwab/oauth/login"; }}>重新授权</Button>}>
-        Schwab 授权已失效，重新授权后恢复资产数据。
+        Schwab 授权已失效
       </WidgetSetup>
     );
   const hasData = data.accounts > 0;
@@ -88,7 +88,7 @@ export default function InvestmentSnapshotWidget({ widget }: { widget: Widget })
             <span>当日盈亏</span>
           </div>
           {data.movers.length === 0 ? (
-            <p className="text-sm text-[var(--muted)]">{data.positions === 0 ? "当前没有持仓。" : "今日暂无明显波动。"}</p>
+            <p className="text-sm text-[var(--muted)]">{data.positions === 0 ? "暂无持仓" : "今日无明显波动"}</p>
           ) : (
             <ul className="ov-movers" aria-label="今日贡献最大">
               {data.movers.map((mover) => (

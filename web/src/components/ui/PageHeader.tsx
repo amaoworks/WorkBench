@@ -2,12 +2,11 @@ import type { ReactNode } from "react";
 
 /**
  * Page toolbar. Only the overview shows a large title; every other page is already named by the
- * top-bar entry or its menu item, so the title is screen-reader only and the row keeps just the
- * informative parts: a short status/data summary and the page actions.
+ * top-bar entry or its menu item, so the title is screen-reader only. The visible row holds page
+ * actions only — no status or explanatory lines, which would repeat what the page already shows.
  */
-export function PageHeader({ title, description, action }: { title: string; description?: ReactNode; action?: ReactNode }) {
-  // Nothing informative to show: keep only the screen-reader title and the top spacing.
-  if (!description && !action)
+export function PageHeader({ title, action }: { title: string; action?: ReactNode }) {
+  if (!action)
     return (
       <header className="page-toolbar-empty">
         <h1 className="sr-only">{title}</h1>
@@ -16,8 +15,7 @@ export function PageHeader({ title, description, action }: { title: string; desc
   return (
     <header className="page-toolbar">
       <h1 className="sr-only">{title}</h1>
-      <div className="page-toolbar-info">{description}</div>
-      {action && <div className="page-toolbar-action">{action}</div>}
+      <div className="page-toolbar-action">{action}</div>
     </header>
   );
 }

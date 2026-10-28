@@ -227,37 +227,178 @@ test('account activity updates rows without clearing the account manager', async
     assert.equal(positionsFull, before.positionsFull);
 });
 
-test('the initial order range covers 180 days and capped result windows are split', async t => {
-    let rangeCalls = 0;
+test('startup reads 30 days of orders plus older working orders, and capped result windows are split', async t => {
+    const day = 86400000;
+    const reads = [];
+    let recentCalls = 0;
     const { broker } = await setup(t, path => {
         if (!path.includes('/orders?')) return;
-        rangeCalls++;
         const params = new URL(path, 'http://localhost').searchParams;
-        assert.equal(params.get('maxResults'), '3000');
-        if (rangeCalls === 1) {
-            assert.ok(Date.parse(params.get('toEnteredTime')) - Date.parse(params.get('fromEnteredTime')) >= 180 * 86400000 - 1000);
-            return json(Array(3000).fill(rawOrder));
-        }
-        return json([{ ...rawOrder, orderId: rangeCalls === 2 ? 42 : 43 }]);
-    });
-    const [working, history] = await Promise.all([broker.orders(), broker.ordersHistory()]);
-    assert.deepEqual(working.map(o => o.id), ['42', '43']);
-    assert.deepEqual(history, []);
-    assert.equal(rangeCalls, 3);
+        const days = (Date.parse(params.get('toEnteredTime')) - Date.parse(params.get('fromEnteredTime'))) / day;
+        reads.push({ days, status: params.get('status'), maxResults: params.get('maxResults') });
+        if (params.get('status') === 'WORKING') return json([{ ...rawOrder, orderId: 44 }]);
+        recentCalls++;
+        if (recentCalls === 1) return json(Array(1000).fill(rawOrder));
+        return json([{ ...rawOrder, orderId: recentCalls === 2 ? 42 : 43 }]);
+    }, { historyDelay: 60000 });
+    const working = await broker.orders();
+    assert.deepEqual(working.map(o => o.id).sort(), ['42', '43', '44']);
+    assert.ok(reads.every(read => read.maxResults === '1000'));
+    assert.ok(Math.abs(reads[0].days - 30) < 0.01 && reads[0].status === null, JSON.stringify(reads[0]));
+    assert.ok(Math.abs(reads[1].days - 150) < 0.01 && reads[1].status === 'WORKING', JSON.stringify(reads[1]));
+    assert.equal(reads.length, 4);
 });
 
-test('startup shares one 180-day order read and the poll waits until it finishes', async t => {
+test('older history is read once, after startup or when the history is requested, and added silently', async t => {
+    const day = 86400000;
+    const now = Date.now();
+    const reads = [];
+    let fullUpdates = 0;
+    const recentFilled = { ...rawOrder, orderId: 1, status: 'FILLED', enteredTime: new Date(now - 5 * day).toISOString() };
+    const oldFilled = { ...rawOrder, orderId: 2, status: 'FILLED', enteredTime: new Date(now - 100 * day).toISOString() };
+    const oldWorking = { ...rawOrder, orderId: 3, enteredTime: new Date(now - 60 * day).toISOString() };
+    // Entry filled long ago, exit still working: only the history read finds it.
+    const bracket = { ...rawOrder, orderId: 4, status: 'FILLED', orderStrategyType: 'TRIGGER', enteredTime: new Date(now - 90 * day).toISOString(), childOrderStrategies: [{ ...rawOrder, orderId: 5, enteredTime: new Date(now - 90 * day).toISOString() }] };
+    const all = [recentFilled, oldFilled, oldWorking, bracket];
+    const { broker, updates } = await setup(t, path => {
+        if (!path.includes('/orders?')) return;
+        const params = new URL(path, 'http://localhost').searchParams;
+        const from = Date.parse(params.get('fromEnteredTime')), to = Date.parse(params.get('toEnteredTime')), status = params.get('status');
+        reads.push({ days: (to - from) / day, status });
+        return json(all.filter(order => { const at = Date.parse(order.enteredTime); return at >= from && at <= to && (!status || order.status === status); }));
+    }, { historyDelay: 60000 });
+    broker.host.ordersFullUpdate = () => { fullUpdates++; };
+    assert.deepEqual((await broker.orders()).map(o => o.id), ['3']);
+    assert.equal(reads.length, 2);
+    // Requesting the history reads the remaining range at once and waits for it.
+    assert.deepEqual((await broker.ordersHistory()).map(o => o.id).sort(), ['1', '2', '4']);
+    assert.equal(reads.length, 3);
+    assert.ok(Math.abs(reads[2].days - 150) < 0.01 && reads[2].status === null, JSON.stringify(reads[2]));
+    assert.equal(fullUpdates, 1);
+    assert.deepEqual((await broker.orders()).map(o => o.id).sort(), ['3', '5']);
+    assert.deepEqual((await broker.ordersHistory()).map(o => o.id).sort(), ['1', '2', '4']);
+    assert.deepEqual(updates, []);
+    await broker.ordersHistory();
+    await broker._loadHistory();
+    assert.equal(reads.length, 3, 'history is read once per account connection');
+    // The poll keeps watching every stored working order, old ones included.
+    await broker._refresh();
+    assert.ok(reads[3].days > 89 && reads[3].days < 91, JSON.stringify(reads[3]));
+});
+
+test('without a history request the older orders are read after the startup delay', async t => {
+    const reads = [];
+    const { broker } = await setup(t, path => {
+        if (path.includes('/orders?')) reads.push(new URL(path, 'http://localhost').searchParams.get('status'));
+    }, { historyDelay: 20 });
+    await broker._refresh(true);
+    assert.equal(reads.length, 2);
+    await until(() => reads.length === 3);
+    assert.equal(reads[2], null);
+    await sleep(100);
+    await broker._refresh();
+    await sleep(100);
+    assert.equal(reads.length, 4);
+});
+
+test('an explicit history read rejects an incomplete range and succeeds when the retry recovers', async t => {
+    const day = 86400000;
+    const oldFilled = { ...rawOrder, orderId: 7, status: 'FILLED', enteredTime: new Date(Date.now() - 90 * day).toISOString() };
+    let failHistory = true;
+    const { broker, errors } = await setup(t, path => {
+        if (!path.includes('/orders?')) return;
+        const params = new URL(path, 'http://localhost').searchParams;
+        const span = Date.parse(params.get('toEnteredTime')) - Date.parse(params.get('fromEnteredTime'));
+        if (params.get('status') === 'WORKING' || span < 100 * day) return json([]);
+        return failHistory ? json({ message: 'temporary' }, 503) : json([oldFilled]);
+    }, { historyDelay: 60000 });
+    await broker._refresh(true);
+    await assert.rejects(broker.ordersHistory(), /HTTP 503/);
+    assert.equal(broker._historyEpoch, undefined);
+    assert.equal(errors.length, 1);
+    failHistory = false;
+    assert.deepEqual((await broker.ordersHistory()).map(order => order.id), ['7']);
+});
+
+test('background history failures are handled and a later poll retries them', async t => {
+    const day = 86400000;
+    const oldFilled = { ...rawOrder, orderId: 8, status: 'FILLED', enteredTime: new Date(Date.now() - 90 * day).toISOString() };
+    let failHistory = true;
+    const unhandled = [];
+    const onUnhandled = reason => { unhandled.push(reason); };
+    process.on('unhandledRejection', onUnhandled);
+    t.after(() => process.removeListener('unhandledRejection', onUnhandled));
+    const { broker, errors } = await setup(t, path => {
+        if (!path.includes('/orders?')) return;
+        const params = new URL(path, 'http://localhost').searchParams;
+        const span = Date.parse(params.get('toEnteredTime')) - Date.parse(params.get('fromEnteredTime'));
+        if (params.get('status') === 'WORKING' || span < 100 * day) return json([]);
+        return failHistory ? json({ message: 'temporary' }, 503) : json([oldFilled]);
+    }, { historyDelay: 10 });
+    await broker._refresh(true);
+    await until(() => errors.length === 1);
+    await sleep(20);
+    assert.deepEqual(unhandled, []);
+    failHistory = false;
+    await broker._refresh();
+    await until(() => broker._historyEpoch === broker._epoch);
+    assert.deepEqual((await broker.ordersHistory()).map(order => order.id), ['8']);
+    assert.equal(errors.length, 1, 'the failed background range is reported once per connection');
+});
+
+test('switching accounts rejects an explicit history read from the previous account', async t => {
+    const day = 86400000;
+    let releaseHistory;
+    const { broker } = await setup(t, path => {
+        if (!path.startsWith('/trader/v1/accounts/A/orders?')) return;
+        const params = new URL(path, 'http://localhost').searchParams;
+        const span = Date.parse(params.get('toEnteredTime')) - Date.parse(params.get('fromEnteredTime'));
+        if (!params.get('status') && span > 100 * day) {
+            return new Promise(resolve => { releaseHistory = resolve; });
+        }
+        return json([]);
+    }, { historyDelay: 60000 });
+    await broker.orders();
+    const history = broker.ordersHistory();
+    await until(() => releaseHistory);
+    broker.setCurrentAccount('B');
+    releaseHistory(json([{ ...rawOrder, orderId: 9, status: 'FILLED' }]));
+    await assert.rejects(history, /账户已切换/);
+});
+
+test('a synchronous account switch from the history full-update callback rejects the old request', async t => {
+    const day = 86400000;
+    const oldFilled = { ...rawOrder, orderId: 10, status: 'FILLED', enteredTime: new Date(Date.now() - 90 * day).toISOString() };
+    const { broker } = await setup(t, path => {
+        if (!path.startsWith('/trader/v1/accounts/A/orders?')) return;
+        const params = new URL(path, 'http://localhost').searchParams;
+        const span = Date.parse(params.get('toEnteredTime')) - Date.parse(params.get('fromEnteredTime'));
+        if (params.get('status') === 'WORKING' || span < 100 * day) return json([]);
+        return json([oldFilled]);
+    }, { historyDelay: 60000 });
+    let switched = false;
+    broker.host.ordersFullUpdate = () => {
+        if (switched) return;
+        switched = true;
+        broker.setCurrentAccount('B');
+    };
+    await assert.rejects(broker.ordersHistory(), /账户已切换/);
+    assert.equal(switched, true);
+    assert.equal(broker.currentAccount(), 'B');
+});
+
+test('startup shares one order read and the poll waits until it finishes', async t => {
     let release;
     let holdFirst = true;
     let current = [rawOrder];
-    const calls = [], updates = [];
+    const calls = [], updates = [], held = [];
     const events = new EventTarget();
     const broker = new Broker({
         connectionStatusUpdate() {}, currentAccountUpdate() {},
         ordersFullUpdate() {}, positionsFullUpdate() {},
         orderUpdate(value) { updates.push(value); }, positionUpdate() {}, showNotification() {},
     }, {
-        events, pollInterval: 10,
+        events, pollInterval: 10, historyDelay: 60000,
         request: async path => {
             calls.push(path);
             if (path.endsWith('/accountNumbers')) {
@@ -267,8 +408,9 @@ test('startup shares one 180-day order read and the poll waits until it finishes
             if (path.includes('?fields=positions')) return json({ securitiesAccount: { positions: [] } });
             if (path.includes('/orders?')) {
                 if (holdFirst) {
-                    holdFirst = false;
-                    return new Promise(resolve => { release = () => resolve(json(current)); });
+                    // Both startup reads (recent and older working orders) are held.
+                    if (held.length === 1) holdFirst = false;
+                    return new Promise(resolve => { held.push(resolve); release = () => held.forEach(done => done(json(current))); });
                 }
                 return json(current);
             }
@@ -279,9 +421,9 @@ test('startup shares one 180-day order read and the poll waits until it finishes
     events.dispatchEvent(new Event('SCHWAB_STREAM_READY'));
     const pending = Promise.all([broker.orders(), broker.ordersHistory()]);
     const orderCalls = () => calls.filter(path => path.includes('/orders?'));
-    await until(() => orderCalls().length === 1);
+    await until(() => orderCalls().length === 2);
     await sleep(250);
-    assert.equal(orderCalls().length, 1);
+    assert.equal(orderCalls().length, 2);
     assert.equal(broker._poll, undefined);
     assert.equal(calls.filter(path => path.endsWith('/accountNumbers')).length, 1);
     release();
@@ -292,11 +434,13 @@ test('startup shares one 180-day order read and the poll waits until it finishes
     broker._refreshTimer = undefined;
     assert.deepEqual(working.map(order => order.id), ['42']);
     assert.deepEqual(history, []);
-    assert.equal(orderCalls().length, 1);
+    // Opening the history also reads the older range once, without announcing it.
+    await broker._loadHistory();
+    assert.equal(orderCalls().length, 3);
     assert.deepEqual(updates, []);
     current = [{ ...rawOrder, price: 125 }];
     await broker._refresh();
-    assert.equal(orderCalls().length, 2);
+    assert.equal(orderCalls().length, 4);
     assert.deepEqual(updates.map(order => [order.id, order.limitPrice]), [['42', 125]]);
 });
 
@@ -336,12 +480,12 @@ test('activity during the shared order read is fetched once afterward and publis
     assert.equal(initial.length, 1);
     assert.equal(initial[0].status, 6);
     assert.equal(initial[0].limitPrice, 100);
-    assert.equal(orderCalls().length, 1);
-    await until(() => updates.length === 1);
     assert.equal(orderCalls().length, 2);
+    await until(() => updates.length === 1);
+    assert.equal(orderCalls().length, 3);
     assert.deepEqual(updates.map(order => [order.id, order.status, order.limitPrice]), [['42', 2, 125]]);
     await sleep(250);
-    assert.equal(orderCalls().length, 2);
+    assert.equal(orderCalls().length, 3);
     assert.equal(updates.length, 1);
 });
 
@@ -523,7 +667,7 @@ test('positions show Chinese asset types with a raw fallback and Chinese column 
     assert.deepEqual(info.positionColumns.map(column => column.label), ['标的', '方向', '数量', '均价', '现价', '已实现盈亏', '未实现盈亏', '当日盈亏', '类型']);
 });
 
-test('polls read recent orders and older working orders only, merged into the startup snapshot', async t => {
+test('polls read recent orders and older working orders only, merged into the stored orders', async t => {
     const day = 86400000;
     const now = Date.now();
     const oldFilled = { ...rawOrder, orderId: 1, status: 'FILLED', enteredTime: new Date(now - 100 * day).toISOString() };
@@ -533,19 +677,50 @@ test('polls read recent orders and older working orders only, merged into the st
     const { broker, updates } = await setup(t, path => {
         if (!path.includes('/orders?')) return;
         const params = new URL(path, 'http://localhost').searchParams;
-        ranges.push(Date.parse(params.get('toEnteredTime')) - Date.parse(params.get('fromEnteredTime')));
-        return json(current);
-    });
+        const from = Date.parse(params.get('fromEnteredTime')), to = Date.parse(params.get('toEnteredTime')), status = params.get('status');
+        ranges.push(to - from);
+        return json(current.filter(order => { const at = Date.parse(order.enteredTime); return at >= from && at <= to && (!status || order.status === status); }));
+    }, { historyDelay: 60000 });
+    assert.deepEqual((await broker.orders()).map(order => order.id), ['2']);
+    assert.ok(Math.abs(ranges[0] - 30 * day) < 1000, 'startup reads 30 days of all orders');
+    await broker._loadHistory();
     assert.equal((await broker.ordersHistory()).length, 1);
-    assert.ok(ranges[0] >= 179 * day, 'startup reads the full working-order window');
     current = [{ ...oldWorking, status: 'FILLED' }];
     await broker._refresh();
-    assert.ok(ranges[1] > 19 * day && ranges[1] < 22 * day, `poll range covers the oldest working order: ${ranges[1] / day}`);
+    assert.ok(ranges[3] > 19 * day && ranges[3] < 22 * day, `poll range covers the oldest working order: ${ranges[3] / day}`);
     assert.deepEqual((await broker.ordersHistory()).map(order => order.id).sort(), ['1', '2']);
     assert.deepEqual(await broker.orders(), []);
     assert.deepEqual(updates.map(order => [order.id, order.status]), [['2', 2]]);
     current = [];
     await broker._refresh();
-    assert.ok(ranges[2] <= 3 * day + 5000, 'without working orders only recent days are read');
+    assert.ok(ranges[4] <= 3 * day + 5000, 'without working orders only recent days are read');
     assert.equal((await broker.ordersHistory()).length, 2);
+});
+
+test('stream subscription acknowledgements do not re-read orders during the startup read', async t => {
+    let release;
+    const { broker, calls, events } = await setup(t, path => path.includes('/orders?') && !release ? new Promise(resolve => { release = () => resolve(json([rawOrder])); }) : undefined);
+    const orders = calls.filter(call => call.path.includes('/orders?')).length;
+    const pending = broker.orders();
+    await until(() => release);
+    events.dispatchEvent(new CustomEvent('ACCT_ACTIVITY', { detail: { service: 'ACCT_ACTIVITY', command: 'SUBS', content: { code: 0, msg: 'subscribed' } } }));
+    events.dispatchEvent(new CustomEvent('ACCT_ACTIVITY', { detail: { service: 'ACCT_ACTIVITY', content: [{ key: 'k', '1': '111', '2': 'SUBSCRIBED', '3': '' }] } }));
+    release();
+    await pending;
+    await sleep(400);
+    // Startup is two reads: the last 30 days and older working orders.
+    assert.equal(calls.filter(call => call.path.includes('/orders?')).length, orders + 2);
+    events.dispatchEvent(new CustomEvent('ACCT_ACTIVITY', { detail: { service: 'ACCT_ACTIVITY', content: [{ key: 'k', '1': '111', '2': 'OrderCreated', '3': '' }] } }));
+    await until(() => calls.filter(call => call.path.includes('/orders?')).length === orders + 3);
+});
+
+test('back-to-back position reads share one response until account activity or a poll', async t => {
+    const { broker, calls, events } = await setup(t);
+    const reads = () => calls.filter(call => call.path.includes('?fields=positions')).length;
+    const before = reads();
+    await broker.positions();
+    await broker.positions();
+    assert.equal(reads(), before + 1);
+    events.dispatchEvent(new CustomEvent('ACCT_ACTIVITY', { detail: { content: [{ '2': 'OrderFillCompleted' }] } }));
+    await until(() => reads() === before + 2);
 });
