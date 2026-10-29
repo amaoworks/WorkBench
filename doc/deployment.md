@@ -261,14 +261,22 @@ VERSION=v0.1.1 ./scripts/release.sh
 下载 artifact ZIP 并解压后，先运行 `sha256sum --check SHA256SUMS`。二进制包解压即可运行；`*_docker.tar.gz` 使用 `docker load --input 文件名` 导入，镜像名为 `workbench:sha-<完整提交号>-<架构>`。例如下载 amd64 产物后，在 `.env` 设置 `WORKBENCH_IMAGE=workbench`、`WORKBENCH_VERSION=sha-<完整提交号>-amd64`，使用 `compose.image.yaml` 启动。普通构建不推送 GHCR，也不创建正式 Release。
 
 
-`.github/workflows/release.yml` 在推送 `v*` 标签时触发。接受 `vMAJOR.MINOR.PATCH` 及预发布后缀，例如 `v0.1.1-rc.1`，不使用带 `+` 的构建元数据。正式包只能从 `main` 产出：标签指向的提交必须已经包含在 `origin/main` 中。先推送 `main`，再在该提交上打标签。
+`.github/workflows/release.yml` 在推送 `v*` 标签时触发。接受 `vMAJOR.MINOR.PATCH` 及预发布后缀，例如 `v0.1.1-rc.1`，不使用带 `+` 的构建元数据。正式包只能从 `main` 产出：标签指向的提交必须已经包含在 `origin/main` 中。在 `dev` 提交改动并通过 `./scripts/test.sh` 后，先推送 `dev`，再快进合入并推送 `main`，最后创建并推送下一版本标签。下例版本号替换为下一版本：
 
 ```bash
+git checkout dev
+git pull --ff-only origin dev
+git push origin dev
 git checkout main
-git pull origin main
-git tag v0.1.1
+git pull --ff-only origin main
+git merge --ff-only dev
+git push origin main
+git tag -a v0.1.1 -m "Release v0.1.1"
 git push origin v0.1.1
+git checkout dev
 ```
+
+确认 **CI and Build**、**Release** 成功，发布包和镜像版本正确；发布收尾时，本地与远端的 `dev`、`main` 应指向同一提交。
 
 **Require commit on main** 用 `git merge-base --is-ancestor` 检查该提交。尚未合并进 `main` 的 `dev` 提交会在这一步失败，后续的检查、打包、GHCR 推送和 GitHub Release 都不会执行。通过后复用 CI，在两个架构的 runner 上分别验证镜像和导出的二进制；后续下载并校验同一次运行的产物，直接组成发布包，将已验证的单架构镜像推送到 GHCR 并合成多架构清单，不再重新编译。Release 说明包含 `Released from: main` 和对应提交号。所有检查和构建使用标签指向的提交；读取 `origin/main` 只用于校验归属。
 
