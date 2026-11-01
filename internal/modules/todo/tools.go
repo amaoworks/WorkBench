@@ -80,6 +80,47 @@ func (m *Module) listTasksTool(ctx context.Context, call contracts.ToolCall) (co
 	return contracts.ToolResult{Content: result}, nil
 }
 
+func (m *Module) updateTaskTool(ctx context.Context, call contracts.ToolCall) (contracts.ToolResult, error) {
+	var input struct {
+		TaskID      string  `json:"taskId"`
+		Title       *string `json:"title"`
+		Description *string `json:"description"`
+		DueAt       *string `json:"dueAt"`
+		ClearDueAt  bool    `json:"clearDueAt"`
+		Priority    *string `json:"priority"`
+		Category    *string `json:"category"`
+	}
+	if err := json.Unmarshal(call.Arguments, &input); err != nil {
+		return contracts.ToolResult{}, err
+	}
+	if !cursorID.MatchString(input.TaskID) {
+		return contracts.ToolResult{}, errors.New("invalid taskId")
+	}
+	if input.ClearDueAt && input.DueAt != nil {
+		return contracts.ToolResult{}, errors.New("dueAt and clearDueAt cannot be used together")
+	}
+	request := UpdateTask{
+		Title: input.Title, Description: input.Description, ClearDueAt: input.ClearDueAt,
+		Priority: input.Priority, Category: input.Category,
+	}
+	if input.DueAt != nil {
+		due, err := time.Parse(time.RFC3339, *input.DueAt)
+		if err != nil {
+			return contracts.ToolResult{}, errors.New("dueAt must be RFC3339")
+		}
+		request.DueAt = &due
+	}
+	task, err := m.update(ctx, input.TaskID, request)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return contracts.ToolResult{}, errors.New("task not found")
+		}
+		return contracts.ToolResult{}, err
+	}
+	result, _ := json.Marshal(task)
+	return contracts.ToolResult{Content: result}, nil
+}
+
 func (m *Module) completeTaskTool(ctx context.Context, call contracts.ToolCall) (contracts.ToolResult, error) {
 	var input struct {
 		TaskID string `json:"taskId"`

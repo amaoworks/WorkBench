@@ -56,7 +56,7 @@ OpenD 容器封装在源码仓库根目录 [futu-opend](https://github.com/amaow
 
 之后的十五秒轮询与 ACCT_ACTIVITY 刷新通常读取最近 3 天；订阅确认（ACCT_ACTIVITY 的命令响应和 `SUBSCRIBED` 消息）不是账户变化，不触发刷新。若有更早的非终态订单，则从该订单起读取，最多覆盖 180 天，按订单 ID 合并进已有结果。同一终端内的并发订单读取复用同一请求。Schwab 没有订单游标，单次请求 `maxResults=1000`，达到上限时递归拆分时间范围并按订单 ID 去重；无法完整读取时明确报错，不展示被截断的完整列表。
 
-图表的标的、周期和行情时段按项保存到工作台数据库，刷新、重启工作台或换浏览器后恢复。TradingView 通过 `settings_adapter` 输出的用户设置（图表样式、收藏、交易显示、下单偏好和面板设置等）独立保存到服务端，不写入浏览器本地存储。终端不保存或加载完整图表布局，已添加的指标和画线不会在刷新后自动恢复；旧 `layout` 快照保留在数据库中，终端读取设置时通过 `includeLayout=false` 排除。首次使用默认 AAPL、日线、常规时段；终端网址的 `symbol` 参数优先于保存的标的。夜盘覆盖关闭或标的不支持保存的 Night/24H 时，恢复到常规时段并更新保存状态。图表主题跟随工作台。
+图表的标的、周期、行情时段和完整布局保存到工作台数据库，刷新、重启工作台或换浏览器后恢复；完整布局包含已添加的指标和画线。TradingView 通过 `settings_adapter` 输出的用户设置（图表样式、收藏、交易显示、下单偏好和面板设置等）独立保存到服务端，不写入浏览器本地存储。首次使用默认 AAPL、日线、常规时段；终端网址的 `symbol` 参数优先于保存的标的。夜盘覆盖关闭或标的不支持保存的 Night/24H 时，恢复到常规时段并更新保存状态。图表主题跟随工作台。
 
 无法读取服务端设置时显示重新加载入口；保存失败时显示「重试保存」，其他窗口已保存同一项时显示「加载工作台版本」。各项独立保存，同一页面迟到的请求不会覆盖较新的改动；换浏览器在打开或刷新时恢复。
 
@@ -117,7 +117,7 @@ Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | GET/PUT | `/api/modules/investment/watchlists` | 工作台自选表读取/保存（需要编辑版本、会话和序号） |
-| GET/PUT | `/api/modules/investment/preferences` | 投资偏好读取/按项保存；`chart`、`account`、`view` 和 `tv:` 设置键，保存需要编辑版本、会话和序号。`layout` 保留旧版兼容，终端 GET 使用 `?includeLayout=false` 排除旧快照 |
+| GET/PUT | `/api/modules/investment/preferences` | 投资偏好读取/按项保存；`chart`、`layout`、`account`、`view` 和 `tv:` 设置键，保存需要编辑版本、会话和序号 |
 | GET | `/api/modules/investment/schwab` | 应用配置、连接状态、`reauthorizationRequired` 及最近错误 |
 | PUT | `/api/modules/investment/schwab` | 保存 `appKey`、`appSecret`、`callbackUrl` |
 | POST | `/api/modules/investment/schwab/disconnect` | 清除令牌和连接 |
@@ -146,7 +146,7 @@ Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后
 - `/investment/monitor`（`MonitorPage`）：价格监控规则与触发记录；`/investment?tab=monitor` 重定向到这里，站内通知的 `actionRoute` 仍可使用旧地址。
 
 - `/investment/positions`（`PositionsPage`）：显示账户总值、持仓市值、现金、今日盈亏和持仓盈亏，下面是持仓表，列出代码、数量、均价、现价、市值、今日盈亏、持仓盈亏和占比。有多个账户时可以切换账户。点击代码会在交易终端中打开对应标的。每 30 秒刷新一次。
-- `/investment/orders`（`OrdersPage`）：页头不放「打开交易终端」，终端从顶部导航「投资 → 图表」进入。按最近 1、7、30、90 天（`?range=`）和 全部/working/filled/canceled（`?status=`）筛选委托。条件单和组合单会按 `childOrderStrategies` 展开。页面只读，改单和撤单仍在交易终端中操作。
+- `/investment/orders`（`OrdersPage`）：页头提供「交易终端」入口。按最近 1、7、30、90 天（`?range=`）和 全部/working/filled/canceled（`?status=`）筛选委托。条件单和组合单会按 `childOrderStrategies` 展开。页面只读，改单和撤单仍在交易终端中操作。
 - 两个页面分别读取 `/api/modules/investment/positions` 和 `/api/modules/investment/orders?days=1|7|30|90&status=all|working|filled|canceled&tz=`，使用模块的 Zod schema 校验。`BrokerGate` 处理未配置、读取失败和需要重新授权的状态；页面提供手动刷新、重试和最近更新时间。
 - 持仓现价来自行情报价，缺失数值返回 `null` 并显示 `—`；账户标识使用 Schwab 哈希，界面仅显示掩码标签。订单达到 500 条时按时间拆分读取并去重，无法完整读取时返回错误。多腿订单按买卖方向、腿比例和实际成交计算净价，同时展示每腿委托数量、成交数量与均价；成交比例不匹配时不显示组合净价。止损限价单同时显示限价和触发价。
 - 子页面不能命名为 `terminal`，因为后端已经占用 `/investment/terminal*`。Vite 同时代理终端资源和 `/api` WebSocket。

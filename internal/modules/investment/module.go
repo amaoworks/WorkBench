@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"log/slog"
@@ -156,6 +157,22 @@ func (m *Module) Register(r contracts.ModuleRegistrar) error {
 		r.Handle("DELETE", "/api/modules/investment/monitor/rules/{id}", http.HandlerFunc(m.deletePriceRule)),
 		r.Handle("GET", "/api/modules/investment/monitor/history", http.HandlerFunc(m.getPriceHistory)),
 		r.Job(m.monitorJob()),
+		r.Tool(contracts.AITool{Name: "investment.positions", Module: "investment", SchemaVersion: 1,
+			Description:      "查询已连接 Schwab 账户的持仓和已存行情时间",
+			ParametersSchema: json.RawMessage(`{"type":"object","properties":{"accountHash":{"type":["string","null"],"minLength":1,"maxLength":200}},"required":["accountHash"],"additionalProperties":false}`),
+			Risk:             contracts.ToolRiskReadOnly, Handler: m.positionsTool}),
+		r.Tool(contracts.AITool{Name: "investment.orders", Module: "investment", SchemaVersion: 1,
+			Description:      "按时间范围、状态和账户查询 Schwab 订单",
+			ParametersSchema: json.RawMessage(`{"type":"object","properties":{"days":{"type":"integer","enum":[1,7,30,90]},"status":{"type":"string","enum":["all","working","filled","canceled"]},"timeZone":{"type":"string","minLength":1,"maxLength":100},"accountHash":{"type":["string","null"],"minLength":1,"maxLength":200}},"required":["days","status","timeZone","accountHash"],"additionalProperties":false}`),
+			Risk:             contracts.ToolRiskReadOnly, Handler: m.ordersTool}),
+		r.Tool(contracts.AITool{Name: "investment.list_monitors", Module: "investment", SchemaVersion: 1,
+			Description:      "查询价格监控规则及最近检查状态",
+			ParametersSchema: json.RawMessage(`{"type":"object","properties":{},"required":[],"additionalProperties":false}`),
+			Risk:             contracts.ToolRiskReadOnly, Handler: m.listMonitorsTool}),
+		r.Tool(contracts.AITool{Name: "investment.create_monitor", Module: "investment", SchemaVersion: 1,
+			Description:      "创建一条美股或 ETF 价格涨跌幅监控规则",
+			ParametersSchema: json.RawMessage(`{"type":"object","properties":{"symbol":{"type":"string","pattern":"^[A-Za-z][A-Za-z0-9.\\-]{0,14}$"},"direction":{"type":"string","enum":["up","down"]},"thresholdPercent":{"type":"number","exclusiveMinimum":0,"maximum":1000},"enabled":{"type":"boolean"}},"required":["symbol","direction","thresholdPercent","enabled"],"additionalProperties":false}`),
+			Risk:             contracts.ToolRiskLowWrite, Handler: m.createMonitorTool}),
 		r.Handle("GET", "/api/modules/investment/schwab", http.HandlerFunc(m.getSchwab)),
 		r.Handle("PUT", "/api/modules/investment/schwab", http.HandlerFunc(m.saveSchwab)),
 		r.Handle("POST", "/api/modules/investment/schwab/disconnect", http.HandlerFunc(m.disconnectSchwab)),

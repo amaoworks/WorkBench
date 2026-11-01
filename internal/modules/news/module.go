@@ -118,6 +118,11 @@ func (m *Module) Register(r contracts.ModuleRegistrar) error {
 	}); err != nil {
 		return err
 	}
+	for _, tool := range m.aiTools() {
+		if err := r.Tool(tool); err != nil {
+			return err
+		}
+	}
 	for _, job := range []struct {
 		id      string
 		timeout time.Duration

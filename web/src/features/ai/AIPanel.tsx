@@ -1,16 +1,19 @@
-import { aiStatusSchema } from "../../shared/schema";
+import {
+  aiStatusSchema, chatCompletedSchema, chatDeltaSchema, chatErrorSchema, chatStartedSchema, chatToolSchema,
+  conversationMessagesSchema, type ChatResponse, type ChatTool,
+} from "../../shared/schema";
 import { useEffect, useState, type FormEvent } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MapPin, Send, Sparkles, SquarePen, X } from "lucide-react";
 import { apiValidated, apiResponse } from "../../shared/api";
 import { Button, ButtonLink } from "../../components/ui/Button";
 import { Notice } from "../../components/ui/Notice";
+import { Skeleton } from "../../components/ui/States";
 import { cn } from "../../shared/cn";
 import { aiShortcut } from "../../shared/keyboard";
 import * as Dialog from "@radix-ui/react-dialog";
 
-type Message = { role: "user" | "assistant"; text: string };
-type ChatResponse = { conversationId: string; messageId: string; text: string };
+type Message = { role: "user" | "assistant"; text: string; tools?: ChatTool[] };
 export type AIPageContext = { route: string; label: string };
 type ChatInput = { message: string; context?: AIPageContext };
 
@@ -20,10 +23,14 @@ async function streamChat(
   context: AIPageContext | undefined,
   onStarted: (conversationId: string) => void,
   onDelta: (text: string) => void,
+  onTool: (tool: ChatTool) => void,
 ): Promise<ChatResponse> {
   const response = await apiResponse("/api/chat/stream", {
     method: "POST",
-    body: JSON.stringify({ conversationId, message, ...(context ? { context } : {}) }),
+    body: JSON.stringify({
+      conversationId, message, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      ...(context ? { context } : {}),
+    }),
   });
   if (!response.body) throw new Error("浏览器不支持流式响应");
   const reader = response.body.getReader();
@@ -39,11 +46,12 @@ async function streamChat(
       if (line.startsWith("data:")) data += line.slice(5).trimStart();
     }
     if (!event || !data) return;
-    const payload = JSON.parse(data) as Record<string, unknown>;
-    if (event === "chat.started" && typeof payload.conversationId === "string") onStarted(payload.conversationId);
-    if (event === "chat.delta" && typeof payload.text === "string") onDelta(payload.text);
-    if (event === "chat.error") throw new Error(typeof payload.message === "string" ? payload.message : "AI 流式响应失败");
-    if (event === "chat.completed") completed = payload as ChatResponse;
+    const payload: unknown = JSON.parse(data);
+    if (event === "chat.started") onStarted(chatStartedSchema.parse(payload).conversationId);
+    if (event === "chat.delta") onDelta(chatDeltaSchema.parse(payload).text);
+    if (event === "chat.tool") onTool(chatToolSchema.parse(payload));
+    if (event === "chat.error") throw new Error(chatErrorSchema.parse(payload).message);
+    if (event === "chat.completed") completed = chatCompletedSchema.parse(payload);
   };
 
   while (true) {
@@ -69,22 +77,58 @@ export function AIPanel({ open, onClose, context }: { open: boolean; onClose: ()
   const [attachContext, setAttachContext] = useState(true);
   const [conversationId, setConversationId] = useState(() => localStorage.getItem("workbench-conversation-id") ?? "");
   const [messages, setMessages] = useState<Message[]>([]);
+  const queryClient = useQueryClient();
   const status = useQuery({ queryKey: ["ai", "status"], queryFn: () => apiValidated("/api/ai/status", aiStatusSchema), enabled: open });
+  const history = useQuery({
+    queryKey: ["ai", "conversation", conversationId, "messages"],
+    queryFn: () => apiValidated(`/api/conversations/${encodeURIComponent(conversationId)}/messages`, conversationMessagesSchema),
+    enabled: open && Boolean(conversationId) && messages.length === 0,
+    retry: false,
+  });
+  const historyMessages: Message[] = history.data?.messages.map((message) => ({ role: message.role, text: message.content })) ?? [];
+  const visibleMessages = messages.length ? messages : historyMessages;
+  const historyReady = !conversationId || history.isSuccess || messages.length > 0;
   useEffect(() => {
     if (conversationId) localStorage.setItem("workbench-conversation-id", conversationId);
   }, [conversationId]);
   const chat = useMutation({
     mutationFn: ({ message, context: messageContext }: ChatInput) => {
       let receivedDelta = false;
-      return streamChat(conversationId, message, messageContext, setConversationId, (delta) => {
-        setMessages((current) =>
-          current.map((item, index) => {
-            if (index !== current.length - 1 || item.role !== "assistant") return item;
-            return { ...item, text: receivedDelta ? item.text + delta : delta };
-          }),
-        );
-        receivedDelta = true;
-      });
+      return streamChat(
+        conversationId,
+        message,
+        messageContext,
+        setConversationId,
+        (delta) => {
+          setMessages((current) =>
+            current.map((item, index) => {
+              if (index !== current.length - 1 || item.role !== "assistant") return item;
+              return { ...item, text: receivedDelta ? item.text + delta : delta };
+            }),
+          );
+          receivedDelta = true;
+        },
+        (tool) => {
+          setMessages((current) =>
+            current.map((item, index) => {
+              if (index !== current.length - 1 || item.role !== "assistant") return item;
+              const tools = [...(item.tools ?? [])];
+              const existing = tools.findIndex((candidate) => candidate.callId === tool.callId);
+              if (existing >= 0) tools[existing] = tool;
+              else tools.push(tool);
+              return { ...item, tools };
+            }),
+          );
+          if (tool.status === "succeeded" && tool.risk !== "read_only") {
+            const moduleId = tool.name.split(".", 1)[0];
+            void Promise.all([
+              queryClient.invalidateQueries({ queryKey: [moduleId] }),
+              queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+              queryClient.invalidateQueries({ queryKey: ["notifications"] }),
+            ]);
+          }
+        },
+      );
     },
     onSuccess: (response) => {
       setConversationId(response.conversationId);
@@ -103,8 +147,8 @@ export function AIPanel({ open, onClose, context }: { open: boolean; onClose: ()
   });
   function handleSend() {
     const message = input.trim();
-    if (!message || chat.isPending || status.data?.available === false) return;
-    setMessages((current) => [...current, { role: "user", text: message }, { role: "assistant", text: "正在思考…" }]);
+    if (!message || chat.isPending || !historyReady || status.data?.available === false) return;
+    setMessages([...visibleMessages, { role: "user", text: message }, { role: "assistant", text: "正在思考…" }]);
     setInput("");
     chat.mutate({ message, context: context && attachContext ? context : undefined });
   }
@@ -135,7 +179,7 @@ export function AIPanel({ open, onClose, context }: { open: boolean; onClose: ()
                 size="icon"
                 aria-label="新建对话"
                 title="新建对话"
-                disabled={chat.isPending || (messages.length === 0 && !conversationId)}
+                disabled={chat.isPending || (visibleMessages.length === 0 && !conversationId)}
                 onClick={() => {
                   setMessages([]);
                   setConversationId("");
@@ -167,7 +211,17 @@ export function AIPanel({ open, onClose, context }: { open: boolean; onClose: ()
                 }
               />
             )}
-            {messages.length === 0 && (
+            {Boolean(conversationId) && history.isPending && messages.length === 0 && <Skeleton className="h-32" />}
+            {history.isError && messages.length === 0 && (
+              <Notice
+                tone="danger"
+                title="对话记录加载失败"
+                action={<Button variant="secondary" size="sm" onClick={() => history.refetch()}>重试</Button>}
+              >
+                可重试加载，或新建对话。
+              </Notice>
+            )}
+            {historyReady && visibleMessages.length === 0 && (
               <div className="ai-suggestions">
                 <p>试试这样问</p>
                 {suggestions.map((text) => (
@@ -177,9 +231,16 @@ export function AIPanel({ open, onClose, context }: { open: boolean; onClose: ()
                 ))}
               </div>
             )}
-            {messages.map((message, index) => (
+            {visibleMessages.map((message, index) => (
               <div key={index} className={cn("ai-message", message.role === "user" && "user")}>
-                {message.text}
+                <div>{message.text}</div>
+                {message.role === "assistant" && message.tools?.map((tool) => (
+                  <div key={tool.callId} className="mt-2 flex flex-wrap items-center gap-x-2 text-xs text-[var(--muted)]">
+                    <span>{tool.label}</span>
+                    <span>{tool.status === "succeeded" ? "已完成" : "失败"}</span>
+                    {tool.status === "failed" && tool.error && <span>{tool.error}</span>}
+                  </div>
+                ))}
               </div>
             ))}
           </div>
@@ -187,7 +248,7 @@ export function AIPanel({ open, onClose, context }: { open: boolean; onClose: ()
             <div className="ai-context">
               <button type="button" className="focus-ring" aria-pressed={attachContext} onClick={() => setAttachContext((value) => !value)}>
                 <MapPin size={13} />
-                {attachContext ? `附带当前页面：${context.label}` : "不附带当前页面"}
+                {attachContext ? `页面位置：${context.label}` : "不附带页面位置"}
               </button>
             </div>
           )}
@@ -195,6 +256,7 @@ export function AIPanel({ open, onClose, context }: { open: boolean; onClose: ()
             <textarea
               aria-label="发送给 Workbench AI 的消息"
               rows={2}
+              disabled={!historyReady}
               value={input}
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={(event) => {
@@ -203,10 +265,10 @@ export function AIPanel({ open, onClose, context }: { open: boolean; onClose: ()
                   handleSend();
                 }
               }}
-              placeholder="输入消息…"
+              placeholder={historyReady ? "输入消息…" : "正在加载对话…"}
               className="ui-input min-h-11 flex-1 resize-none"
             />
-            <Button size="icon" aria-label="发送消息" disabled={!input.trim() || chat.isPending || status.data?.available === false}>
+            <Button size="icon" aria-label="发送消息" disabled={!input.trim() || chat.isPending || !historyReady || status.data?.available === false}>
               <Send size={17} />
             </Button>
           </form>

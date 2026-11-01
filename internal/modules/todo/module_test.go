@@ -108,6 +108,13 @@ func TestDueScanCreatesOneIdempotentNotification(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("notification count = %d, want 1", count)
 	}
+	var external int
+	if err := database.SQL().QueryRow("SELECT external FROM notifications WHERE source_module = 'todo'").Scan(&external); err != nil {
+		t.Fatal(err)
+	}
+	if external != 1 {
+		t.Fatalf("notification external = %d, want 1", external)
+	}
 }
 
 func TestDueScanVisitsEveryBatchWithEqualDueTimes(t *testing.T) {

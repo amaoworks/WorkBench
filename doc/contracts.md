@@ -43,11 +43,11 @@ Telegram 使用独立 dispatcher 和已有 `event_deliveries` 持久化投递。
 
 [TextGenerator](../internal/contracts/text.go) 是业务主动调用的文本生成接口，参数为 profile、instruction、input。它不向 Provider 提供业务工具，返回不可用时使用 `ErrAIUnavailable`；不启用 AI 也能构造依赖该接口的业务。
 
-[AIProvider 与 AITool](../internal/contracts/ai.go) 服务于平台 Gateway。Provider 提供普通与流式生成；Gateway 暴露当前启用模块的工具，并最多循环四轮模型请求。工具参数在服务端校验，执行审计持久化。
+[AIProvider 与 AITool](../internal/contracts/ai.go) 服务于平台 Gateway。Provider 提供普通与流式生成；Gateway 暴露当前启用模块的工具，最多执行四轮工具调用，再进行一次无工具的结果收尾。Responses 请求使用 `store: false`，每轮按顺序重传原始消息、模型输出（含加密推理项）和工具结果，不使用 `previous_response_id`。工具参数在服务端校验，执行审计持久化。
 
-Tool 风险分为 read_only、low_write、high_write。写工具需要幂等键；high_write 还需要 `ConfirmedBy`。当前 Gateway 不提供用户确认交互，因此不能仅声明 high_write 就获得可用的确认流程。已注册 `todo.create_task`、`todo.list_tasks`、`todo.complete_task`、`notifications.list` 和 `notifications.mark_read`。待办和标记已读写操作按 low_write 执行；查询为 read_only。聊天请求可附带 `context: { route, label }`，后端校验后仅用于本轮导航上下文，原始用户消息独立保存。
+Tool 风险分为 read_only、low_write、high_write。写工具需要幂等键；high_write 还需要 `ConfirmedBy`。当前注册工具只含查询和低风险写入，没有券商交易或删除工具。已注册待办创建、查询、更新和完成，通知查询与标记已读，投资持仓、订单、监控查询与监控创建，以及资讯查询、详情和简报生成；资讯简报工具不提交外部推送。Gateway 不提供通用高风险确认交互。聊天请求可附带 `context: { route, label }`，后端校验后仅用于本轮导航上下文；`timeZone` 用于提供当前时间和解析相对日期，默认 UTC。原始用户消息独立保存。
 
-对话请求包含 `conversationId`（可省略以新建）、`message` 和 `profile`（默认 default），响应包含对话 ID、消息 ID、文本和用量。流式 HTTP 事件为 `chat.started`、`chat.delta`、`chat.completed` 或 `chat.error`。对话数据由 conversation 能力保存。
+对话请求包含 `conversationId`（可省略以新建）、`message` 和 `profile`（默认 default），响应包含对话 ID、消息 ID、文本、各轮合计用量和工具执行状态。流式 HTTP 事件为 `chat.started`、`chat.delta`、`chat.tool`、`chat.completed` 或 `chat.error`；每次工具执行后立即发送状态，后续请求失败时仍保留已完成操作的反馈。对话数据由 conversation 能力保存，`GET /api/conversations/{id}/messages` 返回最近 50 条用户与助手消息。面板恢复并展示历史后才允许续聊。
 
 ## 页面和 Widget
 
@@ -86,6 +86,7 @@ JSON 错误使用 `code`、`message`，并可含 `details`、`requestId`，定�
 | PUT | `/api/notifications/read-all` | 标记当前已有通知为已读 |
 | GET | `/api/ai/status` | AI 是否可用 |
 | POST | `/api/chat`、`/api/chat/stream` | 对话、流式对话 |
+| GET | `/api/conversations/{id}/messages` | 当前对话最近 50 条消息，不存在时返回 404 |
 | GET | `/api/settings` | AI、外观、日志等级、部署信息，密钥不回显 |
 | PUT | `/api/settings/ai`、`/api/settings/appearance` | 保存 AI 或外观 |
 | PUT | `/api/settings/logging` | 保存 `{ "level": "info" }` 并立即生效；支持 debug/info/warn/error，返回规范化等级 |

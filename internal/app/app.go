@@ -284,6 +284,7 @@ func (a *App) routes(
 		protected.Get("/api/ai/status", conversationHTTP.Status)
 		protected.Post("/api/chat", conversationHTTP.Chat)
 		protected.Post("/api/chat/stream", conversationHTTP.Stream)
+		protected.Get("/api/conversations/{id}/messages", conversationHTTP.Messages)
 		protected.Post("/api/system/backup", a.backup)
 		protected.Get("/api/settings", a.getSettings)
 		protected.Get("/api/settings/telegram", a.telegram.Settings)

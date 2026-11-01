@@ -14,13 +14,12 @@ const (
 )
 
 type GenerateRequest struct {
-	Profile            string
-	Messages           []AIMessage
-	Tools              []AITool
-	PreviousResponseID string
-	ToolOutputs        []ToolOutput
-	ConversationID     string
-	MessageID          string
+	Profile        string
+	Messages       []AIMessage
+	Tools          []AITool
+	Items          []json.RawMessage
+	ConversationID string
+	MessageID      string
 }
 
 type AIMessage struct {
@@ -29,15 +28,21 @@ type AIMessage struct {
 }
 
 type GenerateResult struct {
-	ResponseID string
-	Text       string
-	ToolCalls  []ToolCall
-	Usage      AIUsage
+	ResponseID     string
+	Text           string
+	ToolCalls      []ToolCall
+	OutputItems    []json.RawMessage
+	ToolExecutions []ToolExecution
+	Usage          AIUsage
 }
 
-type ToolOutput struct {
-	CallID  string
-	Content json.RawMessage
+type ToolExecution struct {
+	CallID string   `json:"callId"`
+	Name   string   `json:"name"`
+	Label  string   `json:"label"`
+	Risk   ToolRisk `json:"risk"`
+	Status string   `json:"status"`
+	Error  string   `json:"error,omitempty"`
 }
 
 type AIUsage struct {
@@ -49,6 +54,7 @@ type AIStreamEvent struct {
 	Type   string
 	Text   string
 	Result *GenerateResult
+	Tool   *ToolExecution
 	Done   bool
 	Err    error
 }

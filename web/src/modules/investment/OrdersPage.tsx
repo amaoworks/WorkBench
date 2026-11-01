@@ -1,5 +1,5 @@
 import { Link, useSearchParams } from "react-router-dom";
-import { Button } from "../../components/ui/Button";
+import { Button, ButtonLink } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { Notice } from "../../components/ui/Notice";
@@ -43,7 +43,7 @@ const qty = new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 });
 export default function OrdersPage() {
   return (
     <div className="page orders-page">
-      <PageHeader title="订单" />
+      <PageHeader title="订单" action={<ButtonLink to="/investment">交易终端</ButtonLink>} />
       <Orders />
     </div>
   );

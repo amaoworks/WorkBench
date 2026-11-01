@@ -44,12 +44,23 @@ export function useTaskCounts(filters: Omit<TaskFilters, "view">) {
   });
 }
 
-export function createTask(input: { title: string; dueAt: string | null; priority: TaskPriority; category: string }) {
+export function createTask(input: { title: string; description: string; dueAt: string | null; priority: TaskPriority; category: string }) {
   return apiValidated("/api/modules/todo/tasks", taskSchema, { method: "POST", body: JSON.stringify(input) });
 }
 
-export function updateTask({ id, completed }: { id: string; completed: boolean }) {
-  return apiValidated(`/api/modules/todo/tasks/${id}`, taskSchema, { method: "PATCH", body: JSON.stringify({ completed }) });
+export type TaskUpdateInput = {
+  id: string;
+  title?: string;
+  description?: string;
+  dueAt?: string | null;
+  clearDueAt?: boolean;
+  completed?: boolean;
+  priority?: TaskPriority;
+  category?: string;
+};
+
+export function updateTask({ id, ...input }: TaskUpdateInput) {
+  return apiValidated(`/api/modules/todo/tasks/${id}`, taskSchema, { method: "PATCH", body: JSON.stringify(input) });
 }
 
 export function deleteTask(id: string) {

@@ -1,6 +1,7 @@
 package investment
 
 import (
+	"context"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -64,17 +65,30 @@ func ruleView(row investmentsqlc.InvestmentPriceRule) priceRuleView {
 		QuoteAt: priceTime(row.QuoteAt), CheckedAt: priceTime(row.CheckedAt), LastError: row.LastError}
 }
 
-func (m *Module) getPriceMonitor(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
-	rows, err := m.queries.ListPriceRules(r.Context())
-	if err != nil {
-		httpapi.Error(w, 500, "monitor_failed", "无法读取监控规则")
+type monitorOperationError struct {
+	status        int
+	code, message string
+}
+
+func (e *monitorOperationError) Error() string { return e.message }
+
+func writeMonitorError(w http.ResponseWriter, err error) {
+	var operationError *monitorOperationError
+	if errors.As(err, &operationError) {
+		httpapi.Error(w, operationError.status, operationError.code, operationError.message)
 		return
 	}
-	state, err := m.queries.GetPriceMonitor(r.Context())
+	httpapi.Error(w, http.StatusInternalServerError, "monitor_failed", err.Error())
+}
+
+func (m *Module) priceMonitor(ctx context.Context) (map[string]any, error) {
+	rows, err := m.queries.ListPriceRules(ctx)
 	if err != nil {
-		httpapi.Error(w, 500, "monitor_failed", "无法读取监控状态")
-		return
+		return nil, &monitorOperationError{status: 500, code: "monitor_failed", message: "无法读取监控规则"}
+	}
+	state, err := m.queries.GetPriceMonitor(ctx)
+	if err != nil {
+		return nil, &monitorOperationError{status: 500, code: "monitor_failed", message: "无法读取监控状态"}
 	}
 	items := make([]priceRuleView, 0, len(rows))
 	active := false
@@ -89,7 +103,64 @@ func (m *Module) getPriceMonitor(w http.ResponseWriter, r *http.Request) {
 	} else if state.Status == "idle" {
 		state.Status = "waiting"
 	}
-	httpapi.Write(w, 200, map[string]any{"items": items, "status": state.Status, "checkedAt": priceTime(state.CheckedAt), "lastError": state.LastError, "intervalSeconds": 60})
+	return map[string]any{"items": items, "status": state.Status, "checkedAt": priceTime(state.CheckedAt), "lastError": state.LastError, "intervalSeconds": 60}, nil
+}
+
+func (m *Module) getPriceMonitor(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	result, err := m.priceMonitor(r.Context())
+	if err != nil {
+		writeMonitorError(w, err)
+		return
+	}
+	httpapi.Write(w, 200, result)
+}
+
+func (m *Module) savePriceRuleValue(ctx context.Context, id string, input priceRuleInput, create bool) (priceRuleView, int, error) {
+	input.Symbol = strings.ToUpper(strings.TrimSpace(input.Symbol))
+	bps := math.Round(input.ThresholdPercent * 100)
+	if !stockSymbol.MatchString(input.Symbol) || (input.Direction != "up" && input.Direction != "down") || input.Enabled == nil ||
+		math.IsNaN(bps) || math.IsInf(bps, 0) || bps < 1 || bps > 100000 || (input.Direction == "down" && bps > 10000) || math.Abs(input.ThresholdPercent*100-bps) > 0.000001 {
+		return priceRuleView{}, 0, &monitorOperationError{status: 400, code: "invalid_rule", message: "请输入美股或 ETF 代码、上涨/下跌方向，以及最多两位小数的正百分比（上涨不超过 1000%，下跌不超过 100%）"}
+	}
+	m.monitorMu.Lock()
+	defer m.monitorMu.Unlock()
+	var enabled int64
+	if *input.Enabled {
+		enabled = 1
+	}
+	now := m.now().UTC().UnixMilli()
+	status := http.StatusOK
+	if create {
+		count, err := m.queries.CountPriceRules(ctx)
+		if err != nil {
+			return priceRuleView{}, 0, &monitorOperationError{status: 500, code: "rule_failed", message: "无法读取规则数量"}
+		}
+		if count >= maxPriceRules {
+			return priceRuleView{}, 0, &monitorOperationError{status: 400, code: "rule_limit", message: "最多保存 100 条监控规则"}
+		}
+		id, err = identity.New()
+		if err == nil {
+			err = m.queries.CreatePriceRule(ctx, investmentsqlc.CreatePriceRuleParams{ID: id, Symbol: input.Symbol, Direction: input.Direction, ThresholdBps: int64(bps), Enabled: enabled, CreatedAt: now, UpdatedAt: now})
+		}
+		if err != nil {
+			return priceRuleView{}, 0, &monitorOperationError{status: 500, code: "rule_failed", message: "无法创建监控规则"}
+		}
+		status = http.StatusCreated
+	} else {
+		count, err := m.queries.UpdatePriceRule(ctx, investmentsqlc.UpdatePriceRuleParams{ID: id, Symbol: input.Symbol, Direction: input.Direction, ThresholdBps: int64(bps), Enabled: enabled, UpdatedAt: now})
+		if err != nil {
+			return priceRuleView{}, 0, &monitorOperationError{status: 500, code: "rule_failed", message: "无法更新监控规则"}
+		}
+		if count == 0 {
+			return priceRuleView{}, 0, &monitorOperationError{status: 404, code: "rule_not_found", message: "监控规则不存在"}
+		}
+	}
+	row, err := m.queries.GetPriceRule(ctx, id)
+	if err != nil {
+		return priceRuleView{}, 0, &monitorOperationError{status: 500, code: "rule_failed", message: "无法读取监控规则"}
+	}
+	return ruleView(row), status, nil
 }
 
 func (m *Module) savePriceRule(w http.ResponseWriter, r *http.Request) {
@@ -98,59 +169,12 @@ func (m *Module) savePriceRule(w http.ResponseWriter, r *http.Request) {
 		httpapi.Error(w, 400, "invalid_rule", "规则格式不正确")
 		return
 	}
-	input.Symbol = strings.ToUpper(strings.TrimSpace(input.Symbol))
-	bps := math.Round(input.ThresholdPercent * 100)
-	if !stockSymbol.MatchString(input.Symbol) || (input.Direction != "up" && input.Direction != "down") || input.Enabled == nil ||
-		math.IsNaN(bps) || math.IsInf(bps, 0) || bps < 1 || bps > 100000 || (input.Direction == "down" && bps > 10000) || math.Abs(input.ThresholdPercent*100-bps) > 0.000001 {
-		httpapi.Error(w, 400, "invalid_rule", "请输入美股或 ETF 代码、上涨/下跌方向，以及最多两位小数的正百分比（上涨不超过 1000%，下跌不超过 100%）")
-		return
-	}
-	m.monitorMu.Lock()
-	defer m.monitorMu.Unlock()
-	ctx := r.Context()
-	id := chi.URLParam(r, "id")
-	var enabled int64
-	if *input.Enabled {
-		enabled = 1
-	}
-	now := m.now().UTC().UnixMilli()
-	status := http.StatusOK
-	if r.Method == http.MethodPost {
-		count, err := m.queries.CountPriceRules(ctx)
-		if err != nil {
-			httpapi.Error(w, 500, "rule_failed", "无法读取规则数量")
-			return
-		}
-		if count >= maxPriceRules {
-			httpapi.Error(w, 400, "rule_limit", "最多保存 100 条监控规则")
-			return
-		}
-		id, err = identity.New()
-		if err == nil {
-			err = m.queries.CreatePriceRule(ctx, investmentsqlc.CreatePriceRuleParams{ID: id, Symbol: input.Symbol, Direction: input.Direction, ThresholdBps: int64(bps), Enabled: enabled, CreatedAt: now, UpdatedAt: now})
-		}
-		if err != nil {
-			httpapi.Error(w, 500, "rule_failed", "无法创建监控规则")
-			return
-		}
-		status = http.StatusCreated
-	} else {
-		count, err := m.queries.UpdatePriceRule(ctx, investmentsqlc.UpdatePriceRuleParams{ID: id, Symbol: input.Symbol, Direction: input.Direction, ThresholdBps: int64(bps), Enabled: enabled, UpdatedAt: now})
-		if err != nil {
-			httpapi.Error(w, 500, "rule_failed", "无法更新监控规则")
-			return
-		}
-		if count == 0 {
-			httpapi.Error(w, 404, "rule_not_found", "监控规则不存在")
-			return
-		}
-	}
-	row, err := m.queries.GetPriceRule(ctx, id)
+	result, status, err := m.savePriceRuleValue(r.Context(), chi.URLParam(r, "id"), input, r.Method == http.MethodPost)
 	if err != nil {
-		httpapi.Error(w, 500, "rule_failed", "无法读取监控规则")
+		writeMonitorError(w, err)
 		return
 	}
-	httpapi.Write(w, status, ruleView(row))
+	httpapi.Write(w, status, result)
 }
 
 func (m *Module) deletePriceRule(w http.ResponseWriter, r *http.Request) {

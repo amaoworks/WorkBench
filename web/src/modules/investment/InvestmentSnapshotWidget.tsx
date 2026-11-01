@@ -19,6 +19,7 @@ export default function InvestmentSnapshotWidget({ widget }: { widget: Widget })
   const symbols = snapshot.data?.symbols;
   useEffect(() => {
     if (symbols) setHeldSymbols(symbols);
+    return () => setHeldSymbols([]);
   }, [symbols, setHeldSymbols]);
 
   if (snapshot.isPending) return <Skeleton className="h-36" />;

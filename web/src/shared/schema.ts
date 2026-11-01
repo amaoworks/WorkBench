@@ -69,6 +69,21 @@ export const notificationsPageSchema = z.object({ items: z.array(notificationSch
 export const authStatusSchema = z.object({ authenticated: z.boolean(), mode: z.enum(["local", "password"]), mustChangePassword: z.boolean() });
 export const unreadCountSchema = z.object({ count: z.number() });
 export const aiStatusSchema = z.object({ available: z.boolean() });
+export const conversationMessageSchema = z.object({ role: z.enum(["user", "assistant"]), content: z.string() });
+export const conversationMessagesSchema = z.object({ messages: z.array(conversationMessageSchema) });
+export const chatStartedSchema = z.object({ conversationId: z.string(), messageId: z.string() });
+export const chatDeltaSchema = z.object({ text: z.string() });
+export const chatToolSchema = z.object({
+  callId: z.string(), name: z.string(), label: z.string(),
+  risk: z.enum(["read_only", "low_write", "high_write"]),
+  status: z.enum(["succeeded", "failed"]), error: z.string().optional()
+});
+export const chatErrorSchema = z.object({ message: z.string() });
+export const chatCompletedSchema = z.object({
+  conversationId: z.string(), messageId: z.string(), text: z.string(), usage: z.object({})
+});
+export type ChatTool = z.infer<typeof chatToolSchema>;
+export type ChatResponse = z.infer<typeof chatCompletedSchema>;
 export const apiErrorSchema = z.object({ code: z.string(), message: z.string() });
 
 export const savedSchema = z.object({ saved: z.literal(true) });

@@ -1,6 +1,6 @@
 # Telegram 通知
 
-「设置 → 通知推送」（`/settings?tab=notifications`）管理唯一的 Telegram 接收目标。价格预警和资讯简报等明确标记为外发的通知会推送到该目标，其他站内通知不自动外发。
+「设置 → 通知推送」（`/settings?tab=notifications`）管理唯一的 Telegram 接收目标。待办到期、价格预警和资讯简报等明确标记为外发的通知会推送到该目标，其他站内通知不自动外发。
 
 1. 在 Telegram 向 [@BotFather](https://t.me/BotFather) 创建机器人，获取 Bot Token。
 2. 私聊请先向机器人发送 `/start`；群组请添加机器人，频道需要发布权限。填写目标的数字 Chat ID（群组可为负数）或公开频道 `@用户名`。数字 ID 可从自己机器人的 [getUpdates 响应](https://core.telegram.org/bots/api#getupdates) 中读取 `message.chat.id`。

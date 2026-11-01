@@ -87,6 +87,11 @@ func (m *Module) Register(r contracts.ModuleRegistrar) error {
 			Risk:             contracts.ToolRiskReadOnly, Handler: m.listTasksTool,
 		}),
 		r.Tool(contracts.AITool{
+			Name: "todo.update_task", Module: "todo", SchemaVersion: 1, Description: "按任务 ID 修改待办",
+			ParametersSchema: json.RawMessage(`{"type":"object","properties":{"taskId":{"type":"string","pattern":"^[a-f0-9]{32}$"},"title":{"type":["string","null"]},"description":{"type":["string","null"]},"dueAt":{"type":["string","null"],"format":"date-time"},"clearDueAt":{"type":"boolean"},"priority":{"type":["string","null"],"enum":["none","low","medium","high",null]},"category":{"type":["string","null"],"maxLength":40}},"required":["taskId","title","description","dueAt","clearDueAt","priority","category"],"additionalProperties":false}`),
+			Risk:             contracts.ToolRiskLowWrite, Handler: m.updateTaskTool,
+		}),
+		r.Tool(contracts.AITool{
 			Name: "todo.complete_task", Module: "todo", SchemaVersion: 1, Description: "按任务 ID 标记待办完成",
 			ParametersSchema: json.RawMessage(`{"type":"object","properties":{"taskId":{"type":"string","pattern":"^[a-f0-9]{32}$"}},"required":["taskId"],"additionalProperties":false}`),
 			Risk:             contracts.ToolRiskLowWrite, Handler: m.completeTaskTool,

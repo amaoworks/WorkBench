@@ -42,32 +42,28 @@ func (g *Gateway) Generate(ctx context.Context, request contracts.GenerateReques
 	if provider == nil {
 		return contracts.GenerateResult{}, ErrUnavailable
 	}
-	request.Tools = g.runtime.AvailableTools()
-	for round := 0; round < 4; round++ {
+	var executions []contracts.ToolExecution
+	var usage contracts.AIUsage
+	for round := 0; round <= 4; round++ {
+		request.Tools = g.roundTools(round)
 		result, err := provider.Generate(ctx, request)
 		if err != nil {
 			return contracts.GenerateResult{}, err
 		}
+		usage.InputTokens += result.Usage.InputTokens
+		usage.OutputTokens += result.Usage.OutputTokens
 		if len(result.ToolCalls) == 0 {
+			result.ToolExecutions = executions
+			result.Usage = usage
 			return result, nil
 		}
-		outputs := make([]contracts.ToolOutput, 0, len(result.ToolCalls))
-		for _, call := range result.ToolCalls {
-			call.ConversationID = request.ConversationID
-			call.MessageID = request.MessageID
-			if call.IdempotencyKey == "" {
-				call.IdempotencyKey = result.ResponseID + ":" + call.ID
-			}
-			toolResult, err := g.runtime.Execute(ctx, call)
-			if err != nil {
-				return contracts.GenerateResult{}, fmt.Errorf("execute tool %q: %w", call.Name, err)
-			}
-			outputs = append(outputs, contracts.ToolOutput{CallID: call.ID, Content: toolResult.Content})
+		if round == 4 {
+			break
 		}
-		request = contracts.GenerateRequest{
-			Profile: request.Profile, PreviousResponseID: result.ResponseID,
-			ToolOutputs: outputs, Tools: g.runtime.AvailableTools(),
-			ConversationID: request.ConversationID, MessageID: request.MessageID,
+		if err := g.executeTools(ctx, &request, result, func(execution contracts.ToolExecution) {
+			executions = append(executions, execution)
+		}); err != nil {
+			return contracts.GenerateResult{}, err
 		}
 	}
 	return contracts.GenerateResult{}, errors.New("AI exceeded maximum tool-call rounds")
@@ -86,8 +82,10 @@ func (g *Gateway) Stream(ctx context.Context, request contracts.GenerateRequest)
 
 func (g *Gateway) runStream(ctx context.Context, provider contracts.AIProvider, request contracts.GenerateRequest, events chan<- contracts.AIStreamEvent) {
 	defer close(events)
-	request.Tools = g.runtime.AvailableTools()
-	for round := 0; round < 4; round++ {
+	var executions []contracts.ToolExecution
+	var usage contracts.AIUsage
+	for round := 0; round <= 4; round++ {
+		request.Tools = g.roundTools(round)
 		upstream, err := provider.Stream(ctx, request)
 		if err != nil {
 			sendStreamError(ctx, events, err)
@@ -122,6 +120,10 @@ func (g *Gateway) runStream(ctx context.Context, provider contracts.AIProvider, 
 			return
 		}
 		if len(completed.ToolCalls) == 0 {
+			completed.ToolExecutions = executions
+			usage.InputTokens += completed.Usage.InputTokens
+			usage.OutputTokens += completed.Usage.OutputTokens
+			completed.Usage = usage
 			select {
 			case events <- contracts.AIStreamEvent{Type: "response.completed", Result: completed, Done: true}:
 			case <-ctx.Done():
@@ -129,27 +131,59 @@ func (g *Gateway) runStream(ctx context.Context, provider contracts.AIProvider, 
 			return
 		}
 
-		outputs := make([]contracts.ToolOutput, 0, len(completed.ToolCalls))
-		for _, call := range completed.ToolCalls {
-			call.ConversationID = request.ConversationID
-			call.MessageID = request.MessageID
-			if call.IdempotencyKey == "" {
-				call.IdempotencyKey = completed.ResponseID + ":" + call.ID
-			}
-			toolResult, err := g.runtime.Execute(ctx, call)
-			if err != nil {
-				sendStreamError(ctx, events, fmt.Errorf("execute tool %q: %w", call.Name, err))
-				return
-			}
-			outputs = append(outputs, contracts.ToolOutput{CallID: call.ID, Content: toolResult.Content})
+		usage.InputTokens += completed.Usage.InputTokens
+		usage.OutputTokens += completed.Usage.OutputTokens
+		if round == 4 {
+			break
 		}
-		request = contracts.GenerateRequest{
-			Profile: request.Profile, PreviousResponseID: completed.ResponseID,
-			ToolOutputs: outputs, Tools: g.runtime.AvailableTools(),
-			ConversationID: request.ConversationID, MessageID: request.MessageID,
+		if err := g.executeTools(ctx, &request, *completed, func(execution contracts.ToolExecution) {
+			executions = append(executions, execution)
+			select {
+			case events <- contracts.AIStreamEvent{Type: "tool.completed", Tool: &execution}:
+			case <-ctx.Done():
+			}
+		}); err != nil {
+			sendStreamError(ctx, events, err)
+			return
 		}
 	}
 	sendStreamError(ctx, events, errors.New("AI exceeded maximum tool-call rounds"))
+}
+
+func (g *Gateway) roundTools(round int) []contracts.AITool {
+	if round == 4 {
+		return nil
+	}
+	return g.runtime.AvailableTools()
+}
+
+func (g *Gateway) executeTools(ctx context.Context, request *contracts.GenerateRequest, result contracts.GenerateResult, report func(contracts.ToolExecution)) error {
+	request.Items = append(request.Items, result.OutputItems...)
+	for _, call := range result.ToolCalls {
+		call.ConversationID, call.MessageID = request.ConversationID, request.MessageID
+		if call.IdempotencyKey == "" {
+			call.IdempotencyKey = result.ResponseID + ":" + call.ID
+		}
+		execution := contracts.ToolExecution{CallID: call.ID, Name: call.Name, Label: call.Name, Risk: contracts.ToolRiskReadOnly, Status: "succeeded"}
+		if tool, ok := g.runtime.tools[call.Name]; ok {
+			execution.Label, execution.Risk = tool.definition.Description, tool.definition.Risk
+		}
+		toolResult, err := g.runtime.Execute(ctx, call)
+		if err != nil {
+			execution.Status, execution.Error = "failed", truncateToolError(err)
+		}
+		report(execution)
+		if err != nil {
+			return fmt.Errorf("execute tool %q: %w", call.Name, err)
+		}
+		output, _ := json.Marshal(struct {
+			Type   string `json:"type"`
+			CallID string `json:"call_id"`
+			Output string `json:"output"`
+		}{Type: "function_call_output", CallID: call.ID, Output: string(toolResult.Content)})
+		request.Items = append(request.Items, output)
+	}
+	return nil
 }
 
 func sendStreamError(ctx context.Context, events chan<- contracts.AIStreamEvent, err error) {

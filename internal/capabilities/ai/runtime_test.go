@@ -130,11 +130,12 @@ func (p *fakeProvider) Generate(_ context.Context, request contracts.GenerateReq
 	p.calls++
 	if p.calls == 1 {
 		return contracts.GenerateResult{
-			ResponseID: "response_1",
-			ToolCalls:  []contracts.ToolCall{{ID: "call_1", Name: "todo.create_task", Arguments: json.RawMessage(`{"title":"From AI"}`)}},
+			ResponseID:  "response_1",
+			ToolCalls:   []contracts.ToolCall{{ID: "call_1", Name: "todo.create_task", Arguments: json.RawMessage(`{"title":"From AI"}`)}},
+			OutputItems: []json.RawMessage{json.RawMessage(`{"type":"function_call","call_id":"call_1","name":"todo.create_task","arguments":"{\"title\":\"From AI\"}"}`)},
 		}, nil
 	}
-	if request.PreviousResponseID != "response_1" || len(request.ToolOutputs) != 1 {
+	if len(request.Messages) != 1 || len(request.Items) != 2 || !strings.Contains(string(request.Items[1]), "function_call_output") {
 		return contracts.GenerateResult{}, context.Canceled
 	}
 	return contracts.GenerateResult{ResponseID: "response_2", Text: "Created"}, nil

@@ -5,8 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
+
+	"github.com/go-chi/chi/v5"
 
 	"workbench/internal/capabilities/ai"
+	"workbench/internal/contracts"
 	"workbench/internal/foundation/httpapi"
 )
 
@@ -16,6 +20,20 @@ func NewHTTPHandler(service *Service) *HTTPHandler { return &HTTPHandler{service
 
 func (h *HTTPHandler) Status(w http.ResponseWriter, _ *http.Request) {
 	httpapi.Write(w, http.StatusOK, map[string]bool{"available": h.service.Available()})
+}
+
+func (h *HTTPHandler) Messages(w http.ResponseWriter, r *http.Request) {
+	messages, err := h.service.messages(r.Context(), chi.URLParam(r, "id"), 50)
+	if err != nil {
+		httpapi.Error(w, http.StatusInternalServerError, "history_failed", "对话加载失败")
+		return
+	}
+	if len(messages) == 0 {
+		httpapi.Error(w, http.StatusNotFound, "conversation_not_found", "对话不存在")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpapi.Write(w, http.StatusOK, map[string]any{"messages": messages})
 }
 
 func (h *HTTPHandler) Chat(w http.ResponseWriter, r *http.Request) {
@@ -68,9 +86,26 @@ func (h *HTTPHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	writeSSE(w, "chat.started", map[string]string{"conversationId": turn.conversationID, "messageId": turn.messageID})
 	flusher.Flush()
+	var toolStatuses []string
 	for event := range stream.Events() {
+		if event.Tool != nil {
+			status := "已完成"
+			if event.Tool.Status == "failed" {
+				status = "失败"
+			}
+			toolStatuses = append(toolStatuses, event.Tool.Label+"："+status)
+			writeSSE(w, "chat.tool", event.Tool)
+			flusher.Flush()
+		}
 		if event.Err != nil {
-			writeSSE(w, "chat.error", map[string]string{"message": event.Err.Error()})
+			message := event.Err.Error()
+			if len(toolStatuses) > 0 {
+				_, err := h.service.complete(r.Context(), turn, contracts.GenerateResult{Text: "请求失败：" + message + "\n" + strings.Join(toolStatuses, "\n")})
+				if err != nil {
+					message += "\n执行结果保存失败"
+				}
+			}
+			writeSSE(w, "chat.error", map[string]string{"message": message})
 			flusher.Flush()
 			return
 		}

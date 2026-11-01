@@ -57,7 +57,7 @@ test('removed TradingView settings stay removed when a new browser loads them', 
     assert.equal(store.get('chart').symbol, 'AAPL');
 });
 
-test('loading settings excludes the legacy layout without changing stored data', async () => {
+test('loading settings restores the saved chart layout without writing it back', async () => {
     const layout = { revision: 7, value: { charts: [{}], opaque: 'x'.repeat(100000) } };
     const f = fixture({ layout, 'tv:dateFormat': { revision: 2, value: 'yyyy-MM-dd' } });
     const requests = [];
@@ -65,8 +65,8 @@ test('loading settings excludes the legacy layout without changing stored data',
         requests.push(url);
         return f.request(url, init);
     } });
-    assert(requests.includes('/api/modules/investment/preferences?includeLayout=false'));
-    assert.equal(store.has('layout'), false);
+    assert(requests.includes('/api/modules/investment/preferences'));
+    assert.deepEqual(store.get('layout'), layout.value);
     assert.equal(store.settingsAdapter().initialSettings.dateFormat, 'yyyy-MM-dd');
     assert.deepEqual(f.entries.get('layout'), layout);
     assert.equal(f.calls.length, 0);

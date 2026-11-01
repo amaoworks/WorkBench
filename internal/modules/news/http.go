@@ -210,39 +210,74 @@ func pageParams(r *http.Request, def int) (pageCursor, int, error) {
 	}
 	return c, n, nil
 }
-func (m *Module) listArticlesHTTP(w http.ResponseWriter, r *http.Request) {
-	c, n, e := pageParams(r, 30)
-	if e != nil {
-		writeError(w, e)
-		return
+
+type articleListParams struct {
+	Search, SourceID, Topic  string
+	Unread, Starred, Matched bool
+	Cursor                   string
+	Limit                    int
+}
+
+type articleListPage struct {
+	Items      []Article `json:"items"`
+	NextCursor string    `json:"nextCursor,omitempty"`
+}
+
+func (m *Module) articles(ctx context.Context, params articleListParams) (articleListPage, error) {
+	cursor, err := decodeCursor(params.Cursor)
+	if err != nil {
+		return articleListPage{}, err
 	}
-	query := r.URL.Query()
-	search := strings.TrimSpace(query.Get("q"))
+	if params.Limit < 1 || params.Limit > 100 {
+		return articleListPage{}, errors.New("分页条数应为 1 至 100")
+	}
+	search := strings.TrimSpace(params.Search)
 	if len(search) > 500 {
-		writeError(w, errors.New("搜索词过长"))
-		return
+		return articleListPage{}, errors.New("搜索词过长")
 	}
-	rows, e := m.q.ListArticlesPage(r.Context(), newssqlc.ListArticlesPageParams{Search: search, Pattern: escapedPattern(search), SourceID: query.Get("sourceId"), Topic: query.Get("topic"), Unread: bit(query.Get("unread") == "true"), Starred: bit(query.Get("starred") == "true"), Matched: bit(query.Get("matched") == "true"), CursorTime: c.Time, CursorID: c.ID, PageLimit: int64(n + 1)})
-	if e != nil {
-		writeError(w, e)
-		return
+	rows, err := m.q.ListArticlesPage(ctx, newssqlc.ListArticlesPageParams{
+		Search: search, Pattern: escapedPattern(search), SourceID: params.SourceID, Topic: params.Topic,
+		Unread: bit(params.Unread), Starred: bit(params.Starred), Matched: bit(params.Matched),
+		CursorTime: cursor.Time, CursorID: cursor.ID, PageLimit: int64(params.Limit + 1),
+	})
+	if err != nil {
+		return articleListPage{}, err
 	}
-	out := struct {
-		Items      []Article `json:"items"`
-		NextCursor string    `json:"nextCursor,omitempty"`
-	}{Items: []Article{}}
-	if len(rows) > n {
-		rows = rows[:n]
-		last := rows[n-1]
+	out := articleListPage{Items: []Article{}}
+	if len(rows) > params.Limit {
+		rows = rows[:params.Limit]
+		last := rows[params.Limit-1]
 		out.NextCursor = encodeCursor(last.PublishedAt, last.ID)
 	}
-	for _, v := range rows {
-		a, e := m.articleDTO(r.Context(), v)
-		if e != nil {
-			writeError(w, e)
+	for _, row := range rows {
+		article, err := m.articleDTO(ctx, row)
+		if err != nil {
+			return articleListPage{}, err
+		}
+		out.Items = append(out.Items, article)
+	}
+	return out, nil
+}
+
+func (m *Module) listArticlesHTTP(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	limit := 30
+	if raw := query.Get("limit"); raw != "" {
+		var err error
+		limit, err = strconv.Atoi(raw)
+		if err != nil {
+			writeError(w, errors.New("分页条数应为 1 至 100"))
 			return
 		}
-		out.Items = append(out.Items, a)
+	}
+	out, e := m.articles(r.Context(), articleListParams{
+		Search: query.Get("q"), SourceID: query.Get("sourceId"), Topic: query.Get("topic"),
+		Unread: query.Get("unread") == "true", Starred: query.Get("starred") == "true", Matched: query.Get("matched") == "true",
+		Cursor: query.Get("cursor"), Limit: limit,
+	})
+	if e != nil {
+		writeError(w, e)
+		return
 	}
 	httpapi.Write(w, 200, out)
 }

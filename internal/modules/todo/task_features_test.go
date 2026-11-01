@@ -168,6 +168,38 @@ func TestTodoAIToolsListAndComplete(t *testing.T) {
 	}
 }
 
+func TestUpdateTaskToolUpdatesAndClearsDueAt(t *testing.T) {
+	m, _ := openTodoModule(t)
+	ctx := context.Background()
+	due := time.Date(2026, 3, 6, 13, 0, 0, 0, time.UTC)
+	task, err := m.Create(ctx, CreateTask{Title: "Before", Description: "keep", DueAt: &due, Priority: "low", Category: "old"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := m.updateTaskTool(ctx, contracts.ToolCall{Arguments: json.RawMessage(`{"taskId":"` + task.ID + `","title":"After","description":null,"dueAt":"2026-03-06T14:00:00Z","clearDueAt":false,"priority":"high","category":""}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result Task
+	if err := json.Unmarshal(updated.Content, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Title != "After" || result.Description != "keep" || result.DueAt == nil || !result.DueAt.Equal(due.Add(time.Hour)) || result.Priority != "high" || result.Category != "" {
+		t.Fatalf("updated task = %+v", result)
+	}
+	cleared, err := m.updateTaskTool(ctx, contracts.ToolCall{Arguments: json.RawMessage(`{"taskId":"` + task.ID + `","title":null,"description":null,"dueAt":null,"clearDueAt":true,"priority":null,"category":null}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result = Task{}
+	if err := json.Unmarshal(cleared.Content, &result); err != nil || result.DueAt != nil || result.Title != "After" {
+		t.Fatalf("cleared task = %+v, err = %v", result, err)
+	}
+	if _, err := m.updateTaskTool(ctx, contracts.ToolCall{Arguments: json.RawMessage(`{"taskId":"` + task.ID + `","title":null,"description":null,"dueAt":"2026-03-07T09:00:00Z","clearDueAt":true,"priority":null,"category":null}`)}); err == nil {
+		t.Fatal("accepted dueAt with clearDueAt")
+	}
+}
+
 func containsJSONID(data []byte, id string) bool {
 	var body struct {
 		Items []Task `json:"items"`

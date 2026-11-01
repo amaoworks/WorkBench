@@ -264,12 +264,11 @@ func (m *Module) fetchPortfolio(ctx context.Context, token string, includeQuotes
 	return out, nil
 }
 
-func (m *Module) getPositions(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
-	token, status, message := m.portfolioToken(r.Context())
+func (m *Module) positions(ctx context.Context) portfolioResponse {
+	token, status, message := m.portfolioToken(ctx)
 	out := portfolioResponse{Status: status, Message: message, Accounts: []portfolioAccount{}, Items: []portfolioPosition{}}
 	if status == "ready" {
-		fresh, err := m.fetchPortfolio(r.Context(), token, true)
+		fresh, err := m.fetchPortfolio(ctx, token, true)
 		if err == nil {
 			out = fresh
 		} else {
@@ -279,6 +278,12 @@ func (m *Module) getPositions(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	return out
+}
+
+func (m *Module) getPositions(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	out := m.positions(r.Context())
 	httpapi.Write(w, http.StatusOK, out)
 }
 
@@ -542,43 +547,39 @@ func normalizePortfolioOrders(raw []traderOrder, identities map[string]string, f
 	return items, nil
 }
 
-func (m *Module) getOrders(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
-	query := r.URL.Query()
-	days := 7
-	var err error
-	if query.Has("days") {
-		days, err = strconv.Atoi(query.Get("days"))
+type portfolioRequestError struct {
+	code, message string
+}
+
+func (e *portfolioRequestError) Error() string { return e.message }
+
+func (m *Module) orders(ctx context.Context, days int, filter, timeZone string) (ordersResponse, error) {
+	if !slices.Contains([]int{1, 7, 30, 90}, days) {
+		return ordersResponse{}, &portfolioRequestError{code: "invalid_range", message: "时间范围无效"}
 	}
-	if err != nil || !slices.Contains([]int{1, 7, 30, 90}, days) {
-		httpapi.Error(w, http.StatusBadRequest, "invalid_range", "时间范围无效")
-		return
-	}
-	filter := query.Get("status")
 	if filter == "" {
 		filter = "all"
 	}
 	if !slices.Contains([]string{"all", "working", "filled", "canceled"}, filter) {
-		httpapi.Error(w, http.StatusBadRequest, "invalid_status", "订单状态无效")
-		return
+		return ordersResponse{}, &portfolioRequestError{code: "invalid_status", message: "订单状态无效"}
 	}
 	location := m.marketLocation
-	if name := query.Get("tz"); name != "" {
-		location, err = time.LoadLocation(name)
+	if timeZone != "" {
+		var err error
+		location, err = time.LoadLocation(timeZone)
 		if err != nil {
-			httpapi.Error(w, http.StatusBadRequest, "invalid_timezone", "时区无效")
-			return
+			return ordersResponse{}, &portfolioRequestError{code: "invalid_timezone", message: "时区无效"}
 		}
 	}
 	now := m.now().In(location)
 	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location).AddDate(0, 0, -(days - 1))
-	token, status, message := m.portfolioToken(r.Context())
+	token, status, message := m.portfolioToken(ctx)
 	out := ordersResponse{Status: status, Message: message, Items: []portfolioOrder{}}
 	if status == "ready" {
-		identities, err := m.accountIdentities(r.Context(), token)
+		identities, err := m.accountIdentities(ctx, token)
 		if err == nil {
 			var raw []traderOrder
-			raw, err = m.readPortfolioOrders(r.Context(), token, from, now)
+			raw, err = m.readPortfolioOrders(ctx, token, from, now)
 			if err == nil {
 				out.Items, err = normalizePortfolioOrders(raw, identities, filter)
 			}
@@ -592,6 +593,31 @@ func (m *Module) getOrders(w http.ResponseWriter, r *http.Request) {
 			at := m.now().UTC()
 			out.UpdatedAt = &at
 		}
+	}
+	return out, nil
+}
+
+func (m *Module) getOrders(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	query := r.URL.Query()
+	days := 7
+	var err error
+	if query.Has("days") {
+		days, err = strconv.Atoi(query.Get("days"))
+	}
+	if err != nil {
+		httpapi.Error(w, http.StatusBadRequest, "invalid_range", "时间范围无效")
+		return
+	}
+	out, err := m.orders(r.Context(), days, query.Get("status"), query.Get("tz"))
+	if err != nil {
+		var requestError *portfolioRequestError
+		if errors.As(err, &requestError) {
+			httpapi.Error(w, http.StatusBadRequest, requestError.code, requestError.message)
+			return
+		}
+		httpapi.Error(w, http.StatusInternalServerError, "orders_failed", err.Error())
+		return
 	}
 	httpapi.Write(w, http.StatusOK, out)
 }

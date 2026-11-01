@@ -11,6 +11,7 @@ import (
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/openai/openai-go/v3/shared"
 
@@ -79,6 +80,7 @@ func resultFromResponse(response responses.Response) contracts.GenerateResult {
 		},
 	}
 	for _, item := range response.Output {
+		result.OutputItems = append(result.OutputItems, json.RawMessage(item.RawJSON()))
 		if item.Type != "function_call" {
 			continue
 		}
@@ -156,7 +158,7 @@ func (p *OpenAIProvider) params(request contracts.GenerateRequest) (responses.Re
 	if profile.Model == "" {
 		return responses.ResponseNewParams{}, fmt.Errorf("AI profile %q has no model", request.Profile)
 	}
-	input := make(responses.ResponseInputParam, 0, len(request.Messages)+len(request.ToolOutputs))
+	input := make(responses.ResponseInputParam, 0, len(request.Messages)+len(request.Items))
 	for _, message := range request.Messages {
 		text := string(message.Content)
 		var decoded string
@@ -172,15 +174,8 @@ func (p *OpenAIProvider) params(request contracts.GenerateRequest) (responses.Re
 		}
 		input = append(input, responses.ResponseInputItemParamOfMessage(text, role))
 	}
-	for _, output := range request.ToolOutputs {
-		input = append(input, responses.ResponseInputItemUnionParam{
-			OfFunctionCallOutput: &responses.ResponseInputItemFunctionCallOutputParam{
-				CallID: openai.String(output.CallID),
-				Output: responses.ResponseInputItemFunctionCallOutputOutputUnionParam{
-					OfString: openai.String(string(output.Content)),
-				},
-			},
-		})
+	for _, item := range request.Items {
+		input = append(input, param.Override[responses.ResponseInputItemUnionParam](item))
 	}
 	tools := make([]responses.ToolUnionParam, 0, len(request.Tools))
 	for _, tool := range request.Tools {
@@ -196,12 +191,10 @@ func (p *OpenAIProvider) params(request contracts.GenerateRequest) (responses.Re
 		Model: shared.ResponsesModel(profile.Model),
 		Input: responses.ResponseNewParamsInputUnion{OfInputItemList: input},
 		Store: openai.Bool(false), Tools: tools,
+		Include: []responses.ResponseIncludable{"reasoning.encrypted_content"},
 	}
 	if profile.MaxOutputTokens > 0 {
 		params.MaxOutputTokens = openai.Int(profile.MaxOutputTokens)
-	}
-	if request.PreviousResponseID != "" {
-		params.PreviousResponseID = openai.String(request.PreviousResponseID)
 	}
 	return params, nil
 }

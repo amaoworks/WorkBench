@@ -25,6 +25,7 @@ func (m *Module) scanDue(ctx context.Context, _ contracts.JobRun) error {
 			_, err := m.notifications.Create(ctx, contracts.NewNotification{
 				SourceModule: "todo", Severity: contracts.NotificationWarning,
 				Title: "待办已到期", Content: task.Title, ActionLabel: "查看待办", ActionRoute: "/todo",
+				External:       true,
 				IdempotencyKey: fmt.Sprintf("todo:due:%s:%d", task.ID, task.DueAt.Int64),
 			})
 			if err != nil {

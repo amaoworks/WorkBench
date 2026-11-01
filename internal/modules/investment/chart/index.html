@@ -40,7 +40,7 @@
   <link rel="modulepreload" href="/investment/terminal/chart-state.js">
   <link rel="modulepreload" href="/investment/terminal/preferences.js">
   <script>
-    window.terminalPrefetch = Object.fromEntries(["/api/modules/investment/preferences?includeLayout=false", "/api/auth/csrf"].map(url => {
+    window.terminalPrefetch = Object.fromEntries(["/api/modules/investment/preferences", "/api/auth/csrf"].map(url => {
       const response = fetch(url, { credentials: "same-origin", signal: AbortSignal.timeout(10000) });
       response.catch(() => {});
       return [url, response];
@@ -313,6 +313,7 @@
       symbol: initialSymbol,
       interval: initialChartState.resolution,
       overrides: { 'mainSeriesProperties.sessionId': initialChartState.session },
+      saved_data: preferences.get('layout') || undefined,
       settings_adapter: preferences.settingsAdapter(),
       theme,
       locale: "zh",
@@ -401,6 +402,9 @@
       symbolSubscription = widget.activeChart().onSymbolChanged();
       symbolSubscription.subscribe(null, onSymbolChanged);
       chartInitialized = true;
+      widget.subscribe('onAutoSaveNeeded', () => {
+        widget.save(layout => preferences.set('layout', layout));
+      });
       const symbolInfo = widget.activeChart().symbolExt();
       if (symbolInfo) onSymbolChanged(symbolInfo);
       // The chart can paint before watchlist restoration. Keeping the cover up

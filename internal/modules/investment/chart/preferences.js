@@ -18,7 +18,7 @@ function validateEntries(body) {
 
 export async function loadPreferences({ request = fetch, report = () => {} } = {}) {
     const [response, csrf] = await Promise.all([
-        request(`${ENDPOINT}?includeLayout=false`, { credentials: 'same-origin', signal: AbortSignal.timeout(10000) }),
+        request(ENDPOINT, { credentials: 'same-origin', signal: AbortSignal.timeout(10000) }),
         request('/api/auth/csrf', { credentials: 'same-origin', signal: AbortSignal.timeout(10000) }),
     ]);
     if (!response.ok || !csrf.ok) throw new Error('无法读取投资设置，请重新加载。');

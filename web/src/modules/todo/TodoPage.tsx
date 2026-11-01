@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Plus, Trash2 } from "lucide-react";
+import * as Dialog from "@radix-ui/react-dialog";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { createTask, deleteTask, updateTask, useRefreshTodo, useTaskCounts, useTasks, useTodoAgenda } from "./queries";
@@ -16,6 +17,7 @@ import { cn } from "../../shared/cn";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { Select } from "../../components/ui/Select";
+import { Field } from "../../components/ui/Field";
 
 const WALLOS_PREFIX = "Wallos续费提醒 - ";
 const PRIORITIES: readonly { value: TaskPriority; label: string }[] = [
@@ -63,6 +65,11 @@ function groupOf(task: Task, now: Date): GroupId {
 const pad = (value: number) => String(value).padStart(2, "0");
 const clock = (date: Date) => `${pad(date.getHours())}:${pad(date.getMinutes())}`;
 const shortDate = (date: Date) => `${date.getMonth() + 1}/${pad(date.getDate())}`;
+const localDateTime = (value?: string) => {
+  if (!value) return "";
+  const date = new Date(value);
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${clock(date)}`;
+};
 
 /** Compact, relative date like the prototype's right column: 今天 16:30 · 明天 09:00 · 10/29. */
 function dayLabel(value: string, now: Date) {
@@ -92,6 +99,7 @@ export default function TodoPage() {
   const viewParam = params.get("view");
   const view = VIEWS.find((item) => item.id === viewParam) ?? VIEWS[0];
   const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
   const [dueAt, setDueAt] = useState("");
   const [priority, setPriority] = useState<TaskPriority>("none");
   const [category, setCategory] = useState("");
@@ -99,6 +107,8 @@ export default function TodoPage() {
   const categoryFilter = params.get("category")?.trim() ?? "";
   const [categoryDraft, setCategoryDraft] = useState(categoryFilter);
   const titleInput = useRef<HTMLInputElement>(null);
+  const editTrigger = useRef<HTMLElement | null>(null);
+  const [editing, setEditing] = useState<Task | null>(null);
   const tasks = useTasks({ view: view.id, priority: priorityFilter, category: categoryFilter });
   const taskCounts = useTaskCounts({ priority: priorityFilter, category: categoryFilter });
   const agenda = useTodoAgenda();
@@ -110,9 +120,10 @@ export default function TodoPage() {
     if (wantsNew) titleInput.current?.focus();
   }, [wantsNew, location.key]);
   const create = useMutation({
-    mutationFn: () => createTask({ title, dueAt: dueAt ? new Date(dueAt).toISOString() : null, priority, category }),
+    mutationFn: () => createTask({ title, description, dueAt: dueAt ? new Date(dueAt).toISOString() : null, priority, category }),
     onSuccess: () => {
       setTitle("");
+      setDescription("");
       setDueAt("");
       setPriority("none");
       setCategory("");
@@ -141,6 +152,10 @@ export default function TodoPage() {
     if (title.trim()) create.mutate();
   }
   const toggle = (task: Task) => update.mutate({ id: task.id, completed: !task.completedAt });
+  const edit = (task: Task, element: HTMLElement) => {
+    editTrigger.current = element;
+    setEditing(task);
+  };
   const now = useCurrentTime();
   const grouped = new Map<GroupId, Task[]>();
   for (const task of items) {
@@ -192,7 +207,7 @@ export default function TodoPage() {
         {todayItems.length > 0 && (
           <div className="cal-grid">
             {todayItems.slice(0, 8).map((task) => (
-              <TodayCard key={task.id} task={task} overdue={task.overdue} now={now} onToggle={() => toggle(task)} />
+              <TodayCard key={task.id} task={task} overdue={task.overdue} now={now} onToggle={() => toggle(task)} onEdit={(element) => edit(task, element)} />
             ))}
           </div>
         )}
@@ -252,8 +267,22 @@ export default function TodoPage() {
             className="composer-input"
           />
           <div className="composer-opts">
+            <input
+              aria-label="备注"
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              maxLength={10000}
+              placeholder="备注"
+              className="ui-input min-w-40 flex-1"
+            />
             <TodoDeadline value={dueAt} onChange={setDueAt} />
-            <Select aria-label="优先级" className="composer-select" value={priority} onValueChange={(value) => setPriority(value as TaskPriority)} options={PRIORITIES} />
+            <Select
+              aria-label="优先级"
+              className="composer-select"
+              value={priority}
+              onValueChange={(value) => setPriority(value as TaskPriority)}
+              options={PRIORITIES}
+            />
             <input
               aria-label="分类"
               value={category}
@@ -300,6 +329,7 @@ export default function TodoPage() {
                   now={now}
                   overdue={group.id === "overdue"}
                   onToggle={() => toggle(task)}
+                  onEdit={(element) => edit(task, element)}
                   onDelete={(element) => deletion.request(task, element)}
                 />
               ))}
@@ -314,6 +344,20 @@ export default function TodoPage() {
           </div>
         )}
       </section>
+      {editing && (
+        <EditTaskDialog
+          key={editing.id}
+          task={editing}
+          pending={update.isPending}
+          onClose={() => setEditing(null)}
+          onCloseAutoFocus={() => editTrigger.current?.focus()}
+          onSave={async (input) => {
+            await update.mutateAsync(input);
+            setEditing(null);
+            toast.success("待办已保存");
+          }}
+        />
+      )}
       <ConfirmDialog {...deletion.dialogProps} />
     </div>
   );
@@ -338,7 +382,11 @@ function PriorityBadge({ priority }: { priority: TaskPriority }) {
   return <Badge tone={badge.tone} aria-label={`${badge.label}优先级`}>{badge.label}</Badge>;
 }
 
-function TodayCard({ task, overdue, now, onToggle }: { task: Task; overdue: boolean; now: Date; onToggle: () => void }) {
+function TodayCard({
+  task, overdue, now, onToggle, onEdit,
+}: {
+  task: Task; overdue: boolean; now: Date; onToggle: () => void; onEdit: (element: HTMLElement) => void;
+}) {
   const note = task.description.split("\n")[0]?.trim();
   return (
     <article className="cal todo-card">
@@ -346,7 +394,12 @@ function TodayCard({ task, overdue, now, onToggle }: { task: Task; overdue: bool
         <Badge tone={overdue ? "warning" : "info"}>
           {overdue ? `已逾期 · ${task.dueAt ? dayLabel(task.dueAt, now) : ""}` : task.dueAt ? dayLabel(task.dueAt, now) : "今天"}
         </Badge>
-        <CheckButton task={task} onToggle={onToggle} />
+        <div className="flex items-center gap-1">
+          <Button type="button" variant="ghost" size="icon" onClick={(event) => onEdit(event.currentTarget)} aria-label={`编辑 ${task.title}`}>
+            <Pencil size={15} />
+          </Button>
+          <CheckButton task={task} onToggle={onToggle} />
+        </div>
       </div>
       <h3 className="cal-title">{displayTitle(task)}</h3>
       <dl className="kvs">
@@ -372,12 +425,14 @@ function TaskRow({
   now,
   overdue,
   onToggle,
+  onEdit,
   onDelete,
 }: {
   task: Task;
   now: Date;
   overdue: boolean;
   onToggle: () => void;
+  onEdit: (element: HTMLElement) => void;
   onDelete: (element: HTMLElement) => void;
 }) {
   const wallos = task.category === "renewal";
@@ -395,6 +450,9 @@ function TaskRow({
       <div className="rt">
         <PriorityBadge priority={task.priority} />
         {when && <span className={cn("task-when", overdue && "is-overdue")}>{when}</span>}
+        <Button variant="ghost" size="icon" onClick={(event) => onEdit(event.currentTarget)} aria-label={`编辑 ${task.title}`}>
+          <Pencil size={16} />
+        </Button>
         <Button
           variant="ghost"
           size="icon"
@@ -406,5 +464,82 @@ function TaskRow({
         </Button>
       </div>
     </div>
+  );
+}
+
+function EditTaskDialog({
+  task, pending, onClose, onCloseAutoFocus, onSave,
+}: {
+  task: Task;
+  pending: boolean;
+  onClose: () => void;
+  onCloseAutoFocus: () => void;
+  onSave: (input: {
+    id: string; title: string; description: string; dueAt: string | null; clearDueAt: boolean; priority: TaskPriority; category: string;
+  }) => Promise<void>;
+}) {
+  const [title, setTitle] = useState(task.title);
+  const [description, setDescription] = useState(task.description);
+  const [dueAt, setDueAt] = useState(() => localDateTime(task.dueAt));
+  const [priority, setPriority] = useState<TaskPriority>(task.priority);
+  const [category, setCategory] = useState(task.category ?? "");
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!title.trim()) return;
+    try {
+      await onSave({
+        id: task.id,
+        title,
+        description,
+        dueAt: dueAt ? new Date(dueAt).toISOString() : null,
+        clearDueAt: !dueAt,
+        priority,
+        category,
+      });
+    } catch {
+      // The mutation reports the request error and keeps the dialog open for correction.
+    }
+  }
+
+  return (
+    <Dialog.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="command-overlay z-40" />
+        <Dialog.Content
+          className="module-settings-dialog z-50 p-5"
+          style={{ maxWidth: 520 }}
+          onCloseAutoFocus={(event) => { event.preventDefault(); onCloseAutoFocus(); }}
+        >
+          <Dialog.Title className="font-semibold">编辑待办</Dialog.Title>
+          <Dialog.Description className="sr-only">修改待办内容</Dialog.Description>
+          <form className="mt-4 space-y-4" onSubmit={submit}>
+            <Field label="标题">
+              <input className="ui-input" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={300} autoFocus />
+            </Field>
+            <Field label="备注">
+              <textarea className="ui-input min-h-24 resize-y" value={description} onChange={(event) => setDescription(event.target.value)} maxLength={10000} />
+            </Field>
+            <Field label="截止时间">
+              <div><TodoDeadline value={dueAt} onChange={setDueAt} /></div>
+            </Field>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label="优先级">
+                <Select value={priority} onValueChange={(value) => setPriority(value as TaskPriority)} options={PRIORITIES} />
+              </Field>
+              <Field label="分类">
+                <input className="ui-input" value={category} onChange={(event) => setCategory(event.target.value)} maxLength={40} />
+              </Field>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Dialog.Close asChild>
+                <Button type="button" variant="secondary">取消</Button>
+              </Dialog.Close>
+              <Button disabled={pending || !title.trim()}>{pending ? "保存中…" : "保存"}</Button>
+            </div>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
