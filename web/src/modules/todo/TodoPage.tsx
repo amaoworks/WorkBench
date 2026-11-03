@@ -4,7 +4,13 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { createTask, deleteTask, updateTask, useRefreshTodo, useTaskCounts, useTasks, useTodoAgenda } from "./queries";
+import {
+  createTask, deleteTask, loadTaskForEdit, updateTask, useRefreshTodo, useTaskCounts, useTasks, useTodoAgenda,
+  type TaskCreateInput, type TaskUpdateInput,
+} from "./queries";
+import {
+  emptyTaskDraft, mergeTaskDraft, prepareTaskCreate, taskDraft, taskEditInput, type TaskDraft, type TaskDraftField,
+} from "./taskActions";
 import type { Task, TaskPriority } from "./schema";
 import { Button } from "../../components/ui/Button";
 import { Skeleton } from "../../components/ui/States";
@@ -18,6 +24,7 @@ import { PageHeader } from "../../components/ui/PageHeader";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { Select } from "../../components/ui/Select";
 import { Field } from "../../components/ui/Field";
+import { APIError } from "../../shared/api";
 
 const WALLOS_PREFIX = "Wallos续费提醒 - ";
 const PRIORITIES: readonly { value: TaskPriority; label: string }[] = [
@@ -65,11 +72,6 @@ function groupOf(task: Task, now: Date): GroupId {
 const pad = (value: number) => String(value).padStart(2, "0");
 const clock = (date: Date) => `${pad(date.getHours())}:${pad(date.getMinutes())}`;
 const shortDate = (date: Date) => `${date.getMonth() + 1}/${pad(date.getDate())}`;
-const localDateTime = (value?: string) => {
-  if (!value) return "";
-  const date = new Date(value);
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${clock(date)}`;
-};
 
 /** Compact, relative date like the prototype's right column: 今天 16:30 · 明天 09:00 · 10/29. */
 function dayLabel(value: string, now: Date) {
@@ -98,11 +100,13 @@ export default function TodoPage() {
   const location = useLocation();
   const viewParam = params.get("view");
   const view = VIEWS.find((item) => item.id === viewParam) ?? VIEWS[0];
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [dueAt, setDueAt] = useState("");
-  const [priority, setPriority] = useState<TaskPriority>("none");
-  const [category, setCategory] = useState("");
+  const [newTask, setNewTask] = useState(emptyTaskDraft);
+  const createAttempt = useRef<TaskCreateInput | null>(null);
+  function changeNewTask<K extends TaskDraftField>(field: K, value: TaskDraft[K]) {
+    if (newTask[field] === value) return;
+    createAttempt.current = null;
+    setNewTask((current) => ({ ...current, [field]: value }));
+  }
   const priorityFilter = (PRIORITIES.some((item) => item.value === params.get("priority")) ? params.get("priority") : "") as "" | TaskPriority;
   const categoryFilter = params.get("category")?.trim() ?? "";
   const [categoryDraft, setCategoryDraft] = useState(categoryFilter);
@@ -120,21 +124,30 @@ export default function TodoPage() {
     if (wantsNew) titleInput.current?.focus();
   }, [wantsNew, location.key]);
   const create = useMutation({
-    mutationFn: () => createTask({ title, description, dueAt: dueAt ? new Date(dueAt).toISOString() : null, priority, category }),
-    onSuccess: () => {
-      setTitle("");
-      setDescription("");
-      setDueAt("");
-      setPriority("none");
-      setCategory("");
+    mutationFn: createTask,
+    retry: false,
+    onSuccess: (_task, input) => {
+      if (createAttempt.current === input) {
+        createAttempt.current = null;
+        setNewTask(emptyTaskDraft());
+      }
       refresh();
       toast.success("待办已创建");
     },
     onError: (error) => toast.error(error.message),
   });
-  const update = useMutation({ mutationFn: updateTask, onSuccess: refresh, onError: (error) => toast.error(error.message) });
+  const update = useMutation({
+    mutationFn: updateTask,
+    retry: false,
+    onSuccess: refresh,
+    onError: (error) => {
+      if (error instanceof APIError && error.status === 409) void refresh();
+      toast.error(error.message);
+    },
+  });
   const remove = useMutation({
     mutationFn: deleteTask,
+    retry: false,
     onSuccess: async () => {
       await refresh();
       toast.success("待办已删除");
@@ -149,9 +162,12 @@ export default function TodoPage() {
   });
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (title.trim()) create.mutate();
+    if (newTask.title.trim() && !create.isPending) {
+      createAttempt.current = prepareTaskCreate(createAttempt.current, newTask);
+      create.mutate(createAttempt.current);
+    }
   }
-  const toggle = (task: Task) => update.mutate({ id: task.id, completed: !task.completedAt });
+  const toggle = (task: Task) => update.mutate({ id: task.id, completed: !task.completedAt, revision: task.revision });
   const edit = (task: Task, element: HTMLElement) => {
     editTrigger.current = element;
     setEditing(task);
@@ -261,37 +277,40 @@ export default function TodoPage() {
           <input
             ref={titleInput}
             aria-label="待办标题"
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
+            value={newTask.title}
+            onChange={(event) => changeNewTask("title", event.target.value)}
             placeholder="添加待办，回车保存"
             className="composer-input"
           />
           <div className="composer-opts">
             <input
               aria-label="备注"
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
+              value={newTask.description}
+              onChange={(event) => changeNewTask("description", event.target.value)}
               maxLength={10000}
               placeholder="备注"
               className="ui-input min-w-40 flex-1"
             />
-            <TodoDeadline value={dueAt} onChange={setDueAt} />
+            <TodoDeadline
+              value={newTask.dueAt ?? ""}
+              onChange={(value) => changeNewTask("dueAt", value ? new Date(value).toISOString() : null)}
+            />
             <Select
               aria-label="优先级"
               className="composer-select"
-              value={priority}
-              onValueChange={(value) => setPriority(value as TaskPriority)}
+              value={newTask.priority}
+              onValueChange={(value) => changeNewTask("priority", value as TaskPriority)}
               options={PRIORITIES}
             />
             <input
               aria-label="分类"
-              value={category}
-              onChange={(event) => setCategory(event.target.value)}
+              value={newTask.category}
+              onChange={(event) => changeNewTask("category", event.target.value)}
               maxLength={40}
               placeholder="分类"
               className="ui-input composer-category"
             />
-            <Button size="sm" disabled={create.isPending || !title.trim()}>
+            <Button size="sm" disabled={create.isPending || !newTask.title.trim()}>
               <Plus size={15} />
               添加
             </Button>
@@ -467,6 +486,16 @@ function TaskRow({
   );
 }
 
+const DRAFT_LABELS: Record<TaskDraftField, string> = {
+  title: "标题", description: "备注", dueAt: "截止时间", priority: "优先级", category: "分类",
+};
+
+function draftValueLabel(field: TaskDraftField, draft: TaskDraft) {
+  if (field === "priority") return PRIORITIES.find((item) => item.value === draft.priority)?.label;
+  if (field === "dueAt" && draft.dueAt) return new Date(draft.dueAt).toLocaleString("zh-CN");
+  return draft[field] || "（空）";
+}
+
 function EditTaskDialog({
   task, pending, onClose, onCloseAutoFocus, onSave,
 }: {
@@ -474,31 +503,43 @@ function EditTaskDialog({
   pending: boolean;
   onClose: () => void;
   onCloseAutoFocus: () => void;
-  onSave: (input: {
-    id: string; title: string; description: string; dueAt: string | null; clearDueAt: boolean; priority: TaskPriority; category: string;
-  }) => Promise<void>;
+  onSave: (input: TaskUpdateInput) => Promise<void>;
 }) {
-  const [title, setTitle] = useState(task.title);
-  const [description, setDescription] = useState(task.description);
-  const [dueAt, setDueAt] = useState(() => localDateTime(task.dueAt));
-  const [priority, setPriority] = useState<TaskPriority>(task.priority);
-  const [category, setCategory] = useState(task.category ?? "");
+  const [base, setBase] = useState(task);
+  const [draft, setDraft] = useState(() => taskDraft(task));
+  const [needsLatest, setNeedsLatest] = useState(false);
+  const [conflicts, setConflicts] = useState<TaskDraftField[]>([]);
+  const latest = useMutation({ mutationFn: loadTaskForEdit, retry: false });
+  const remote = taskDraft(base);
+  const blocked = pending || latest.isPending;
+
+  function changeDraft<K extends TaskDraftField>(field: K, value: TaskDraft[K]) {
+    setDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  async function readLatest() {
+    try {
+      const task = await latest.mutateAsync(base.id);
+      const merged = mergeTaskDraft(base, draft, task);
+      setBase(task);
+      setDraft(merged.draft);
+      setConflicts(merged.conflicts);
+      setNeedsLatest(false);
+    } catch {
+      // The inline error keeps the draft and offers another explicit read.
+    }
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!title.trim()) return;
+    if (!draft.title.trim() || blocked || needsLatest || conflicts.length > 0) return;
     try {
-      await onSave({
-        id: task.id,
-        title,
-        description,
-        dueAt: dueAt ? new Date(dueAt).toISOString() : null,
-        clearDueAt: !dueAt,
-        priority,
-        category,
-      });
-    } catch {
-      // The mutation reports the request error and keeps the dialog open for correction.
+      await onSave(taskEditInput(base, draft));
+    } catch (error) {
+      if (error instanceof APIError && error.status === 409) {
+        setNeedsLatest(true);
+        latest.reset();
+      }
     }
   }
 
@@ -514,28 +555,80 @@ function EditTaskDialog({
           <Dialog.Title className="font-semibold">编辑待办</Dialog.Title>
           <Dialog.Description className="sr-only">修改待办内容</Dialog.Description>
           <form className="mt-4 space-y-4" onSubmit={submit}>
-            <Field label="标题">
-              <input className="ui-input" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={300} autoFocus />
-            </Field>
-            <Field label="备注">
-              <textarea className="ui-input min-h-24 resize-y" value={description} onChange={(event) => setDescription(event.target.value)} maxLength={10000} />
-            </Field>
-            <Field label="截止时间">
-              <div><TodoDeadline value={dueAt} onChange={setDueAt} /></div>
-            </Field>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field label="优先级">
-                <Select value={priority} onValueChange={(value) => setPriority(value as TaskPriority)} options={PRIORITIES} />
+            {needsLatest && (
+              <Notice
+                tone="warning"
+                title="待办已在其他设备更新"
+                action={(
+                  <Button type="button" size="sm" variant="secondary" disabled={blocked} onClick={readLatest}>
+                    {latest.isPending ? "读取中…" : "读取最新"}
+                  </Button>
+                )}
+              >
+                草稿已保留，读取最新内容后合并。
+              </Notice>
+            )}
+            {latest.isError && <Notice tone="danger" title="读取失败">{latest.error.message}</Notice>}
+            {latest.isSuccess && !needsLatest && (
+              <Notice tone={conflicts.length ? "warning" : "info"} title={conflicts.length ? "存在冲突字段" : "最新内容已合并"}>
+                {conflicts.length ? "选择保留的内容后再次保存。" : "草稿已保留，可检查后再次保存。"}
+              </Notice>
+            )}
+            <fieldset disabled={blocked} className="min-w-0 space-y-4">
+              <Field label="标题">
+                <input
+                  className="ui-input" value={draft.title} onChange={(event) => changeDraft("title", event.target.value)} maxLength={300} autoFocus
+                />
               </Field>
-              <Field label="分类">
-                <input className="ui-input" value={category} onChange={(event) => setCategory(event.target.value)} maxLength={40} />
+              <Field label="备注">
+                <textarea
+                  className="ui-input min-h-24 resize-y" value={draft.description}
+                  onChange={(event) => changeDraft("description", event.target.value)} maxLength={10000}
+                />
               </Field>
-            </div>
+              <Field label="截止时间">
+                <div>
+                  <TodoDeadline
+                    value={draft.dueAt ?? ""}
+                    onChange={(value) => changeDraft("dueAt", value ? new Date(value).toISOString() : null)}
+                  />
+                </div>
+              </Field>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field label="优先级">
+                  <Select value={draft.priority} onValueChange={(value) => changeDraft("priority", value as TaskPriority)} options={PRIORITIES} />
+                </Field>
+                <Field label="分类">
+                  <input className="ui-input" value={draft.category} onChange={(event) => changeDraft("category", event.target.value)} maxLength={40} />
+                </Field>
+              </div>
+              {conflicts.map((field) => (
+                <fieldset key={field} className="min-w-0 space-y-2 border-t border-[var(--border)] pt-2">
+                  <legend className="text-sm font-semibold">{DRAFT_LABELS[field]}冲突</legend>
+                  <p className="whitespace-pre-wrap break-words text-sm">草稿：{draftValueLabel(field, draft)}</p>
+                  <p className="whitespace-pre-wrap break-words text-sm">最新：{draftValueLabel(field, remote)}</p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" size="sm" variant="secondary" onClick={() => setConflicts((current) => current.filter((key) => key !== field))}>
+                      保留草稿
+                    </Button>
+                    <Button
+                      type="button" size="sm" variant="secondary"
+                      onClick={() => {
+                        changeDraft(field, remote[field]);
+                        setConflicts((current) => current.filter((key) => key !== field));
+                      }}
+                    >
+                      使用最新
+                    </Button>
+                  </div>
+                </fieldset>
+              ))}
+            </fieldset>
             <div className="flex justify-end gap-2">
               <Dialog.Close asChild>
                 <Button type="button" variant="secondary">取消</Button>
               </Dialog.Close>
-              <Button disabled={pending || !title.trim()}>{pending ? "保存中…" : "保存"}</Button>
+              <Button disabled={blocked || needsLatest || conflicts.length > 0 || !draft.title.trim()}>{pending ? "保存中…" : "保存"}</Button>
             </div>
           </form>
         </Dialog.Content>

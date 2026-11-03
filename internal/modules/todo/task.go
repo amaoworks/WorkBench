@@ -2,7 +2,9 @@ package todo
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,14 +27,16 @@ type Task struct {
 	Category    string     `json:"category,omitempty"`
 	CreatedAt   time.Time  `json:"createdAt"`
 	UpdatedAt   time.Time  `json:"updatedAt"`
+	Revision    int64      `json:"revision"`
 }
 
 type CreateTask struct {
-	Title       string     `json:"title"`
-	Description string     `json:"description"`
-	DueAt       *time.Time `json:"dueAt"`
-	Priority    string     `json:"priority"`
-	Category    string     `json:"category"`
+	Title          string     `json:"title"`
+	Description    string     `json:"description"`
+	DueAt          *time.Time `json:"dueAt"`
+	Priority       string     `json:"priority"`
+	Category       string     `json:"category"`
+	IdempotencyKey string     `json:"-"`
 }
 
 type UpdateTask struct {
@@ -44,10 +48,16 @@ type UpdateTask struct {
 	Priority      *string    `json:"priority"`
 	Category      *string    `json:"category"`
 	ClearCategory bool       `json:"clearCategory"`
+	Revision      *int64     `json:"revision"`
 }
 
+var (
+	ErrIdempotencyConflict = errors.New("idempotency key was already used for a different request")
+	ErrTaskConflict        = errors.New("task was changed by another request")
+)
+
 func (m *Module) Create(ctx context.Context, input CreateTask) (Task, error) {
-	id, err := identity.New()
+	requestHash, err := createRequestHash(input)
 	if err != nil {
 		return Task{}, err
 	}
@@ -57,14 +67,53 @@ func (m *Module) Create(ctx context.Context, input CreateTask) (Task, error) {
 		return Task{}, err
 	}
 	defer tx.Rollback()
+	queries := m.queries.WithTx(tx)
+	if input.IdempotencyKey != "" {
+		stored, lookupErr := queries.GetCreateRequest(ctx, input.IdempotencyKey)
+		if lookupErr == nil {
+			if stored.RequestHash != requestHash {
+				return Task{}, ErrIdempotencyConflict
+			}
+			var task Task
+			if err := json.Unmarshal([]byte(stored.ResponseJson), &task); err != nil {
+				return Task{}, fmt.Errorf("decode idempotent task response: %w", err)
+			}
+			return task, nil
+		}
+		if !errors.Is(lookupErr, sql.ErrNoRows) {
+			return Task{}, lookupErr
+		}
+	}
+	id, err := identity.New()
+	if err != nil {
+		return Task{}, err
+	}
 	task, err := m.createTaskTx(ctx, tx, id, input, now)
 	if err != nil {
 		return Task{}, err
+	}
+	if input.IdempotencyKey != "" {
+		response, _ := json.Marshal(task)
+		if err := queries.InsertCreateRequest(ctx, todosqlc.InsertCreateRequestParams{
+			RequestKey: input.IdempotencyKey, RequestHash: requestHash, ResponseJson: string(response),
+		}); err != nil {
+			return Task{}, fmt.Errorf("save idempotent task response: %w", err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return Task{}, err
 	}
 	return task, nil
+}
+
+func createRequestHash(input CreateTask) (string, error) {
+	input.IdempotencyKey = ""
+	payload, err := json.Marshal(input)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func validateTaskContent(title, description string) (string, error) {
@@ -112,7 +161,10 @@ func (m *Module) createTaskTx(ctx context.Context, tx *sql.Tx, id string, input 
 	if err != nil {
 		return Task{}, fmt.Errorf("insert task: %w", err)
 	}
-	task := Task{ID: id, Title: title, Description: input.Description, DueAt: input.DueAt, Priority: priority, Category: category, CreatedAt: now, UpdatedAt: now}
+	task := Task{
+		ID: id, Title: title, Description: input.Description, DueAt: input.DueAt, Priority: priority, Category: category,
+		CreatedAt: now, UpdatedAt: now, Revision: 1,
+	}
 	if err := m.publishTaskTx(ctx, tx, task, "todo.task.created"); err != nil {
 		return Task{}, err
 	}
@@ -130,6 +182,9 @@ func (m *Module) update(ctx context.Context, id string, input UpdateTask) (Task,
 		return Task{}, err
 	}
 	task := taskFromRow(row)
+	if input.Revision != nil && *input.Revision != task.Revision {
+		return Task{}, ErrTaskConflict
+	}
 	if input.Title != nil {
 		task.Title = *input.Title
 	}
@@ -181,14 +236,19 @@ func (m *Module) updateTaskTx(ctx context.Context, tx *sql.Tx, task Task, topic 
 	if err != nil {
 		return Task{}, err
 	}
-	err = m.queries.WithTx(tx).UpdateTask(ctx, todosqlc.UpdateTaskParams{
+	expectedRevision := task.Revision
+	rows, err := m.queries.WithTx(tx).UpdateTask(ctx, todosqlc.UpdateTaskParams{
 		Title: task.Title, Description: task.Description, DueAt: toNullTime(task.DueAt),
 		CompletedAt: toNullTime(task.CompletedAt), Priority: task.Priority, Category: toNullString(task.Category),
-		UpdatedAt: task.UpdatedAt.UnixMilli(), ID: task.ID,
+		UpdatedAt: task.UpdatedAt.UnixMilli(), ID: task.ID, Revision: expectedRevision,
 	})
 	if err != nil {
 		return Task{}, err
 	}
+	if rows != 1 {
+		return Task{}, ErrTaskConflict
+	}
+	task.Revision = expectedRevision + 1
 	if err := m.publishTaskTx(ctx, tx, task, topic); err != nil {
 		return Task{}, err
 	}
@@ -213,6 +273,7 @@ func taskFromRow(row todosqlc.TodoTask) Task {
 		DueAt: nullableTime(row.DueAt), CompletedAt: nullableTime(row.CompletedAt),
 		Priority: row.Priority, Category: nullableString(row.Category),
 		CreatedAt: time.UnixMilli(row.CreatedAt).UTC(), UpdatedAt: time.UnixMilli(row.UpdatedAt).UTC(),
+		Revision: row.Revision,
 	}
 }
 

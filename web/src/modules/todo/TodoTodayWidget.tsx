@@ -11,7 +11,9 @@ import { formatClock } from "../../shared/format";
 import { useOverviewSummary } from "../../shared/dashboard";
 import { moduleQueryKey } from "../../shared/queryKeys";
 import { updateTask, useTodoToday } from "./queries";
+import { applyWidgetCompletion } from "./taskActions";
 import type { TodoToday } from "./schema";
+import { APIError } from "../../shared/api";
 
 type Item = TodoToday["items"][number];
 const DAY = 86_400_000;
@@ -37,10 +39,18 @@ export default function TodoTodayWidget({ widget }: { widget: Widget }) {
   // Tasks completed from this card stay visible (struck through) until the page is left, so a misclick can be undone.
   const [done, setDone] = useState<Item[]>([]);
   const toggle = useMutation({
-    mutationFn: ({ item, completed }: { item: Item; completed: boolean }) => updateTask({ id: item.id, completed }),
-    onSuccess: (_task, { item, completed }) => {
-      setDone((current) => (completed ? [...current.filter((entry) => entry.id !== item.id), item] : current.filter((entry) => entry.id !== item.id)));
+    mutationFn: ({ item, completed }: { item: Item; completed: boolean }) => updateTask({
+      id: item.id, completed, revision: item.revision,
+    }),
+    retry: false,
+    onSuccess: (task, { item, completed }) => {
+      setDone((current) => applyWidgetCompletion(current, item, task, completed));
       return client.invalidateQueries({ queryKey: moduleQueryKey("todo") });
+    },
+    onError: (error) => {
+      if (error instanceof APIError && error.status === 409) {
+        void client.invalidateQueries({ queryKey: moduleQueryKey("todo") });
+      }
     },
   });
 

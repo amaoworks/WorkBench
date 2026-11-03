@@ -5,7 +5,7 @@ export const taskSchema = z.object({
   dueAt: z.string().optional(), completedAt: z.string().optional(),
   priority: z.enum(["none", "low", "medium", "high"]).default("none"),
   category: z.string().max(40).optional(),
-  createdAt: z.string(), updatedAt: z.string()
+  createdAt: z.string(), updatedAt: z.string(), revision: z.number().int().positive()
 });
 export type Task = z.infer<typeof taskSchema>;
 

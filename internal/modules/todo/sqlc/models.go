@@ -43,11 +43,52 @@ type AiToolCall struct {
 	CompletedAt    sql.NullInt64  `json:"completed_at"`
 }
 
+type AuthBrowserGrant struct {
+	TokenHash string        `json:"token_hash"`
+	SessionID string        `json:"session_id"`
+	ExpiresAt int64         `json:"expires_at"`
+	UsedAt    sql.NullInt64 `json:"used_at"`
+}
+
+type AuthBrowserSession struct {
+	ID              string         `json:"id"`
+	TokenHash       string         `json:"token_hash"`
+	DeviceSessionID sql.NullString `json:"device_session_id"`
+	CreatedAt       int64          `json:"created_at"`
+	LastSeenAt      int64          `json:"last_seen_at"`
+	RevokedAt       sql.NullInt64  `json:"revoked_at"`
+}
+
 type AuthCredential struct {
 	ID                 int64  `json:"id"`
 	PasswordHash       string `json:"password_hash"`
 	UpdatedAt          int64  `json:"updated_at"`
 	MustChangePassword int64  `json:"must_change_password"`
+}
+
+type AuthDeviceSession struct {
+	ID                string        `json:"id"`
+	DeviceName        string        `json:"device_name"`
+	Platform          string        `json:"platform"`
+	CredentialVersion int64         `json:"credential_version"`
+	CreatedAt         int64         `json:"created_at"`
+	LastSeenAt        int64         `json:"last_seen_at"`
+	ExpiresAt         int64         `json:"expires_at"`
+	RevokedAt         sql.NullInt64 `json:"revoked_at"`
+}
+
+type AuthRefreshToken struct {
+	TokenHash string        `json:"token_hash"`
+	SessionID string        `json:"session_id"`
+	CreatedAt int64         `json:"created_at"`
+	UsedAt    sql.NullInt64 `json:"used_at"`
+}
+
+type AuthSigningKey struct {
+	ID         string        `json:"id"`
+	PrivateKey []byte        `json:"private_key"`
+	CreatedAt  int64         `json:"created_at"`
+	RetiredAt  sql.NullInt64 `json:"retired_at"`
 }
 
 type EventConsumerTopic struct {
@@ -100,6 +141,15 @@ type ExternalModule struct {
 	ConnectionNote     sql.NullString `json:"connection_note"`
 	CreatedAt          int64          `json:"created_at"`
 	UpdatedAt          int64          `json:"updated_at"`
+}
+
+type MobilePushToken struct {
+	ID              string `json:"id"`
+	DeviceSessionID string `json:"device_session_id"`
+	Platform        string `json:"platform"`
+	Token           string `json:"token"`
+	CreatedAt       int64  `json:"created_at"`
+	UpdatedAt       int64  `json:"updated_at"`
 }
 
 type Module struct {
@@ -164,6 +214,12 @@ type Session struct {
 	Expiry int64  `json:"expiry"`
 }
 
+type TodoCreateRequest struct {
+	RequestKey   string `json:"request_key"`
+	RequestHash  string `json:"request_hash"`
+	ResponseJson string `json:"response_json"`
+}
+
 type TodoTask struct {
 	ID          string         `json:"id"`
 	Title       string         `json:"title"`
@@ -174,6 +230,7 @@ type TodoTask struct {
 	UpdatedAt   int64          `json:"updated_at"`
 	Priority    string         `json:"priority"`
 	Category    sql.NullString `json:"category"`
+	Revision    int64          `json:"revision"`
 }
 
 type TodoWallosOccurrence struct {

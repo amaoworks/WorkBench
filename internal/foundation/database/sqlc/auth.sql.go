@@ -49,6 +49,7 @@ func (q *Queries) DeleteSession(ctx context.Context, token string) error {
 
 const findSession = `-- name: FindSession :one
 SELECT data FROM sessions WHERE token = ? AND expiry > ?
+AND NOT EXISTS (SELECT 1 FROM auth_browser_sessions b WHERE b.token_hash = sessions.token AND b.revoked_at IS NOT NULL)
 `
 
 type FindSessionParams struct {
@@ -131,7 +132,9 @@ func (q *Queries) UpdatePasswordHashIfCurrent(ctx context.Context, arg UpdatePas
 }
 
 const upsertSession = `-- name: UpsertSession :exec
-INSERT INTO sessions(token, data, expiry) VALUES (?, ?, ?)
+INSERT INTO sessions(token, data, expiry)
+SELECT ?1, ?2, ?3
+WHERE NOT EXISTS (SELECT 1 FROM auth_browser_sessions b WHERE b.token_hash = ?1 AND b.revoked_at IS NOT NULL)
 ON CONFLICT(token) DO UPDATE SET data = excluded.data, expiry = excluded.expiry
 `
 

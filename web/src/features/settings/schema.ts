@@ -19,6 +19,20 @@ export const telegramSettingsSchema = z.object({
 export const telegramTestSchema = z.object({ ok: z.boolean() });
 export type TelegramSettings = z.infer<typeof telegramSettingsSchema>;
 export const backupSchema = z.object({ file: z.string() });
+const sessionTimestampSchema = z.iso.datetime({ offset: true });
+export const deviceSessionSchema = z.object({
+  id: z.string().min(1),
+  deviceName: z.string().min(1),
+  platform: z.enum(["web", "ios", "android", "other"]),
+  createdAt: sessionTimestampSchema,
+  lastSeenAt: sessionTimestampSchema,
+  expiresAt: sessionTimestampSchema,
+  current: z.boolean(),
+});
+export const deviceSessionsSchema = z.object({ items: z.array(deviceSessionSchema) });
+export const revokedSessionSchema = z.object({ revoked: z.literal(true) });
+export const logoutAllSchema = z.object({ reauthenticate: z.literal(true) });
+export type DeviceSession = z.infer<typeof deviceSessionSchema>;
 export type Appearance = z.infer<typeof appearanceSchema>;
 export type AISettings = z.infer<typeof aiSettingsSchema>;
 export type LoggingSettings = z.infer<typeof loggingSettingsSchema>;

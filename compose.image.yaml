@@ -10,6 +10,9 @@ services:
       - "127.0.0.1:${WORKBENCH_PORT:-8080}:${WORKBENCH_HTTP_PORT:-8080}"
     volumes:
       - workbench_data:/data
+      # Enable the matching .env paths before mounting provider credentials.
+      # - ./secrets/AuthKey.p8:/run/secrets/workbench/apns.p8:ro
+      # - ./secrets/fcm-service-account.json:/run/secrets/workbench/fcm-service-account.json:ro
     networks:
       - default
     depends_on:

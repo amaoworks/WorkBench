@@ -145,8 +145,24 @@ func (q *Queries) DeleteTask(ctx context.Context, id string) (int64, error) {
 	return result.RowsAffected()
 }
 
+const getCreateRequest = `-- name: GetCreateRequest :one
+SELECT request_hash, response_json FROM todo_create_requests WHERE request_key = ?
+`
+
+type GetCreateRequestRow struct {
+	RequestHash  string `json:"request_hash"`
+	ResponseJson string `json:"response_json"`
+}
+
+func (q *Queries) GetCreateRequest(ctx context.Context, requestKey string) (GetCreateRequestRow, error) {
+	row := q.db.QueryRowContext(ctx, getCreateRequest, requestKey)
+	var i GetCreateRequestRow
+	err := row.Scan(&i.RequestHash, &i.ResponseJson)
+	return i, err
+}
+
 const getTask = `-- name: GetTask :one
-SELECT id, title, description, due_at, completed_at, created_at, updated_at, priority, category
+SELECT id, title, description, due_at, completed_at, created_at, updated_at, priority, category, revision
 FROM todo_tasks WHERE id = ?
 `
 
@@ -163,12 +179,28 @@ func (q *Queries) GetTask(ctx context.Context, id string) (TodoTask, error) {
 		&i.UpdatedAt,
 		&i.Priority,
 		&i.Category,
+		&i.Revision,
 	)
 	return i, err
 }
 
+const insertCreateRequest = `-- name: InsertCreateRequest :exec
+INSERT INTO todo_create_requests(request_key, request_hash, response_json) VALUES (?, ?, ?)
+`
+
+type InsertCreateRequestParams struct {
+	RequestKey   string `json:"request_key"`
+	RequestHash  string `json:"request_hash"`
+	ResponseJson string `json:"response_json"`
+}
+
+func (q *Queries) InsertCreateRequest(ctx context.Context, arg InsertCreateRequestParams) error {
+	_, err := q.db.ExecContext(ctx, insertCreateRequest, arg.RequestKey, arg.RequestHash, arg.ResponseJson)
+	return err
+}
+
 const listAgendaTasks = `-- name: ListAgendaTasks :many
-SELECT id, title, description, due_at, completed_at, created_at, updated_at, priority, category
+SELECT id, title, description, due_at, completed_at, created_at, updated_at, priority, category, revision
 FROM todo_tasks
 WHERE completed_at IS NULL AND due_at IS NOT NULL AND due_at < CAST(?1 AS BIGINT)
 ORDER BY due_at, id
@@ -199,6 +231,7 @@ func (q *Queries) ListAgendaTasks(ctx context.Context, arg ListAgendaTasksParams
 			&i.UpdatedAt,
 			&i.Priority,
 			&i.Category,
+			&i.Revision,
 		); err != nil {
 			return nil, err
 		}
@@ -263,7 +296,7 @@ func (q *Queries) ListDueTasks(ctx context.Context, arg ListDueTasksParams) ([]L
 }
 
 const listTasksPage = `-- name: ListTasksPage :many
-SELECT id, title, description, due_at, completed_at, created_at, updated_at, priority, category
+SELECT id, title, description, due_at, completed_at, created_at, updated_at, priority, category, revision
 FROM todo_tasks
 WHERE
   (CAST(?1 AS BIGINT) = 0
@@ -335,6 +368,7 @@ func (q *Queries) ListTasksPage(ctx context.Context, arg ListTasksPageParams) ([
 			&i.UpdatedAt,
 			&i.Priority,
 			&i.Category,
+			&i.Revision,
 		); err != nil {
 			return nil, err
 		}
@@ -370,10 +404,10 @@ func (q *Queries) TodoSummary(ctx context.Context, dueAt sql.NullInt64) (TodoSum
 	return i, err
 }
 
-const updateTask = `-- name: UpdateTask :exec
+const updateTask = `-- name: UpdateTask :execrows
 UPDATE todo_tasks
-SET title = ?, description = ?, due_at = ?, completed_at = ?, priority = ?, category = ?, updated_at = ?
-WHERE id = ?
+SET title = ?, description = ?, due_at = ?, completed_at = ?, priority = ?, category = ?, updated_at = ?, revision = revision + 1
+WHERE id = ? AND revision = ?
 `
 
 type UpdateTaskParams struct {
@@ -385,10 +419,11 @@ type UpdateTaskParams struct {
 	Category    sql.NullString `json:"category"`
 	UpdatedAt   int64          `json:"updated_at"`
 	ID          string         `json:"id"`
+	Revision    int64          `json:"revision"`
 }
 
-func (q *Queries) UpdateTask(ctx context.Context, arg UpdateTaskParams) error {
-	_, err := q.db.ExecContext(ctx, updateTask,
+func (q *Queries) UpdateTask(ctx context.Context, arg UpdateTaskParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateTask,
 		arg.Title,
 		arg.Description,
 		arg.DueAt,
@@ -397,6 +432,10 @@ func (q *Queries) UpdateTask(ctx context.Context, arg UpdateTaskParams) error {
 		arg.Category,
 		arg.UpdatedAt,
 		arg.ID,
+		arg.Revision,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

@@ -11,17 +11,41 @@ import (
 )
 
 func (m *Module) createTask(w http.ResponseWriter, r *http.Request) {
+	keys := r.Header.Values("Idempotency-Key")
+	if len(keys) > 1 || (len(keys) == 1 && !validIdempotencyKey(keys[0])) {
+		httpapi.Error(w, http.StatusBadRequest, "invalid_idempotency_key", "invalid Idempotency-Key")
+		return
+	}
 	var input CreateTask
 	if err := httpapi.Decode(w, r, &input, 16*1024); err != nil {
 		httpapi.Error(w, http.StatusBadRequest, "invalid_request", "invalid task")
 		return
 	}
+	if len(keys) == 1 {
+		input.IdempotencyKey = keys[0]
+	}
 	task, err := m.Create(r.Context(), input)
+	if errors.Is(err, ErrIdempotencyConflict) {
+		httpapi.Error(w, http.StatusConflict, "idempotency_conflict", err.Error())
+		return
+	}
 	if err != nil {
 		httpapi.Error(w, http.StatusBadRequest, "todo_create_failed", err.Error())
 		return
 	}
 	httpapi.Write(w, http.StatusCreated, task)
+}
+
+func validIdempotencyKey(value string) bool {
+	if len(value) < 1 || len(value) > 128 {
+		return false
+	}
+	for index := range len(value) {
+		if value[index] < 0x20 || value[index] > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *Module) updateTask(w http.ResponseWriter, r *http.Request) {
@@ -32,6 +56,10 @@ func (m *Module) updateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	task, err := m.update(r.Context(), id, input)
+	if errors.Is(err, ErrTaskConflict) {
+		httpapi.Error(w, http.StatusConflict, "todo_conflict", "待办已被修改")
+		return
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		httpapi.Error(w, http.StatusNotFound, "todo_not_found", "task not found")
 		return

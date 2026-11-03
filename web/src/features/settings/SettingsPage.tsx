@@ -23,6 +23,7 @@ import { useAppearance, useSettings, type AISettings, type Settings } from "./qu
 import { ModulesPanel } from "./ModulesPanel";
 import { LoggingPanel } from "./LoggingPanel";
 import { TelegramPanel } from "./TelegramPanel";
+import { DeviceSessionsPanel } from "./DeviceSessionsPanel";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
@@ -166,6 +167,7 @@ function SettingsContent({ data }: { data: Settings }) {
           </SettingsSection>
           <SettingsSection id="security">
             <PasswordForm mode={data.deployment.authMode} />
+            {data.deployment.authMode === "password" && <DeviceSessionsPanel />}
           </SettingsSection>
           <SettingsSection id="data">
             <DataPanel value={data} />

@@ -14,10 +14,13 @@ INSERT INTO auth_credentials(id, password_hash, updated_at, must_change_password
 DELETE FROM sessions WHERE token = ?;
 
 -- name: FindSession :one
-SELECT data FROM sessions WHERE token = ? AND expiry > ?;
+SELECT data FROM sessions WHERE token = ? AND expiry > ?
+AND NOT EXISTS (SELECT 1 FROM auth_browser_sessions b WHERE b.token_hash = sessions.token AND b.revoked_at IS NOT NULL);
 
 -- name: UpsertSession :exec
-INSERT INTO sessions(token, data, expiry) VALUES (?, ?, ?)
+INSERT INTO sessions(token, data, expiry)
+SELECT sqlc.arg(token), sqlc.arg(data), sqlc.arg(expiry)
+WHERE NOT EXISTS (SELECT 1 FROM auth_browser_sessions b WHERE b.token_hash = sqlc.arg(token) AND b.revoked_at IS NOT NULL)
 ON CONFLICT(token) DO UPDATE SET data = excluded.data, expiry = excluded.expiry;
 
 -- name: UpdatePasswordHashIfCurrent :execrows

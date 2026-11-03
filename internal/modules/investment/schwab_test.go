@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -131,6 +132,348 @@ func TestSchwabOAuthLoginAndCallback(t *testing.T) {
 	stored, err := module.loadSchwab(context.Background())
 	if err != nil || stored.AccessToken != "access" || stored.RefreshToken != "refresh" || stored.OAuthState != "" {
 		t.Fatalf("stored=%+v err=%v", stored, err)
+	}
+}
+
+func TestSchwabMobileOAuthStartAndStatus(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/oauth/token" || r.Method != http.MethodPost {
+			http.NotFound(w, r)
+			return
+		}
+		if err := r.ParseForm(); err != nil || r.Form.Get("code") != "mobile-code" {
+			t.Fatalf("token form=%v err=%v", r.Form, err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "mobile-access", "refresh_token": "mobile-refresh", "expires_in": 1800})
+	}))
+	defer upstream.Close()
+	module := openInvestmentModule(t)
+	module.schwabAPI = upstream.URL
+	seedSchwab(t, module, schwabRecord{
+		AppKey: "key", AppSecret: "secret", CallbackURL: "https://127.0.0.1:8080/oauth/schwab", AccessToken: "old-access-token",
+	})
+
+	start := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/modules/investment/schwab/oauth/start", nil)
+	request.Header.Set("Authorization", "Bearer app-access-token")
+	module.oauthStart(start, request)
+	if start.Code != http.StatusCreated {
+		t.Fatalf("start: %d %s", start.Code, start.Body.String())
+	}
+	var started mobileOAuthStartView
+	if err := json.Unmarshal(start.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+	authorizationURL, err := url.Parse(started.AuthorizationURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := authorizationURL.Query().Get("state")
+	if started.StatusID == "" || started.Status != mobileOAuthPending || state == "" || started.StatusID == state {
+		t.Fatalf("invalid start response: %+v", started)
+	}
+	if strings.Contains(started.AuthorizationURL, "app-access-token") || strings.Contains(started.AuthorizationURL, "old-access-token") {
+		t.Fatal("authorization URL leaked an access token")
+	}
+
+	readStatus := func() (int, mobileOAuthStatusView) {
+		t.Helper()
+		response := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/modules/investment/schwab/oauth/status/"+started.StatusID, nil)
+		req.SetPathValue("id", started.StatusID)
+		module.oauthStatus(response, req)
+		var body mobileOAuthStatusView
+		_ = json.Unmarshal(response.Body.Bytes(), &body)
+		return response.Code, body
+	}
+	if code, status := readStatus(); code != http.StatusOK || status.Status != mobileOAuthPending {
+		t.Fatalf("pending status: %d %+v", code, status)
+	}
+
+	callback := httptest.NewRecorder()
+	module.oauthCallback(callback, httptest.NewRequest(http.MethodGet, "/oauth/schwab?code=mobile-code&state="+url.QueryEscape(state), nil))
+	if callback.Code != http.StatusOK {
+		t.Fatalf("callback: %d %s", callback.Code, callback.Body.String())
+	}
+	if code, status := readStatus(); code != http.StatusOK || status.Status != mobileOAuthSucceeded || status.Error != "" {
+		t.Fatalf("completed status: %d %+v", code, status)
+	}
+	stored, err := module.loadSchwab(context.Background())
+	if err != nil || stored.AccessToken != "mobile-access" || stored.RefreshToken != "mobile-refresh" || stored.OAuthState != "" {
+		t.Fatalf("stored=%+v err=%v", stored, err)
+	}
+}
+
+func startSchwabOAuth(t *testing.T, module *Module, mobile bool) (state, statusID string) {
+	t.Helper()
+	response := httptest.NewRecorder()
+	var target string
+	if mobile {
+		module.oauthStart(response, httptest.NewRequest(http.MethodPost, "/api/modules/investment/schwab/oauth/start", nil))
+		var started mobileOAuthStartView
+		if response.Code != http.StatusCreated || json.Unmarshal(response.Body.Bytes(), &started) != nil {
+			t.Fatalf("start: %d %s", response.Code, response.Body.String())
+		}
+		target, statusID = started.AuthorizationURL, started.StatusID
+	} else {
+		module.oauthLogin(response, httptest.NewRequest(http.MethodGet, "/api/modules/investment/schwab/oauth/login", nil))
+		if response.Code != http.StatusFound {
+			t.Fatalf("login: %d %s", response.Code, response.Body.String())
+		}
+		target = response.Header().Get("Location")
+	}
+	authorizationURL, err := url.Parse(target)
+	if err != nil || authorizationURL.Query().Get("state") == "" {
+		t.Fatalf("authorization URL=%q err=%v", target, err)
+	}
+	return authorizationURL.Query().Get("state"), statusID
+}
+
+func readSchwabOAuthStatus(t *testing.T, module *Module, statusID string) mobileOAuthStatusView {
+	t.Helper()
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/modules/investment/schwab/oauth/status/"+statusID, nil)
+	request.SetPathValue("id", statusID)
+	module.oauthStatus(response, request)
+	var status mobileOAuthStatusView
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &status) != nil {
+		t.Fatalf("status: %d %s", response.Code, response.Body.String())
+	}
+	return status
+}
+
+func TestSchwabOAuthExchangeFailureConsumesState(t *testing.T) {
+	for _, mobile := range []bool{false, true} {
+		name := "web"
+		if mobile {
+			name = "mobile"
+		}
+		t.Run(name, func(t *testing.T) {
+			var exchanges atomic.Int32
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if exchanges.Add(1) == 1 {
+					http.Error(w, "unavailable", http.StatusServiceUnavailable)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "access", "refresh_token": "refresh", "expires_in": 1800})
+			}))
+			defer upstream.Close()
+			module := openInvestmentModule(t)
+			module.schwabAPI = upstream.URL
+			seedSchwab(t, module, schwabRecord{AppKey: "key", AppSecret: "secret", CallbackURL: "https://127.0.0.1/oauth/schwab"})
+			state, statusID := startSchwabOAuth(t, module, mobile)
+			callbackURL := "/oauth/schwab?code=abc&state=" + state
+			callback := httptest.NewRecorder()
+			module.oauthCallback(callback, httptest.NewRequest(http.MethodGet, callbackURL, nil))
+			if callback.Code != http.StatusBadGateway {
+				t.Fatalf("first callback: %d %s", callback.Code, callback.Body.String())
+			}
+			stored, err := module.loadSchwab(context.Background())
+			if err != nil || stored.OAuthState != "" || !stored.OAuthStateExpiresAt.IsZero() || stored.AccessToken != "" || stored.RefreshToken != "" || stored.LastError == "" {
+				t.Fatalf("failed exchange: stored=%+v err=%v", stored, err)
+			}
+			var failed mobileOAuthStatusView
+			if mobile {
+				failed = readSchwabOAuthStatus(t, module, statusID)
+				if failed.Status != mobileOAuthFailed || failed.Error == "" {
+					t.Fatalf("failed status: %+v", failed)
+				}
+			}
+			retry := httptest.NewRecorder()
+			module.oauthCallback(retry, httptest.NewRequest(http.MethodGet, callbackURL, nil))
+			afterRetry, err := module.loadSchwab(context.Background())
+			if retry.Code != http.StatusBadRequest || exchanges.Load() != 1 || err != nil || afterRetry != stored {
+				t.Fatalf("retry must not exchange or save tokens: code=%d exchanges=%d stored=%+v err=%v", retry.Code, exchanges.Load(), afterRetry, err)
+			}
+			if mobile && readSchwabOAuthStatus(t, module, statusID) != failed {
+				t.Fatal("replay changed failed terminal status")
+			}
+
+			newState, newStatusID := startSchwabOAuth(t, module, mobile)
+			success := httptest.NewRecorder()
+			module.oauthCallback(success, httptest.NewRequest(http.MethodGet, "/oauth/schwab?code=new-code&state="+newState, nil))
+			stored, err = module.loadSchwab(context.Background())
+			if success.Code != http.StatusOK || exchanges.Load() != 2 || err != nil || stored.AccessToken != "access" || stored.RefreshToken != "refresh" || stored.OAuthState != "" {
+				t.Fatalf("new grant: code=%d exchanges=%d stored=%+v err=%v", success.Code, exchanges.Load(), stored, err)
+			}
+			if mobile {
+				status := readSchwabOAuthStatus(t, module, newStatusID)
+				if status.Status != mobileOAuthSucceeded || status.Error != "" || readSchwabOAuthStatus(t, module, statusID) != failed {
+					t.Fatalf("new grant must succeed without changing old result: %+v", status)
+				}
+			}
+			for _, query := range []string{"code=new-code&state=", "error=access_denied&state="} {
+				replay := httptest.NewRecorder()
+				module.oauthCallback(replay, httptest.NewRequest(http.MethodGet, "/oauth/schwab?"+query+newState, nil))
+				if replay.Code != http.StatusBadRequest || exchanges.Load() != 2 {
+					t.Fatalf("success replay: code=%d exchanges=%d", replay.Code, exchanges.Load())
+				}
+			}
+			if mobile && readSchwabOAuthStatus(t, module, newStatusID).Status != mobileOAuthSucceeded {
+				t.Fatal("replay changed succeeded terminal status")
+			}
+		})
+	}
+}
+
+func TestSchwabOAuthRejectedCallbackConsumesMatchingState(t *testing.T) {
+	for _, reason := range []string{"missing-code", "denied", "expired", "expiry-boundary"} {
+		t.Run(reason, func(t *testing.T) {
+			module := openInvestmentModule(t)
+			now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+			module.now = func() time.Time { return now }
+			var exchanges atomic.Int32
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				exchanges.Add(1)
+				_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "access", "refresh_token": "refresh", "expires_in": 1800})
+			}))
+			defer upstream.Close()
+			module.schwabAPI = upstream.URL
+			seedSchwab(t, module, schwabRecord{AppKey: "key", AppSecret: "secret", CallbackURL: "https://127.0.0.1/oauth/schwab"})
+			state, statusID := startSchwabOAuth(t, module, true)
+			query := "state=" + state
+			switch reason {
+			case "denied":
+				query += "&error=access_denied"
+			case "expired", "expiry-boundary":
+				now = now.Add(oauthStateTTL)
+				if reason == "expired" {
+					now = now.Add(time.Second)
+				}
+				query += "&code=abc"
+			}
+			callback := httptest.NewRecorder()
+			module.oauthCallback(callback, httptest.NewRequest(http.MethodGet, "/oauth/schwab?"+query, nil))
+			stored, err := module.loadSchwab(context.Background())
+			status := readSchwabOAuthStatus(t, module, statusID)
+			if callback.Code != http.StatusBadRequest || err != nil || stored.OAuthState != "" || !stored.OAuthStateExpiresAt.IsZero() || status.Status != mobileOAuthFailed {
+				t.Fatalf("rejection: code=%d stored=%+v err=%v status=%+v", callback.Code, stored, err, status)
+			}
+			retry := httptest.NewRecorder()
+			module.oauthCallback(retry, httptest.NewRequest(http.MethodGet, "/oauth/schwab?code=abc&state="+state, nil))
+			if retry.Code != http.StatusBadRequest || exchanges.Load() != 0 || readSchwabOAuthStatus(t, module, statusID) != status {
+				t.Fatalf("rejected callback reused: code=%d exchanges=%d", retry.Code, exchanges.Load())
+			}
+		})
+	}
+}
+
+func TestSchwabOAuthConcurrentCallbackAndStatus(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	var exchanges atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if exchanges.Add(1) == 1 {
+			close(entered)
+			<-release
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "access", "refresh_token": "refresh", "expires_in": 1800})
+	}))
+	defer upstream.Close()
+	module := openInvestmentModule(t)
+	module.schwabAPI = upstream.URL
+	var now atomic.Int64
+	now.Store(time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC).UnixMilli())
+	module.now = func() time.Time { return time.UnixMilli(now.Load()).UTC() }
+	seedSchwab(t, module, schwabRecord{AppKey: "key", AppSecret: "secret", CallbackURL: "https://127.0.0.1/oauth/schwab"})
+	state, statusID := startSchwabOAuth(t, module, true)
+	callbackURL := "/oauth/schwab?code=abc&state=" + state
+	callback, duplicate, statusResponse := httptest.NewRecorder(), httptest.NewRecorder(), httptest.NewRecorder()
+	callbackDone, duplicateDone, statusDone := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	go func() {
+		module.oauthCallback(callback, httptest.NewRequest(http.MethodGet, callbackURL, nil))
+		close(callbackDone)
+	}()
+	<-entered
+	// The callback was accepted before expiry; polling must not fail it while exchanging.
+	now.Add((oauthStateTTL + time.Second).Milliseconds())
+	go func() {
+		module.oauthCallback(duplicate, httptest.NewRequest(http.MethodGet, callbackURL, nil))
+		close(duplicateDone)
+	}()
+	go func() {
+		request := httptest.NewRequest(http.MethodGet, "/api/modules/investment/schwab/oauth/status/"+statusID, nil)
+		request.SetPathValue("id", statusID)
+		module.oauthStatus(statusResponse, request)
+		close(statusDone)
+	}()
+	premature := false
+	select {
+	case <-statusDone:
+		premature = true
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	<-callbackDone
+	<-duplicateDone
+	<-statusDone
+	var status mobileOAuthStatusView
+	if premature || statusResponse.Code != http.StatusOK || json.Unmarshal(statusResponse.Body.Bytes(), &status) != nil || status.Status != mobileOAuthSucceeded || status.Error != "" {
+		t.Fatalf("in-flight status: premature=%v code=%d body=%s", premature, statusResponse.Code, statusResponse.Body.String())
+	}
+	stored, err := module.loadSchwab(context.Background())
+	if callback.Code != http.StatusOK || duplicate.Code != http.StatusBadRequest || exchanges.Load() != 1 || err != nil || stored.RefreshToken != "refresh" || stored.OAuthState != "" {
+		t.Fatalf("concurrent callbacks: first=%d duplicate=%d exchanges=%d stored=%+v err=%v", callback.Code, duplicate.Code, exchanges.Load(), stored, err)
+	}
+}
+
+func TestSchwabOAuthNewGrantSupersedesOldState(t *testing.T) {
+	for _, mobile := range []bool{false, true} {
+		name := "web"
+		if mobile {
+			name = "mobile"
+		}
+		t.Run(name, func(t *testing.T) {
+			var exchanges atomic.Int32
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				exchanges.Add(1)
+				_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "access", "refresh_token": "refresh", "expires_in": 1800})
+			}))
+			defer upstream.Close()
+			module := openInvestmentModule(t)
+			module.schwabAPI = upstream.URL
+			seedSchwab(t, module, schwabRecord{AppKey: "key", AppSecret: "secret", CallbackURL: "https://127.0.0.1/oauth/schwab"})
+			oldState, oldStatusID := startSchwabOAuth(t, module, true)
+			newState, newStatusID := startSchwabOAuth(t, module, mobile)
+			oldStatus := readSchwabOAuthStatus(t, module, oldStatusID)
+			if oldStatus.Status != mobileOAuthFailed || !strings.Contains(oldStatus.Error, "替代") {
+				t.Fatalf("superseded status: %+v", oldStatus)
+			}
+			for _, query := range []string{"code=old-code&state=" + oldState, "error=access_denied&state=" + oldState, "code=abc", "code=abc&state=unknown"} {
+				callback := httptest.NewRecorder()
+				module.oauthCallback(callback, httptest.NewRequest(http.MethodGet, "/oauth/schwab?"+query, nil))
+				stored, err := module.loadSchwab(context.Background())
+				if callback.Code != http.StatusBadRequest || exchanges.Load() != 0 || err != nil || stored.OAuthState != newState || readSchwabOAuthStatus(t, module, oldStatusID) != oldStatus {
+					t.Fatalf("old/invalid callback affected new grant: code=%d exchanges=%d stored=%+v err=%v", callback.Code, exchanges.Load(), stored, err)
+				}
+			}
+			callback := httptest.NewRecorder()
+			module.oauthCallback(callback, httptest.NewRequest(http.MethodGet, "/oauth/schwab?code=new-code&state="+newState, nil))
+			if callback.Code != http.StatusOK || exchanges.Load() != 1 {
+				t.Fatalf("new callback: code=%d exchanges=%d", callback.Code, exchanges.Load())
+			}
+			if mobile && readSchwabOAuthStatus(t, module, newStatusID).Status != mobileOAuthSucceeded {
+				t.Fatal("new mobile grant did not succeed")
+			}
+		})
+	}
+}
+
+func TestSchwabMobileOAuthStatusExpires(t *testing.T) {
+	module := openInvestmentModule(t)
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	module.now = func() time.Time { return now }
+	module.oauthSessions["status-id"] = mobileOAuthSession{State: "state", Status: mobileOAuthPending, ExpiresAt: now.Add(-time.Second)}
+
+	response := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/modules/investment/schwab/oauth/status/status-id", nil)
+	req.SetPathValue("id", "status-id")
+	module.oauthStatus(response, req)
+	var status mobileOAuthStatusView
+	if err := json.Unmarshal(response.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || status.Status != mobileOAuthFailed || !strings.Contains(status.Error, "过期") {
+		t.Fatalf("expired status: %d %+v", response.Code, status)
 	}
 }
 

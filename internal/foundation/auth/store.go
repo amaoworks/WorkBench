@@ -23,6 +23,9 @@ func (s *SessionStore) Delete(token string) error {
 }
 
 func (s *SessionStore) DeleteCtx(ctx context.Context, token string) error {
+	if err := s.queries.RevokeBrowserSession(ctx, dbsqlc.RevokeBrowserSessionParams{TokenHash: token, RevokedAt: sql.NullInt64{Int64: s.now().UnixMilli(), Valid: true}}); err != nil {
+		return err
+	}
 	return s.queries.DeleteSession(ctx, token)
 }
 
@@ -46,7 +49,10 @@ func (s *SessionStore) Commit(token string, data []byte, expiry time.Time) error
 }
 
 func (s *SessionStore) CommitCtx(ctx context.Context, token string, data []byte, expiry time.Time) error {
-	return s.queries.UpsertSession(ctx, dbsqlc.UpsertSessionParams{Token: token, Data: data, Expiry: expiry.UTC().UnixMilli()})
+	if err := s.queries.UpsertSession(ctx, dbsqlc.UpsertSessionParams{Token: token, Data: data, Expiry: expiry.UTC().UnixMilli()}); err != nil {
+		return err
+	}
+	return s.queries.TouchBrowserSession(ctx, dbsqlc.TouchBrowserSessionParams{TokenHash: token, LastSeenAt: s.now().UnixMilli()})
 }
 
 func (s *SessionStore) DeleteExpired(ctx context.Context) error {

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"database/sql"
 	"net/http"
 	"time"
 
@@ -66,13 +67,19 @@ func (s *Service) ChangePasswordHandler(w http.ResponseWriter, r *http.Request) 
 		httpapi.Error(w, 500, "password_failed", "无法注销登录")
 		return
 	}
+	if queries.RevokeAllBrowserSessions(r.Context(), sql.NullInt64{Int64: s.now().UnixMilli(), Valid: true}) != nil || queries.RevokeAllDeviceSessions(r.Context(), sql.NullInt64{Int64: s.now().UnixMilli(), Valid: true}) != nil {
+		httpapi.Error(w, 500, "password_failed", "无法注销登录")
+		return
+	}
 	if err := tx.Commit(); err != nil {
 		httpapi.Error(w, 500, "password_failed", "无法保存密码")
 		return
 	}
-	if err := s.sessions.Destroy(r.Context()); err != nil {
-		httpapi.Error(w, 500, "session_failed", "密码已更新，请重新登录")
-		return
+	if DeviceSessionID(r) == "" {
+		if err := s.sessions.Destroy(r.Context()); err != nil {
+			httpapi.Error(w, 500, "session_failed", "密码已更新，请重新登录")
+			return
+		}
 	}
 	httpapi.Write(w, 200, map[string]bool{"reauthenticate": true})
 }

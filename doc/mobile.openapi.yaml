@@ -1,0 +1,1032 @@
+openapi: 3.1.0
+info:
+  title: Workbench Mobile API
+  version: 0.1.0
+  description: |
+    Workbench 原生客户端接入契约。所有路径相对于同一 Workbench HTTPS 域名。
+    浏览器 Cookie 接口仍受 CSRF 保护；原生客户端使用 Bearer。
+servers:
+  - url: https://workbench.example.com
+security:
+  - bearerAuth: []
+tags:
+  - name: Authentication
+  - name: Devices
+  - name: Conversations
+  - name: Todo
+  - name: Push
+  - name: Schwab
+paths:
+  /api/auth/token:
+    post:
+      tags: [Authentication]
+      summary: 设备登录
+      description: 必须使用无 Cookie、无 Authorization 的 application/json 请求。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenLoginRequest'
+            example:
+              password: Correct-Horse-42!
+              deviceName: Alice 的 iPhone
+              platform: ios
+      responses:
+        '200':
+          description: 登录成功
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+              example:
+                accessToken: eyJhbGciOiJFZERTQSIsImtpZCI6Ii4uLiIsInR5cCI6ImF0K2p3dCJ9...
+                refreshToken: Jp9cY0K1C8kCkZ8lVRm8OZAsdW2B8xBh2tLrVYkqGos
+                tokenType: Bearer
+                expiresIn: 900
+                refreshExpiresAt: '2026-12-02T12:00:00Z'
+                sessionId: 9b59c07e-d1b7-4d40-9aa7-163987ab14e4
+                mustChangePassword: false
+        '400':
+          description: 请求不是无凭据 JSON，或设备字段无效
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                transport: { value: { code: invalid_token_request, message: 请使用无 Cookie 的 JSON 请求 } }
+                device: { value: { code: invalid_device, message: 请提供设备名称和平台 } }
+                mode: { value: { code: password_mode_required, message: 请先启用密码登录 } }
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/auth/token/refresh:
+    post:
+      tags: [Authentication]
+      summary: 轮换设备令牌
+      description: 必须使用无 Cookie、无 Authorization 的 application/json 请求。refresh token 单次使用。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+            example:
+              refreshToken: Jp9cY0K1C8kCkZ8lVRm8OZAsdW2B8xBh2tLrVYkqGos
+      responses:
+        '200':
+          description: 轮换成功；响应中的 refreshToken 替换旧值
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenResponse' }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidToken'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/auth/status:
+    get:
+      tags: [Authentication]
+      summary: 查询登录状态
+      security:
+        - bearerAuth: []
+        - {}
+      responses:
+        '200':
+          description: 当前认证状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthStatus' }
+              example: { authenticated: true, mode: password, mustChangePassword: false }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/auth/token/revoke:
+    post:
+      tags: [Authentication]
+      summary: 注销当前设备
+      description: 首次登录尚未修改密码时也可注销当前设备。
+      responses:
+        '200':
+          description: 当前设备已撤销
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Revoked' }
+              example: { revoked: true }
+        '400':
+          description: 请求使用了网页 Cookie，而不是设备 Bearer
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: bearer_required, message: 请使用设备登录凭据 }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/auth/browser-grant:
+    post:
+      tags: [Authentication]
+      summary: 创建 WebView 一次性换票
+      description: 只接受设备 Bearer。目标固定为 /investment/terminal，不接受 target 参数。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              maxProperties: 0
+            example: {}
+      responses:
+        '200':
+          description: 60 秒一次性换票已创建
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BrowserGrant' }
+              example:
+                urlPath: /api/auth/browser-session?ticket=f4fON6xwV2kRqTqdlD0vb5nrY7Gy9yArHgV6FYvlMjA
+                expiresAt: '2026-11-02T12:01:00Z'
+        '400':
+          description: 请求使用网页 Cookie 而不是设备 Bearer
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: bearer_required, message: 请使用设备登录凭据 }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/PasswordChangeRequired'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/auth/browser-session:
+    get:
+      tags: [Authentication]
+      summary: 在 WebView 中消费换票
+      description: |
+        公开浏览器入口。不得发送 Authorization；可以携带 WebView 已有 Cookie。
+        ticket 单次消费并重新校验父设备、凭据版本和强制改密状态。
+      security: []
+      parameters:
+        - name: ticket
+          in: query
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9_-]{43}$' }
+          description: browser-grant 返回的 60 秒短时登录凭据
+      responses:
+        '303':
+          description: Cookie Session 已建立，固定跳转投资终端
+          headers:
+            Location:
+              required: true
+              schema: { type: string, const: /investment/terminal }
+            Set-Cookie:
+              required: true
+              schema: { type: string }
+              description: HttpOnly workbench_session；Secure 和 SameSite 由部署来源配置决定
+            Cache-Control:
+              required: true
+              schema: { type: string, const: no-store }
+            Referrer-Policy:
+              required: true
+              schema: { type: string, const: no-referrer }
+        '400':
+          description: 请求携带了 Authorization
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: invalid_token_request, message: 请在 WebView 中打开换票地址 }
+        '401':
+          description: ticket 无效、过期、已消费，或父设备/凭据已失效
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: invalid_token, message: 登录已失效，请重新登录 }
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/auth/sessions:
+    get:
+      tags: [Devices]
+      summary: 列出登录设备
+      responses:
+        '200':
+          description: 未过期且未撤销的网页与设备会话
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionList' }
+              example:
+                items:
+                  - id: 9b59c07e-d1b7-4d40-9aa7-163987ab14e4
+                    deviceName: Alice 的 iPhone
+                    platform: ios
+                    createdAt: '2026-11-02T12:00:00Z'
+                    lastSeenAt: '2026-11-02T12:05:00Z'
+                    expiresAt: '2026-12-02T12:00:00Z'
+                    current: true
+                  - id: 2f3f3037-16e7-49f5-a745-73fa77ff46ac
+                    deviceName: 浏览器
+                    platform: web
+                    createdAt: '2026-11-01T09:00:00Z'
+                    lastSeenAt: '2026-11-02T11:50:00Z'
+                    expiresAt: '2026-11-08T09:00:00Z'
+                    current: false
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/PasswordChangeRequired'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/auth/sessions/{id}:
+    delete:
+      tags: [Devices]
+      summary: 注销指定设备
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: 会话已注销
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Revoked' }
+              example: { revoked: true }
+        '404':
+          description: 会话不存在
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: session_not_found, message: 登录设备不存在 }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/auth/logout-all:
+    post:
+      tags: [Devices]
+      summary: 注销全部网页和设备会话
+      responses:
+        '200':
+          description: 全部会话已注销
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Reauthenticate' }
+              example: { reauthenticate: true }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/auth/signing-key/rotate:
+    post:
+      tags: [Devices]
+      summary: 轮换访问令牌签名密钥
+      responses:
+        '200':
+          description: 新签名密钥已启用；旧密钥保留 15 分钟验签窗口
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rotated]
+                properties:
+                  rotated: { type: boolean, const: true }
+              example: { rotated: true }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/settings/password:
+    put:
+      tags: [Authentication]
+      summary: 修改登录密码
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string }
+                newPassword: { type: string, minLength: 8 }
+            example: { currentPassword: Correct-Horse-42!, newPassword: New-Correct-84! }
+      responses:
+        '200':
+          description: 密码已修改，全部网页和设备会话已失效
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Reauthenticate' }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          description: 当前密码错误
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: invalid_password, message: 当前密码不正确 }
+        '409':
+          description: 密码已被其他请求修改
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: password_changed, message: 密码已被修改，请重新登录 }
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /api/conversations:
+    get:
+      tags: [Conversations]
+      summary: 分页列出对话
+      parameters:
+        - $ref: '#/components/parameters/Limit20'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: 按更新时间倒序的未归档对话
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConversationPage' }
+              example:
+                items:
+                  - id: conv_01
+                    title: 今日安排
+                    createdAt: '2026-11-02T08:00:00Z'
+                    updatedAt: '2026-11-02T08:10:00Z'
+                nextCursor: eyJ0aW1lc3RhbXAiOjE3NjIwNzEwMDAwMDAsImlkIjoiY29udl8wMSJ9
+        '400':
+          description: limit 或 cursor 无效
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: invalid_pagination, message: 分页参数无效 }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/conversations/{id}/messages:
+    get:
+      tags: [Conversations]
+      summary: 分页读取对话消息
+      parameters:
+        - $ref: '#/components/parameters/ConversationId'
+        - $ref: '#/components/parameters/Limit50'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: 按时间正序返回当前页消息
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MessagePage' }
+              example:
+                messages:
+                  - role: user
+                    content: 整理今天的任务
+                  - role: assistant
+                    content: 今天有三项任务。
+                nextCursor: eyJ0aW1lc3RhbXAiOjE3NjIwNzA0MDAwMDAsImlkIjoibXNnXzAxIn0
+        '400':
+          $ref: '#/components/responses/BadPagination'
+        '404':
+          $ref: '#/components/responses/ConversationNotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/conversations/{id}:
+    patch:
+      tags: [Conversations]
+      summary: 重命名对话
+      parameters:
+        - $ref: '#/components/parameters/ConversationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [title]
+              properties:
+                title: { type: string, minLength: 1, maxLength: 120 }
+            example: { title: 本周投资复盘 }
+      responses:
+        '200':
+          description: 标题已保存
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [saved]
+                properties:
+                  saved: { type: boolean, const: true }
+              example: { saved: true }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/ConversationNotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      tags: [Conversations]
+      summary: 归档对话
+      parameters:
+        - $ref: '#/components/parameters/ConversationId'
+      responses:
+        '204':
+          description: 已归档，无响应体
+        '404':
+          $ref: '#/components/responses/ConversationNotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/modules/todo/tasks:
+    get:
+      tags: [Todo]
+      summary: 分页列出待办
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - $ref: '#/components/parameters/Cursor'
+        - name: view
+          in: query
+          schema: { type: string, enum: [all, today, week, later, done, overdue] }
+        - name: tz
+          in: query
+          schema: { type: string, default: UTC }
+          description: IANA 时区
+        - name: priority
+          in: query
+          schema: { $ref: '#/components/schemas/TaskPriority' }
+        - name: category
+          in: query
+          schema: { type: string, maxLength: 40 }
+      responses:
+        '200':
+          description: 当前页待办
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskPage' }
+              example:
+                items:
+                  - id: 0123456789abcdef0123456789abcdef
+                    title: 提交周报
+                    description: 汇总本周进度
+                    dueAt: '2026-11-06T09:00:00Z'
+                    priority: high
+                    category: work
+                    createdAt: '2026-11-02T09:00:00Z'
+                    updatedAt: '2026-11-02T09:00:00Z'
+                    revision: 1
+        '400':
+          description: 分页游标、筛选或时区无效
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: invalid_cursor, message: 无效的分页游标 }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ModuleUnavailable'
+    post:
+      tags: [Todo]
+      summary: 创建待办
+      description: Idempotency-Key 可选；同键同一已解码请求重放首次 201 结果。
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTaskRequest' }
+            example:
+              title: 提交周报
+              description: 汇总本周进度
+              dueAt: '2026-11-06T09:00:00Z'
+              priority: high
+              category: work
+      responses:
+        '201':
+          description: 已创建；幂等重放也返回首次保存的 Task
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+        '400':
+          description: JSON、任务内容或 Idempotency-Key 无效
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                task: { value: { code: todo_create_failed, message: title must contain 1 to 300 bytes } }
+                key: { value: { code: invalid_idempotency_key, message: invalid Idempotency-Key } }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: 同一幂等键已用于不同的已解码请求
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: idempotency_conflict, message: idempotency key was already used for a different request }
+        '503':
+          $ref: '#/components/responses/ModuleUnavailable'
+  /api/modules/todo/tasks/{id}:
+    patch:
+      tags: [Todo]
+      summary: 修改待办
+      description: revision 可选；提供时执行乐观并发检查，成功后 revision 加一。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateTaskRequest' }
+            example: { completed: true, revision: 1 }
+      responses:
+        '200':
+          description: 更新后的 Task
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+        '400':
+          description: JSON 或任务字段无效
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: todo_update_failed, message: title must contain 1 to 300 bytes }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: 待办不存在
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: todo_not_found, message: task not found }
+        '409':
+          description: revision 与当前 Task 不匹配
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: todo_conflict, message: 待办已被修改 }
+        '503':
+          $ref: '#/components/responses/ModuleUnavailable'
+  /api/mobile/push-token:
+    post:
+      tags: [Push]
+      summary: 注册推送 token
+      description: 仅接受设备 Bearer；POST 与 PUT 语义相同。
+      requestBody:
+        $ref: '#/components/requestBodies/PushToken'
+      responses:
+        '204':
+          description: 已注册或更新，无响应体
+        '400':
+          $ref: '#/components/responses/BadPushToken'
+        '401':
+          $ref: '#/components/responses/DeviceAuthenticationRequired'
+        '404':
+          $ref: '#/components/responses/MobilePushDisabled'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [Push]
+      summary: 更新推送 token
+      description: 与 POST 相同，按平台和 token 绑定到当前设备会话。
+      requestBody:
+        $ref: '#/components/requestBodies/PushToken'
+      responses:
+        '204':
+          description: 已注册或更新，无响应体
+        '400':
+          $ref: '#/components/responses/BadPushToken'
+        '401':
+          $ref: '#/components/responses/DeviceAuthenticationRequired'
+        '404':
+          $ref: '#/components/responses/MobilePushDisabled'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      tags: [Push]
+      summary: 删除推送 token
+      requestBody:
+        $ref: '#/components/requestBodies/PushToken'
+      responses:
+        '204':
+          description: 已删除或原本不存在，无响应体
+        '400':
+          $ref: '#/components/responses/BadPushToken'
+        '401':
+          $ref: '#/components/responses/DeviceAuthenticationRequired'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/modules/investment/schwab/oauth/start:
+    post:
+      tags: [Schwab]
+      summary: 创建移动端 Schwab 授权
+      responses:
+        '201':
+          description: 授权请求已创建
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SchwabOAuthStart' }
+              example:
+                authorizationUrl: https://api.schwabapi.com/v1/oauth/authorize?client_id=app-key&redirect_uri=https%3A%2F%2Fworkbench.example.com%2Foauth%2Fschwab&response_type=code&state=4f2a...
+                statusId: d80ca7d266e9d5f48b48a5dbb69d07b67fc20d2fe3772c44
+                status: pending
+                expiresAt: '2026-11-02T12:10:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Schwab 应用尚未配置
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: schwab_oauth_unavailable, message: 请先在设置中保存 Schwab App Key、Secret 和回调地址 }
+        '500':
+          $ref: '#/components/responses/ServerError'
+        '503':
+          $ref: '#/components/responses/ModuleUnavailable'
+  /api/modules/investment/schwab/oauth/status/{id}:
+    get:
+      tags: [Schwab]
+      summary: 查询移动端 Schwab 授权结果
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[0-9a-f]{48}$' }
+          description: start 返回的 statusId
+      responses:
+        '200':
+          description: 当前状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SchwabOAuthStatus' }
+              examples:
+                pending: { value: { status: pending } }
+                succeeded: { value: { status: succeeded } }
+                failed: { value: { status: failed, error: 授权已过期，请重新发起 } }
+        '404':
+          description: 状态不存在或已清理
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: schwab_oauth_status_not_found, message: 授权状态不存在 }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ModuleUnavailable'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: EdDSA JWT
+      description: 通过 /api/auth/token 或 /api/auth/token/refresh 取得的 accessToken
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: '^[\x20-\x7E]+$'
+      description: 单个逻辑创建动作的稳定键；只允许一个请求头值和可打印 ASCII
+    SessionId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, minLength: 1 }
+      description: GET /api/auth/sessions 返回的会话 ID
+    ConversationId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, minLength: 1 }
+    Cursor:
+      name: cursor
+      in: query
+      schema: { type: string }
+      description: 前一页返回的 opaque nextCursor；客户端不得解析或修改
+    Limit20:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    Limit50:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+  requestBodies:
+    PushToken:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/PushTokenRequest' }
+          examples:
+            ios: { value: { platform: ios, pushToken: 0123456789abcdef } }
+            android: { value: { platform: android, pushToken: fcm-registration-token } }
+  schemas:
+    Error:
+      type: object
+      additionalProperties: true
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        details: {}
+        requestId: { type: string }
+    TokenLoginRequest:
+      type: object
+      additionalProperties: false
+      required: [password, deviceName, platform]
+      properties:
+        password: { type: string }
+        deviceName: { type: string, minLength: 1, maxLength: 100 }
+        platform: { type: string, enum: [ios, android, other] }
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string, minLength: 43, maxLength: 43 }
+    TokenResponse:
+      type: object
+      additionalProperties: false
+      required: [accessToken, refreshToken, tokenType, expiresIn, refreshExpiresAt, sessionId, mustChangePassword]
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string }
+        tokenType: { type: string, const: Bearer }
+        expiresIn: { type: integer, minimum: 0, maximum: 900 }
+        refreshExpiresAt: { type: string, format: date-time }
+        sessionId: { type: string }
+        mustChangePassword: { type: boolean }
+    AuthStatus:
+      type: object
+      required: [authenticated, mode, mustChangePassword]
+      properties:
+        authenticated: { type: boolean }
+        mode: { type: string, enum: [local, password] }
+        mustChangePassword: { type: boolean }
+    Revoked:
+      type: object
+      additionalProperties: false
+      required: [revoked]
+      properties:
+        revoked: { type: boolean, const: true }
+    Reauthenticate:
+      type: object
+      additionalProperties: false
+      required: [reauthenticate]
+      properties:
+        reauthenticate: { type: boolean, const: true }
+    BrowserGrant:
+      type: object
+      additionalProperties: false
+      required: [urlPath, expiresAt]
+      properties:
+        urlPath:
+          type: string
+          pattern: '^/api/auth/browser-session\?ticket=[A-Za-z0-9_-]{43}$'
+          description: 同域相对路径；含一次性短时登录凭据
+        expiresAt: { type: string, format: date-time }
+    DeviceSession:
+      type: object
+      additionalProperties: false
+      required: [id, deviceName, platform, createdAt, lastSeenAt, expiresAt, current]
+      properties:
+        id: { type: string }
+        deviceName: { type: string }
+        platform: { type: string, enum: [web, ios, android, other] }
+        createdAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        current: { type: boolean }
+    SessionList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DeviceSession' }
+    Conversation:
+      type: object
+      additionalProperties: false
+      required: [id, title, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ConversationPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Conversation' }
+        nextCursor: { type: string }
+    AIMessage:
+      type: object
+      additionalProperties: false
+      required: [role, content]
+      properties:
+        role: { type: string }
+        content: {}
+    MessagePage:
+      type: object
+      additionalProperties: false
+      required: [messages]
+      properties:
+        messages:
+          type: array
+          items: { $ref: '#/components/schemas/AIMessage' }
+        nextCursor: { type: string }
+    TaskPriority:
+      type: string
+      enum: [none, low, medium, high]
+    Task:
+      type: object
+      additionalProperties: false
+      required: [id, title, description, priority, createdAt, updatedAt, revision]
+      properties:
+        id: { type: string }
+        title: { type: string, description: 去除首尾空白后为 1 至 300 UTF-8 字节 }
+        description: { type: string, description: 最多 10000 UTF-8 字节 }
+        dueAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+        priority: { $ref: '#/components/schemas/TaskPriority' }
+        category: { type: string, maxLength: 40 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        revision: { type: integer, format: int64, minimum: 1 }
+    TaskPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Task' }
+        nextCursor: { type: string }
+    CreateTaskRequest:
+      type: object
+      additionalProperties: false
+      required: [title]
+      properties:
+        title: { type: string, description: 去除首尾空白后为 1 至 300 UTF-8 字节 }
+        description: { type: [string, 'null'], default: '', description: null 解码为空字符串；最多 10000 UTF-8 字节 }
+        dueAt: { type: [string, 'null'], format: date-time }
+        priority:
+          oneOf:
+            - { $ref: '#/components/schemas/TaskPriority' }
+            - { type: 'null' }
+          default: none
+          description: null 解码为默认优先级 none
+        category: { type: [string, 'null'], maxLength: 40, default: '', description: null 解码为空分类 }
+    UpdateTaskRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        title: { type: [string, 'null'], description: null 等同于省略；非 null 时去除首尾空白后为 1 至 300 UTF-8 字节 }
+        description: { type: [string, 'null'], description: null 等同于省略；非 null 时最多 10000 UTF-8 字节 }
+        dueAt: { type: [string, 'null'], format: date-time, description: null 等同于省略；清除使用 clearDueAt }
+        clearDueAt: { type: boolean, default: false }
+        completed: { type: [boolean, 'null'] }
+        priority:
+          oneOf:
+            - { $ref: '#/components/schemas/TaskPriority' }
+            - { type: 'null' }
+        category: { type: [string, 'null'], maxLength: 40 }
+        clearCategory: { type: boolean, default: false }
+        revision: { type: [integer, 'null'], format: int64, minimum: 1, description: 最近一次读取的 Task revision；省略或 null 时兼容旧客户端 }
+    PushTokenRequest:
+      type: object
+      additionalProperties: false
+      required: [platform, pushToken]
+      properties:
+        platform: { type: string, enum: [ios, android] }
+        pushToken: { type: string, minLength: 1, maxLength: 4096 }
+    SchwabOAuthStart:
+      type: object
+      additionalProperties: false
+      required: [authorizationUrl, statusId, status, expiresAt]
+      properties:
+        authorizationUrl: { type: string, format: uri }
+        statusId: { type: string }
+        status: { type: string, const: pending }
+        expiresAt: { type: string, format: date-time }
+    SchwabOAuthStatus:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [pending, succeeded, failed] }
+        error: { type: string }
+  responses:
+    BadRequest:
+      description: 请求格式或字段无效
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { code: invalid_request, message: 请求格式不正确 }
+    BadPagination:
+      description: limit 或 cursor 无效
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { code: invalid_pagination, message: 分页参数无效 }
+    InvalidCredentials:
+      description: 密码错误
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { code: invalid_credentials, message: 密码不正确 }
+    Unauthorized:
+      description: 未登录或访问令牌无效
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            missing: { value: { code: authentication_required, message: login required } }
+            invalid: { value: { code: invalid_token, message: 登录已失效，请重新登录 } }
+    InvalidToken:
+      description: refresh token 无效、已使用，或设备会话已失效
+      headers:
+        WWW-Authenticate:
+          schema: { type: string }
+          example: Bearer error="invalid_token"
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { code: invalid_token, message: 登录已失效，请重新登录 }
+    PasswordChangeRequired:
+      description: 首次登录必须先修改密码
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { code: password_change_required, message: 首次登录请修改密码 }
+    RateLimited:
+      description: 登录限速或密码计算并发已满
+      headers:
+        Retry-After:
+          required: true
+          schema: { type: integer, minimum: 1 }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            login: { value: { code: login_rate_limited, message: too many login attempts } }
+            busy: { value: { code: authentication_busy, message: password computation capacity reached } }
+    ServerError:
+      description: 服务端无法完成请求
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { code: token_failed, message: 无法保存登录凭据 }
+    ConversationNotFound:
+      description: 对话不存在或已归档
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { code: conversation_not_found, message: 对话不存在 }
+    BadPushToken:
+      description: 平台、token 或 JSON 无效
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            json: { value: { code: invalid_request, message: invalid push token request } }
+            format: { value: { code: invalid_push_token, message: invalid push platform or token } }
+            provider: { value: { code: push_platform_unavailable, message: push platform is not configured } }
+    DeviceAuthenticationRequired:
+      description: 缺少有效设备 Bearer；网页 Cookie 不可用于移动推送
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            missing: { value: { code: device_authentication_required, message: device authentication required } }
+            inactive: { value: { code: device_session_inactive, message: device session is inactive } }
+    MobilePushDisabled:
+      description: 移动推送未启用
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { code: mobile_push_disabled, message: mobile push is disabled }
+    ModuleUnavailable:
+      description: 投资业务未启用或尚未就绪
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { code: module_disabled, message: module is disabled }

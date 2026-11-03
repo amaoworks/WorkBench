@@ -46,6 +46,28 @@ type ChatResponse struct {
 	Tools          []contracts.ToolExecution `json:"tools,omitempty"`
 }
 
+type Conversation struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt"`
+}
+
+type conversationCursor struct {
+	Timestamp int64  `json:"timestamp"`
+	ID        string `json:"id"`
+}
+
+type conversationPage struct {
+	Items      []Conversation
+	NextCursor *conversationCursor
+}
+
+type messagePage struct {
+	Messages   []contracts.AIMessage
+	NextCursor *conversationCursor
+}
+
 type chatTurn struct {
 	conversationID string
 	messageID      string
@@ -232,4 +254,82 @@ func (s *Service) messages(ctx context.Context, conversationID string, limit int
 		messages = append(messages, contracts.AIMessage{Role: row.Role, Content: json.RawMessage(row.ContentJson)})
 	}
 	return messages, nil
+}
+
+func (s *Service) listConversations(ctx context.Context, limit int, cursor conversationCursor) (conversationPage, error) {
+	rows, err := s.queries.ListConversations(ctx, dbsqlc.ListConversationsParams{
+		CursorID: cursor.ID, CursorUpdatedAt: cursor.Timestamp, PageSize: int64(limit + 1),
+	})
+	if err != nil {
+		return conversationPage{}, err
+	}
+	page := conversationPage{Items: make([]Conversation, 0, min(len(rows), limit))}
+	for index, row := range rows {
+		if index == limit {
+			break
+		}
+		page.Items = append(page.Items, Conversation{
+			ID: row.ID, Title: row.Title,
+			CreatedAt: time.UnixMilli(row.CreatedAt).UTC().Format(time.RFC3339Nano),
+			UpdatedAt: time.UnixMilli(row.UpdatedAt).UTC().Format(time.RFC3339Nano),
+		})
+	}
+	if len(rows) > limit {
+		last := rows[limit-1]
+		page.NextCursor = &conversationCursor{Timestamp: last.UpdatedAt, ID: last.ID}
+	}
+	return page, nil
+}
+
+func (s *Service) messagePage(ctx context.Context, conversationID string, limit int, cursor conversationCursor) (messagePage, error) {
+	if _, err := s.queries.GetActiveConversation(ctx, conversationID); err != nil {
+		return messagePage{}, err
+	}
+	rows, err := s.queries.ListConversationMessagesPage(ctx, dbsqlc.ListConversationMessagesPageParams{
+		ConversationID: conversationID, CursorID: cursor.ID, CursorCreatedAt: cursor.Timestamp, PageSize: int64(limit + 1),
+	})
+	if err != nil {
+		return messagePage{}, err
+	}
+	start := 0
+	page := messagePage{Messages: make([]contracts.AIMessage, 0, min(len(rows), limit))}
+	if len(rows) > limit {
+		start = 1
+		oldest := rows[start]
+		page.NextCursor = &conversationCursor{Timestamp: oldest.CreatedAt, ID: oldest.ID}
+	}
+	for _, row := range rows[start:] {
+		page.Messages = append(page.Messages, contracts.AIMessage{Role: row.Role, Content: json.RawMessage(row.ContentJson)})
+	}
+	return page, nil
+}
+
+func (s *Service) rename(ctx context.Context, conversationID, title string) error {
+	title = strings.TrimSpace(title)
+	if title == "" || len([]rune(title)) > 120 {
+		return fmt.Errorf("%w: title must contain 1 to 120 characters", ErrInvalidRequest)
+	}
+	updated, err := s.queries.RenameConversation(ctx, dbsqlc.RenameConversationParams{
+		Title: title, UpdatedAt: s.now().UTC().UnixMilli(), ID: conversationID,
+	})
+	if err != nil {
+		return err
+	}
+	if updated != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Service) archive(ctx context.Context, conversationID string) error {
+	archived, err := s.queries.ArchiveConversation(ctx, dbsqlc.ArchiveConversationParams{
+		ArchivedAt: sql.NullInt64{Int64: s.now().UTC().UnixMilli(), Valid: true}, ID: conversationID,
+	})
+	if err != nil {
+		return err
+	}
+	if archived != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
 }

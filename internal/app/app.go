@@ -22,6 +22,7 @@ import (
 	"workbench/internal/capabilities/ai"
 	"workbench/internal/capabilities/conversation"
 	"workbench/internal/capabilities/dashboard"
+	"workbench/internal/capabilities/mobilepush"
 	"workbench/internal/capabilities/notifications"
 	"workbench/internal/capabilities/scheduler"
 	"workbench/internal/contracts"
@@ -53,6 +54,8 @@ type App struct {
 	dispatcher         *events.Dispatcher
 	telegramDispatcher *events.Dispatcher
 	telegram           *notifications.Telegram
+	mobileDispatcher   *events.Dispatcher
+	mobilePush         *mobilepush.Service
 	scheduler          *scheduler.Scheduler
 	auth               *auth.Service
 	handler            http.Handler
@@ -69,6 +72,10 @@ type App struct {
 
 func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	mobilePushConfig, err := loadMobilePushConfig(cfg.MobilePush)
+	if err != nil {
 		return nil, err
 	}
 	if cfg.PublicURL != "" {
@@ -145,7 +152,16 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, dispatcher := range []*events.Dispatcher{dispatcher, telegramDispatcher} {
+	mobilePushConfig.Allowed = enabled
+	mobilePush, err := mobilepush.New(database.SQL(), mobilePushConfig, auth.DeviceSessionID)
+	if err != nil {
+		return nil, err
+	}
+	mobileDispatcher, err := events.NewDispatcher(database.SQL(), eventStore, []contracts.EventConsumer{mobilePush.Consumer()}, enabled, logger.With("component", "mobile-push"))
+	if err != nil {
+		return nil, err
+	}
+	for _, dispatcher := range []*events.Dispatcher{dispatcher, telegramDispatcher, mobileDispatcher} {
 		if err := dispatcher.Register(ctx); err != nil {
 			return nil, err
 		}
@@ -197,6 +213,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 		config: cfg, logger: logger, logLevel: logLevel, database: database, registry: registry,
 		dispatcher: dispatcher, scheduler: scheduled, auth: authService,
 		telegram: telegram, telegramDispatcher: telegramDispatcher,
+		mobilePush: mobilePush, mobileDispatcher: mobileDispatcher,
 		builtins: builtins,
 	}
 	application.gateway = gateway
@@ -245,6 +262,9 @@ func (a *App) routes(
 		r.Get("/csrf", a.auth.CSRFTokenHandler)
 		r.Post("/login", a.auth.LoginHandler)
 		r.Post("/logout", a.auth.LogoutHandler)
+		r.Post("/token", a.auth.TokenHandler)
+		r.Post("/token/refresh", a.auth.RefreshHandler)
+		r.Get("/browser-session", a.auth.BrowserSessionHandler)
 	})
 	for _, binding := range a.builtins {
 		if binding.routes == nil {
@@ -259,6 +279,12 @@ func (a *App) routes(
 
 	router.Group(func(protected chi.Router) {
 		protected.Use(a.auth.Require)
+		protected.Get("/api/auth/sessions", a.auth.SessionsHandler)
+		protected.Delete("/api/auth/sessions/{id}", a.auth.DeleteSessionHandler)
+		protected.Post("/api/auth/token/revoke", a.auth.RevokeTokenHandler)
+		protected.Post("/api/auth/browser-grant", a.auth.BrowserGrantHandler)
+		protected.Post("/api/auth/logout-all", a.auth.LogoutAllHandler)
+		protected.Post("/api/auth/signing-key/rotate", a.auth.RotateSigningKeyHandler)
 		protected.Get("/api/modules", a.listModules)
 		protected.Delete("/api/modules/external/{id}", a.unregisterExternal)
 		protected.Put("/api/modules/{id}/enabled", a.setModuleEnabled)
@@ -281,10 +307,16 @@ func (a *App) routes(
 		protected.Put("/api/notifications/read-all", notificationHTTP.MarkAllRead)
 		protected.Put("/api/notifications/archive", notificationHTTP.Archive)
 		protected.Get("/api/notifications/stream", notificationHTTP.Stream)
+		protected.Post("/api/mobile/push-token", a.mobilePush.RegisterToken)
+		protected.Put("/api/mobile/push-token", a.mobilePush.RegisterToken)
+		protected.Delete("/api/mobile/push-token", a.mobilePush.DeleteToken)
 		protected.Get("/api/ai/status", conversationHTTP.Status)
 		protected.Post("/api/chat", conversationHTTP.Chat)
 		protected.Post("/api/chat/stream", conversationHTTP.Stream)
 		protected.Get("/api/conversations/{id}/messages", conversationHTTP.Messages)
+		protected.Get("/api/conversations", conversationHTTP.List)
+		protected.Patch("/api/conversations/{id}", conversationHTTP.Rename)
+		protected.Delete("/api/conversations/{id}", conversationHTTP.Archive)
 		protected.Post("/api/system/backup", a.backup)
 		protected.Get("/api/settings", a.getSettings)
 		protected.Get("/api/settings/telegram", a.telegram.Settings)
@@ -502,6 +534,18 @@ func maintenanceJob(db *sql.DB) contracts.JobDefinition {
 			if err := queries.DeleteExpiredSessionsForMaintenance(ctx, now.UnixMilli()); err != nil {
 				return err
 			}
+			if err := queries.DeleteExpiredDeviceSessions(ctx, now.UnixMilli()); err != nil {
+				return err
+			}
+			if err := queries.DeleteExpiredBrowserGrants(ctx, now.UnixMilli()); err != nil {
+				return err
+			}
+			if err := queries.DeleteExpiredSigningKeys(ctx, sql.NullInt64{Int64: now.Add(-15 * time.Minute).UnixMilli(), Valid: true}); err != nil {
+				return err
+			}
+			if err := queries.DeleteExpiredBrowserSessions(ctx, now.Add(-7*24*time.Hour).UnixMilli()); err != nil {
+				return err
+			}
 			cutoff := now.Add(-90 * 24 * time.Hour).UnixMilli()
 			if err := queries.DeleteOldHandledNotifications(ctx, cutoff); err != nil {
 				return err
@@ -540,9 +584,9 @@ func (a *App) Run(ctx context.Context) error {
 		_ = a.shutdownScheduler(context.Background())
 		return fmt.Errorf("start scheduler: %w", err)
 	}
-	dispatchDone := make(chan error, 2)
+	dispatchDone := make(chan error, len(a.eventDispatchers()))
 	var dispatchers sync.WaitGroup
-	for _, dispatcher := range []*events.Dispatcher{a.dispatcher, a.telegramDispatcher} {
+	for _, dispatcher := range a.eventDispatchers() {
 		dispatchers.Add(1)
 		go func() { defer dispatchers.Done(); dispatchDone <- dispatcher.Run(runCtx) }()
 	}
@@ -580,6 +624,17 @@ func (a *App) Run(ctx context.Context) error {
 		a.logger.Info("workbench stopped", "component", "app")
 	}
 	return errors.Join(serverErr, schedulerErr)
+}
+
+func (a *App) eventDispatchers() []*events.Dispatcher {
+	all := []*events.Dispatcher{a.dispatcher, a.telegramDispatcher, a.mobileDispatcher}
+	result := make([]*events.Dispatcher, 0, len(all))
+	for _, dispatcher := range all {
+		if dispatcher != nil {
+			result = append(result, dispatcher)
+		}
+	}
+	return result
 }
 
 func (a *App) startModules(ctx context.Context) {

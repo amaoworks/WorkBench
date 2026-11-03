@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/alexedwards/scs/v2"
@@ -48,6 +49,8 @@ type Service struct {
 	allowedOrigins map[string]struct{}
 	cookieSameSite http.SameSite
 	passwordLimit  *passwordLimit
+	tokenMu        sync.Mutex
+	now            func() time.Time
 }
 
 func New(ctx context.Context, db *sql.DB, cfg Config) (*Service, error) {
@@ -108,6 +111,7 @@ func New(ctx context.Context, db *sql.DB, cfg Config) (*Service, error) {
 		allowedHosts: make(map[string]struct{}), publicHTTPS: cfg.PublicHTTPS,
 		allowedOrigins: origins, cookieSameSite: sessions.Cookie.SameSite,
 		passwordLimit: newPasswordLimit(),
+		now:           time.Now,
 	}
 	for _, allowed := range cfg.AllowedHosts {
 		service.allowedHosts[strings.ToLower(allowed)] = struct{}{}
@@ -125,6 +129,9 @@ func New(ctx context.Context, db *sql.DB, cfg Config) (*Service, error) {
 	if cfg.Mode == ModePassword {
 		if err := service.ensureCredential(ctx, cfg.InitialPassword, logger); err != nil {
 			return nil, err
+		}
+		if err := service.ensureSigningKey(ctx); err != nil {
+			return nil, fmt.Errorf("initialize signing key: %w", err)
 		}
 	}
 	return service, nil
@@ -180,7 +187,14 @@ func (s *Service) Authenticate(ctx context.Context, password string) (bool, erro
 }
 
 func (s *Service) LoadAndSave(next http.Handler) http.Handler {
-	return s.sessions.LoadAndSave(next)
+	save := s.sessions.LoadAndSave(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if DeviceSessionID(r) != "" || nativeTokenEndpoint(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		save.ServeHTTP(w, r)
+	})
 }
 
 // Load exposes the current session to the handler without committing idle-timeout
@@ -188,6 +202,10 @@ func (s *Service) LoadAndSave(next http.Handler) http.Handler {
 // cookies cannot defeat immutable browser caching.
 func (s *Service) Load(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if DeviceSessionID(r) != "" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		var token string
 		cookie, err := r.Cookie(s.sessions.Cookie.Name)
 		if err == nil {
@@ -212,15 +230,25 @@ func (s *Service) Require(next http.Handler) http.Handler {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"code": "authentication_failed", "message": "authentication failed"})
 			return
 		}
-		if !s.sessions.GetBool(r.Context(), "authenticated") || s.sessions.GetInt64(r.Context(), "credentialVersion") != credential.UpdatedAt {
+		claims, bearer := r.Context().Value(deviceContextKey{}).(*accessClaims)
+		authenticated := bearer && claims.Version == credential.UpdatedAt
+		if !bearer {
+			authenticated = s.sessions.GetBool(r.Context(), "authenticated") && s.sessions.GetInt64(r.Context(), "credentialVersion") == credential.UpdatedAt
+			if authenticated {
+				authenticated = s.browserDeviceActive(r)
+			}
+		}
+		if !authenticated {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"code": "authentication_required", "message": "login required"})
 			return
 		}
-		if credential.MustChangePassword != 0 && !(r.Method == http.MethodPut && r.URL.Path == "/api/settings/password") {
+		changingPassword := r.Method == http.MethodPut && r.URL.Path == "/api/settings/password"
+		revokingDevice := r.Method == http.MethodPost && r.URL.Path == "/api/auth/token/revoke"
+		if credential.MustChangePassword != 0 && !changingPassword && !revokingDevice {
 			writeJSON(w, http.StatusForbidden, map[string]string{"code": "password_change_required", "message": "首次登录请修改密码"})
 			return
 		}
-		next.ServeHTTP(w, r)
+		s.serveAuthenticated(w, r, next, credential.UpdatedAt)
 	})
 }
 
@@ -265,10 +293,26 @@ func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	s.sessions.Put(r.Context(), "authenticated", true)
 	s.sessions.Put(r.Context(), "credentialVersion", credential.UpdatedAt)
+	s.sessions.Remove(r.Context(), "deviceSessionID")
+	if err := s.trackBrowser(r); err != nil {
+		_ = s.sessions.Destroy(r.Context())
+		tokenFailed(w)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"authenticated": true, "mustChangePassword": credential.MustChangePassword != 0})
 }
 
 func (s *Service) LogoutHandler(w http.ResponseWriter, r *http.Request) {
+	if DeviceSessionID(r) != "" {
+		s.RevokeTokenHandler(w, r)
+		return
+	}
+	if cookie, err := r.Cookie(s.sessions.Cookie.Name); err == nil {
+		if err := s.queries.RevokeBrowserSession(r.Context(), dbsqlc.RevokeBrowserSessionParams{TokenHash: tokenHash(cookie.Value), RevokedAt: sql.NullInt64{Int64: s.now().UnixMilli(), Valid: true}}); err != nil {
+			tokenFailed(w)
+			return
+		}
+	}
 	if err := s.sessions.Destroy(r.Context()); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"code": "session_failed", "message": "could not destroy session"})
 		return
@@ -277,11 +321,20 @@ func (s *Service) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) StatusHandler(w http.ResponseWriter, r *http.Request) {
+	if DeviceSessionID(r) != "" {
+		credential, err := s.queries.GetAuthCredential(r.Context())
+		if err != nil {
+			tokenFailed(w)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"authenticated": true, "mode": s.mode, "mustChangePassword": credential.MustChangePassword != 0})
+		return
+	}
 	authenticated := s.mode == ModeLocal || s.sessions.GetBool(r.Context(), "authenticated")
 	mustChangePassword := false
 	if s.mode == ModePassword && authenticated {
 		credential, err := s.queries.GetAuthCredential(r.Context())
-		authenticated = err == nil && s.sessions.GetInt64(r.Context(), "credentialVersion") == credential.UpdatedAt
+		authenticated = err == nil && s.sessions.GetInt64(r.Context(), "credentialVersion") == credential.UpdatedAt && s.browserDeviceActive(r)
 		mustChangePassword = authenticated && credential.MustChangePassword != 0
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"authenticated": authenticated, "mode": s.mode, "mustChangePassword": mustChangePassword})
@@ -307,7 +360,7 @@ func (s *Service) Security(next http.Handler) http.Handler {
 	csrf.SetFailureHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"code": "csrf_failed", "message": "CSRF validation failed"})
 	}))
-	return s.hostCheck(s.cors(s.originCheck(csrf)))
+	return s.hostCheck(s.cors(s.originCheck(s.tokenSecurity(next, csrf))))
 }
 
 func (s *Service) hostCheck(next http.Handler) http.Handler {

@@ -2,7 +2,7 @@
 
 Workbench 发布 Linux amd64、arm64 二进制包，以及相同架构的 Docker 镜像。两种方式运行同一个 Go 程序：前端、两种数据库方言的迁移和时区数据嵌入程序。二进制默认使用 SQLite，源码仓库和发布镜像的 Compose 默认启动 PostgreSQL 17 Alpine。运行机器无需安装 Go 或 Node.js；Linux 主机需有 CA 根证书，镜像已包含根证书。
 
-应用始终提供 HTTP 服务，HTTPS 由已有 Nginx、Caddy 等反向代理负责。浏览器访问工作台的 HTTPS 域名，代理转发到本机 HTTP 端口。应用使用 `WORKBENCH_PUBLIC_URL` 确定外部来源和安全 Cookie 属性；该地址不是监听地址，也不会让应用加载证书。
+应用始终提供 HTTP 服务，HTTPS 由已有 Nginx、Caddy 等反向代理负责。浏览器和原生客户端访问工作台的同一 HTTPS 域名，代理转发到本机 HTTP 端口。应用使用 `WORKBENCH_PUBLIC_URL` 确定外部来源和安全 Cookie 属性；该地址不是监听地址，也不会让应用加载证书。
 
 ## 选择部署方式
 
@@ -192,6 +192,19 @@ sudo chmod 700 data
 
 - **Nginx**：参考 `deploy/nginx.conf.example`，替换域名、证书路径和后端端口。示例使用 Nginx 1.25.1+ 的 `http2 on;`，需要构建时启用 `ngx_http_v2_module`；旧版本使用 `listen 443 ssl http2;` 并删除 `http2 on;`。示例保留 Host，配置 WebSocket Upgrade，关闭 SSE 响应缓冲，代理读写超时均为 3600 秒。请求体上限设置为 `8m`，与投资偏好接口的 8 MiB 上限对齐，兼容旧终端的布局保存请求。`map` 应放在 `http` 上下文。先执行 `nginx -t`，通过后重新加载配置。[HTTP/2 配置](https://nginx.org/en/docs/http/ngx_http_v2_module.html)、[WebSocket 代理说明](https://nginx.org/en/docs/http/websocket.html)
 - **Caddy**：参考 `deploy/Caddyfile.example`。宿主机 Caddy 代理到 `127.0.0.1:8080`；容器 Caddy 代理到 `workbench:8080`。域名与 DNS、80/443 入口配置正确时，由 Caddy 管理外部 HTTPS。[reverse_proxy 说明](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy)
+
+### 移动端入口
+
+原生客户端复用 `WORKBENCH_PUBLIC_URL` 的 HTTPS origin，不配置独立 API 域名或 `/workbench/` 子路径。代理需要：
+
+- 转发 `Authorization`、`Content-Type`、`X-Request-ID` 和原始 Host，不把 Bearer 写入访问日志。对 `/api/auth/browser-session` 禁止记录查询字符串，避免一次性 ticket 进入代理访问日志；Nginx 日志格式使用 `$uri`，不使用含查询的 `$request` 或 `$request_uri`，也可对该 location 关闭访问日志。
+- 保留 `/api/auth/token`、`/api/auth/token/refresh`、`/api/mobile/*`、业务 API 与 `/oauth/schwab`。
+- 支持 WebSocket Upgrade，关闭 SSE 响应缓冲，并为长连接设置足够的读写超时。
+- 允许 Workbench 主动访问 APNs、FCM、Schwab 及已配置的业务上游；APNs/FCM 服务端凭据见[配置与运行](configuration.md)。
+
+设备登录和刷新请求不携带 Cookie 或 Authorization；后续请求携带 Bearer。SSE 和 WebSocket 的 Authorization 在初始握手中传递，令牌不能放入查询参数。移动网络切换导致连接重建后，客户端重新查询通知列表并恢复行情订阅，不能依赖代理补发连接状态。
+
+图表终端按网页 Cookie 会话设计。原生客户端先用 Bearer 调用 `/api/auth/browser-grant`，再在同域 WebView 中打开返回的 60 秒一次性 `urlPath`；消费成功后固定跳转终端。代理必须完整转发该路径和 `Set-Cookie`，但不能记录 ticket 查询值。access token 和 refresh token 不进入 URL。移动网络层、凭据保存和 Schwab 系统浏览器流程见[移动端接入](mobile.md)。
 
 Schwab 的回调地址填写 `https://实际域名/oauth/schwab`，与 Developer Portal 登记完全一致；从同一个 HTTPS 入口开始授权。回调流程及排查见[配置与运行](configuration.md)。
 

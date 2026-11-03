@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import * as shared from "../src/shared/schema.ts";
 import * as settings from "../src/features/settings/schema.ts";
+import * as ai from "../src/features/ai/schema.ts";
 import * as todo from "../src/modules/todo/schema.ts";
 import * as investment from "../src/modules/investment/schema.ts";
 import * as news from "../src/modules/news/schema.ts";
@@ -17,6 +18,8 @@ const schemas = {
   notifications: shared.notificationsPageSchema, unreadCount: shared.unreadCountSchema,
   aiStatus: shared.aiStatusSchema, error: shared.apiErrorSchema, saved: shared.savedSchema,
   settings: settings.settingsSchema, appearance: settings.appearanceSchema, logging: settings.loggingSettingsSchema,
+  deviceSessions: settings.deviceSessionsSchema,
+  conversations: ai.conversationsPageSchema, conversationMessages: ai.conversationMessagesPageSchema,
   backup: settings.backupSchema, task: todo.taskSchema, tasks: todo.tasksResponseSchema,
   summary: todo.summarySchema, todoToday: todo.todoTodaySchema, taskCounts: todo.taskCountsSchema,
   wallos: todo.wallosSettingsSchema, wallosSync: todo.wallosSyncSchema,
@@ -86,6 +89,9 @@ for (const sample of samples) {
 for (const [name, path] of [
   ["module.enabled", ["observedEnabled"]],
   ["settings", ["logging", "level"]],
+  ["auth.device-sessions", ["items", 0, "deviceName"]],
+  ["ai.conversations", ["items", 0, "title"]],
+  ["ai.messages", ["messages", 0, "content"]],
   ["task.created", ["id"]],
   ["schwab", ["reauthorizationRequired"]],
   ["futu", ["serviceState"]],
@@ -100,6 +106,15 @@ for (const [name, path] of [
     assert.equal(schemas[sample.schema].safeParse(damaged).success, false);
   });
 }
+
+test("new session and conversation fixtures exercise populated pagination", () => {
+  const sessions = samples.find((sample) => sample.name === "auth.device-sessions").body;
+  const conversations = samples.find((sample) => sample.name === "ai.conversations").body;
+  const messages = samples.find((sample) => sample.name === "ai.messages").body;
+  assert.ok(sessions.items.length > 0);
+  assert.ok(conversations.items.length > 0 && conversations.nextCursor);
+  assert.ok(messages.messages.length > 0 && messages.nextCursor);
+});
 
 const widgetDataSchemas = {
   "investment.snapshot": investment.overviewSnapshotSchema, "investment.quotes": investment.overviewQuotesSchema,

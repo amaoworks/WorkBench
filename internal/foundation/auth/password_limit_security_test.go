@@ -39,6 +39,7 @@ func TestSecurityRejectionsDoNotSpendLoginTokens(t *testing.T) {
 	preflight := httptest.NewRequest(http.MethodOptions, "http://127.0.0.1:8080/api/auth/login", nil)
 	preflight.Header.Set("Origin", "http://127.0.0.1:8080")
 	preflight.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	preflight.Header.Set("Access-Control-Request-Headers", "Authorization, Content-Type, Idempotency-Key")
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, preflight)
 	if recorder.Code != http.StatusNoContent || service.passwordLimit.tokens != loginBurst {

@@ -41,6 +41,13 @@ Go 版本以 [go.mod](../go.mod) 为准，当前为 1.27.1。前端使用 Node.j
 | `-futu-config-dir` | `WORKBENCH_FUTU_CONFIG_DIR` | 与配套 OpenD 共享的登录配置目录；账号密码在投资设置中填写 |
 | `-futu-runtime-dir` | `WORKBENCH_FUTU_RUNTIME_DIR` | 原生 OpenD 私有运行目录，默认数据库同级 `futu-opend`；首次启用自动下载安装 |
 | `-futu-opend-binary` | `WORKBENCH_FUTU_OPEND_BINARY` | 已安装的兼容 OpenD 程序路径；留空使用自动安装的 10.9.6908 |
+| — | `WORKBENCH_MOBILE_PUSH_ENABLED` | `false`；启用 APNs/FCM 移动推送，至少配置一个服务商 |
+| — | `WORKBENCH_MOBILE_PUSH_APNS_P8_FILE` | APNs `.p8` 私钥文件路径；文件由部署系统只读挂载 |
+| — | `WORKBENCH_MOBILE_PUSH_APNS_TEAM_ID` | Apple Developer Team ID |
+| — | `WORKBENCH_MOBILE_PUSH_APNS_KEY_ID` | APNs Auth Key ID |
+| — | `WORKBENCH_MOBILE_PUSH_APNS_BUNDLE_ID` | iOS 应用 Bundle ID，同时作为 APNs topic |
+| — | `WORKBENCH_MOBILE_PUSH_APNS_SANDBOX` | `false`；开发构建使用 sandbox 时设为 `true` |
+| — | `WORKBENCH_MOBILE_PUSH_FCM_SERVICE_ACCOUNT_FILE` | Firebase service-account JSON 文件路径；文件由部署系统只读挂载 |
 | `-public-url` | `WORKBENCH_PUBLIC_URL` | 空；反代部署填写完整 HTTPS 来源，例如 `https://workbench.example.com`，可带端口、不可带子路径 |
 | `-allowed-host` | `WORKBENCH_ALLOWED_HOSTS` | 参数可重复，环境变量用逗号分隔；存在参数时替代环境列表 |
 | `-allow-insecure-http` | `WORKBENCH_ALLOW_INSECURE_HTTP` | `false`；设为 `true` 时允许 password 模式通过非 loopback 的纯 HTTP 监听 |
@@ -53,6 +60,22 @@ Go 版本以 [go.mod](../go.mod) 为准，当前为 1.27.1。前端使用 Node.j
 | `-healthcheck` | — | 按当前监听和 Host 配置检查运行中的 HTTP 服务；不打开数据库、不启动服务 |
 
 AI 默认值描述本项目配置，不代表模型选型建议。AI 保存后，数据库中的整套设置优先于上述环境变量。启动配置不覆盖工作空间里已经保存的业务设置。
+
+移动推送凭据在启动时从文件读取，不写入工作空间数据库。Compose 可将凭据放在宿主机 `secrets/`，取消对应只读挂载注释，并在 `.env` 中启用需要的服务商：
+
+```dotenv
+WORKBENCH_MOBILE_PUSH_ENABLED=true
+WORKBENCH_MOBILE_PUSH_APNS_P8_FILE=/run/secrets/workbench/apns.p8
+WORKBENCH_MOBILE_PUSH_APNS_TEAM_ID=AB12CD34EF
+WORKBENCH_MOBILE_PUSH_APNS_KEY_ID=ZX98YU76TS
+WORKBENCH_MOBILE_PUSH_APNS_BUNDLE_ID=com.example.workbench
+WORKBENCH_MOBILE_PUSH_APNS_SANDBOX=false
+WORKBENCH_MOBILE_PUSH_FCM_SERVICE_ACCOUNT_FILE=/run/secrets/workbench/fcm-service-account.json
+```
+
+APNs 与 FCM 可单独启用。启用总开关后，已配置服务商的必填项必须完整且凭据文件必须可读，否则程序拒绝启动。移动端 token 注册和投递行为见[外部通知](notifications.md#移动推送)。
+
+容器以 UID/GID `65532:65532` 运行。使用上面的 bind mount 示例前，应让凭据文件归该 UID/GID 所有并设置为 `0600`；原生或 systemd 部署则归 Workbench 运行用户所有。不要把凭据提交到仓库或复制进镜像。
 
 原生运行默认使用 SQLite。仓库根目录的 Compose 默认启动 PostgreSQL 17 Alpine 并自动创建数据库，数据库类型和 DSN 可通过环境变量调整。其他 PostgreSQL 部署仅用于新工作空间，数据库须在启动前创建。连接串只通过环境变量传入，避免出现在进程命令行中；远程服务通常启用 TLS，例如：
 

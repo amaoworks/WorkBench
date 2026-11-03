@@ -3,11 +3,17 @@ INSERT INTO todo_tasks(id, title, description, due_at, priority, category, creat
 VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetTask :one
-SELECT id, title, description, due_at, completed_at, created_at, updated_at, priority, category
+SELECT id, title, description, due_at, completed_at, created_at, updated_at, priority, category, revision
 FROM todo_tasks WHERE id = ?;
 
+-- name: GetCreateRequest :one
+SELECT request_hash, response_json FROM todo_create_requests WHERE request_key = ?;
+
+-- name: InsertCreateRequest :exec
+INSERT INTO todo_create_requests(request_key, request_hash, response_json) VALUES (?, ?, ?);
+
 -- name: ListTasksPage :many
-SELECT id, title, description, due_at, completed_at, created_at, updated_at, priority, category
+SELECT id, title, description, due_at, completed_at, created_at, updated_at, priority, category, revision
 FROM todo_tasks
 WHERE
   (CAST(sqlc.arg(view) AS BIGINT) = 0
@@ -41,10 +47,10 @@ FROM todo_tasks
 WHERE (CAST(sqlc.arg(priority_filter) AS TEXT) = '' OR priority = CAST(sqlc.arg(priority_filter) AS TEXT))
   AND (CAST(sqlc.arg(category_filter) AS TEXT) = '' OR category = CAST(sqlc.arg(category_filter) AS TEXT));
 
--- name: UpdateTask :exec
+-- name: UpdateTask :execrows
 UPDATE todo_tasks
-SET title = ?, description = ?, due_at = ?, completed_at = ?, priority = ?, category = ?, updated_at = ?
-WHERE id = ?;
+SET title = ?, description = ?, due_at = ?, completed_at = ?, priority = ?, category = ?, updated_at = ?, revision = revision + 1
+WHERE id = ? AND revision = ?;
 
 -- name: CountCompletedBetween :one
 SELECT CAST(COUNT(*) AS BIGINT)
@@ -69,7 +75,7 @@ WHERE completed_at IS NULL AND due_at IS NOT NULL AND due_at <= sqlc.arg(scan_be
 ORDER BY due_at, id LIMIT 100;
 
 -- name: ListAgendaTasks :many
-SELECT id, title, description, due_at, completed_at, created_at, updated_at, priority, category
+SELECT id, title, description, due_at, completed_at, created_at, updated_at, priority, category, revision
 FROM todo_tasks
 WHERE completed_at IS NULL AND due_at IS NOT NULL AND due_at < CAST(sqlc.arg(due_before) AS BIGINT)
 ORDER BY due_at, id

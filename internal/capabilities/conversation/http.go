@@ -1,10 +1,13 @@
 package conversation
 
 import (
+	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -22,18 +25,86 @@ func (h *HTTPHandler) Status(w http.ResponseWriter, _ *http.Request) {
 	httpapi.Write(w, http.StatusOK, map[string]bool{"available": h.service.Available()})
 }
 
-func (h *HTTPHandler) Messages(w http.ResponseWriter, r *http.Request) {
-	messages, err := h.service.messages(r.Context(), chi.URLParam(r, "id"), 50)
+func (h *HTTPHandler) List(w http.ResponseWriter, r *http.Request) {
+	limit, cursor, err := pageParams(r, 20)
 	if err != nil {
+		httpapi.Error(w, http.StatusBadRequest, "invalid_pagination", "分页参数无效")
+		return
+	}
+	page, err := h.service.listConversations(r.Context(), limit, cursor)
+	if err != nil {
+		httpapi.Error(w, http.StatusInternalServerError, "conversations_failed", "对话列表加载失败")
+		return
+	}
+	response := struct {
+		Items      []Conversation `json:"items"`
+		NextCursor string         `json:"nextCursor,omitempty"`
+	}{Items: page.Items}
+	if page.NextCursor != nil {
+		response.NextCursor = encodeCursor(*page.NextCursor)
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpapi.Write(w, http.StatusOK, response)
+}
+
+func (h *HTTPHandler) Messages(w http.ResponseWriter, r *http.Request) {
+	limit, cursor, err := pageParams(r, 50)
+	if err != nil {
+		httpapi.Error(w, http.StatusBadRequest, "invalid_pagination", "分页参数无效")
+		return
+	}
+	page, err := h.service.messagePage(r.Context(), chi.URLParam(r, "id"), limit, cursor)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpapi.Error(w, http.StatusNotFound, "conversation_not_found", "对话不存在")
+			return
+		}
 		httpapi.Error(w, http.StatusInternalServerError, "history_failed", "对话加载失败")
 		return
 	}
-	if len(messages) == 0 {
-		httpapi.Error(w, http.StatusNotFound, "conversation_not_found", "对话不存在")
-		return
+	response := struct {
+		Messages   []contracts.AIMessage `json:"messages"`
+		NextCursor string                `json:"nextCursor,omitempty"`
+	}{Messages: page.Messages}
+	if page.NextCursor != nil {
+		response.NextCursor = encodeCursor(*page.NextCursor)
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	httpapi.Write(w, http.StatusOK, map[string]any{"messages": messages})
+	httpapi.Write(w, http.StatusOK, response)
+}
+
+func (h *HTTPHandler) Rename(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Title string `json:"title"`
+	}
+	if err := httpapi.Decode(w, r, &request, 2*1024); err != nil {
+		httpapi.Error(w, http.StatusBadRequest, "invalid_request", "标题无效")
+		return
+	}
+	if err := h.service.rename(r.Context(), chi.URLParam(r, "id"), request.Title); err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidRequest):
+			httpapi.Error(w, http.StatusBadRequest, "invalid_request", "标题长度须为 1 至 120 个字符")
+		case errors.Is(err, sql.ErrNoRows):
+			httpapi.Error(w, http.StatusNotFound, "conversation_not_found", "对话不存在")
+		default:
+			httpapi.Error(w, http.StatusInternalServerError, "rename_failed", "标题保存失败")
+		}
+		return
+	}
+	httpapi.Write(w, http.StatusOK, map[string]bool{"saved": true})
+}
+
+func (h *HTTPHandler) Archive(w http.ResponseWriter, r *http.Request) {
+	if err := h.service.archive(r.Context(), chi.URLParam(r, "id")); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpapi.Error(w, http.StatusNotFound, "conversation_not_found", "对话不存在")
+			return
+		}
+		httpapi.Error(w, http.StatusInternalServerError, "archive_failed", "对话删除失败")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *HTTPHandler) Chat(w http.ResponseWriter, r *http.Request) {
@@ -132,4 +203,40 @@ func (h *HTTPHandler) Stream(w http.ResponseWriter, r *http.Request) {
 func writeSSE(w http.ResponseWriter, event string, value any) {
 	payload, _ := json.Marshal(value)
 	_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, payload)
+}
+
+func pageParams(r *http.Request, defaultLimit int) (int, conversationCursor, error) {
+	limit := defaultLimit
+	if value := r.URL.Query().Get("limit"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 100 {
+			return 0, conversationCursor{}, ErrInvalidRequest
+		}
+		limit = parsed
+	}
+	cursor, err := decodeCursor(r.URL.Query().Get("cursor"))
+	if err != nil {
+		return 0, conversationCursor{}, err
+	}
+	return limit, cursor, nil
+}
+
+func encodeCursor(cursor conversationCursor) string {
+	payload, _ := json.Marshal(cursor)
+	return base64.RawURLEncoding.EncodeToString(payload)
+}
+
+func decodeCursor(value string) (conversationCursor, error) {
+	if value == "" {
+		return conversationCursor{}, nil
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return conversationCursor{}, ErrInvalidRequest
+	}
+	var cursor conversationCursor
+	if err := json.Unmarshal(payload, &cursor); err != nil || cursor.Timestamp < 1 || cursor.ID == "" {
+		return conversationCursor{}, ErrInvalidRequest
+	}
+	return cursor, nil
 }

@@ -93,6 +93,36 @@ func TestFutuDeploymentConfiguration(t *testing.T) {
 	}
 }
 
+func TestMobilePushDeploymentConfiguration(t *testing.T) {
+	env := map[string]string{
+		"WORKBENCH_MOBILE_PUSH_ENABLED":                  "true",
+		"WORKBENCH_MOBILE_PUSH_APNS_P8_FILE":             "/run/secrets/workbench/apns.p8",
+		"WORKBENCH_MOBILE_PUSH_APNS_TEAM_ID":             "TEAM",
+		"WORKBENCH_MOBILE_PUSH_APNS_KEY_ID":              "KEY",
+		"WORKBENCH_MOBILE_PUSH_APNS_BUNDLE_ID":           "com.example.app",
+		"WORKBENCH_MOBILE_PUSH_APNS_SANDBOX":             "true",
+		"WORKBENCH_MOBILE_PUSH_FCM_SERVICE_ACCOUNT_FILE": "/run/secrets/workbench/fcm.json",
+	}
+	getenv := func(key string) string { return env[key] }
+	opt, err := parseOptions(nil, getenv, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := opt.config.MobilePush
+	if !got.Enabled || !got.APNsSandbox || got.APNsP8File != env["WORKBENCH_MOBILE_PUSH_APNS_P8_FILE"] || got.APNsTeamID != "TEAM" || got.APNsKeyID != "KEY" || got.APNsBundleID != "com.example.app" || got.FCMServiceAccountFile != env["WORKBENCH_MOBILE_PUSH_FCM_SERVICE_ACCOUNT_FILE"] {
+		t.Fatalf("mobile push environment = %+v", got)
+	}
+	env["WORKBENCH_MOBILE_PUSH_ENABLED"] = "invalid"
+	if _, err := parseOptions(nil, getenv, io.Discard); err == nil {
+		t.Fatal("invalid mobile push enabled value was accepted")
+	}
+	env["WORKBENCH_MOBILE_PUSH_ENABLED"] = "false"
+	env["WORKBENCH_MOBILE_PUSH_APNS_SANDBOX"] = "invalid"
+	if _, err := parseOptions(nil, getenv, io.Discard); err == nil {
+		t.Fatal("invalid APNs sandbox value was accepted")
+	}
+}
+
 func TestPostgresDeploymentConfiguration(t *testing.T) {
 	env := map[string]string{"WORKBENCH_DB_DRIVER": "postgres", "WORKBENCH_DATABASE_URL": "postgres://workbench:secret@localhost/workbench"}
 	getenv := func(key string) string { return env[key] }

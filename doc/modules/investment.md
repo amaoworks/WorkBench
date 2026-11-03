@@ -27,7 +27,9 @@
 
 在「设置 → 业务模块 → 投资」填写 Developer Portal 的 App Key、App Secret，以及与登记完全一致的 HTTPS 回调地址；路径必须为 `/oauth/schwab`。该 URL 必须能从用户浏览器到达工作台进程，反向代理需实际支持 HTTPS，应用以 HTTP 提供后端并配置对应的 `WORKBENCH_PUBLIC_URL`。部署示例见[部署与发布](../deployment.md)。HTTP 页面不会自动生成可用回调；旧 HTTP 回调也会在发起授权前被拒绝。Secret 读取时不回显。更换 App Key 或回调必须重新填写 Secret；Key、Secret 或回调变化均清除旧令牌和长连接。
 
-保存后点击「登录 Schwab」，并在账户关联确认页点击 Done。公开回调 `/oauth/schwab` 使用有效期十分钟的一次性 state 校验，再由服务端换取并保存令牌。回调独立于工作台会话，因为跨站跳转不携带 `SameSite=Strict` 会话 Cookie。成功页先建立工作台同站点文档，再自动返回 `/investment`，保留手动返回链接；`no-referrer` 避免授权查询参数进入下一跳 Referer。重新授权成功也会关闭旧 Streamer，终端重连后重新读取账户列表。
+保存后点击「登录 Schwab」，并在账户关联确认页点击 Done。公开回调 `/oauth/schwab` 校验有效期十分钟的一次性 state，匹配后先持久化消费，再由服务端换取并保存令牌。缺少 code、授权过期或换取令牌失败也会消费匹配的 state，须重新发起授权，不能重试同一回调。回调独立于工作台会话，因为跨站跳转不携带 `SameSite=Strict` 会话 Cookie。成功页先建立工作台同站点文档，再自动返回 `/investment`，保留手动返回链接；`no-referrer` 避免授权查询参数进入下一跳 Referer。重新授权成功也会关闭旧 Streamer，终端重连后重新读取账户列表。
+
+原生端先携带 App Bearer 调用 `POST /api/modules/investment/schwab/oauth/start`，取得 `authorizationUrl`、`statusId` 和十分钟有效期，再用系统浏览器打开 `authorizationUrl`。Schwab 完成后仍回到公开 `/oauth/schwab`，由服务端校验一次性 state 并换取令牌；系统浏览器不携带 App Bearer，URL 中也不放 App access token。原生端回到前台后，携带 App Bearer 轮询 `GET /api/modules/investment/schwab/oauth/status/{statusId}`，直到状态由 `pending` 变为 `succeeded` 或 `failed`。终态不再变更，重复回调不会再次换取令牌；有效期内已接受的回调等待令牌交换完成后确定结果。新的授权请求会使尚未完成的旧请求失败；过期或进程重启后重新发起。
 
 `investment.schwab_refresh` 每二十分钟检查访问令牌；REST 请求和新连接也会按需刷新。令牌刷新后关闭旧流，浏览器自动重新登录连接。断开操作保留应用配置，清除券商令牌。所有券商访问令牌仅在服务端使用，代理不转发浏览器 Cookie。
 
@@ -122,6 +124,8 @@ Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后
 | PUT | `/api/modules/investment/schwab` | 保存 `appKey`、`appSecret`、`callbackUrl` |
 | POST | `/api/modules/investment/schwab/disconnect` | 清除令牌和连接 |
 | GET | `/api/modules/investment/schwab/oauth/login` | 跳转到 Schwab 授权页 |
+| POST | `/api/modules/investment/schwab/oauth/start` | 为原生端创建一次性授权 URL，返回 `authorizationUrl`、`statusId`、`status`、`expiresAt` |
+| GET | `/api/modules/investment/schwab/oauth/status/{statusId}` | 原生端查询 `pending`、`succeeded` 或 `failed` 授权结果 |
 | GET | `/oauth/schwab` | 公开 OAuth 回调 |
 | POST | `/api/modules/investment/schwab/oauth/refresh` | 检查并刷新访问令牌 |
 | GET/POST/PUT/DELETE/PATCH | `/api/modules/investment/schwab/trader/v1/*` | Trader REST 代理 |

@@ -35,9 +35,9 @@ Manifest 声明 ID、显示名称、业务版本、契约版本、图标和导�
 | [NotificationService](../internal/contracts/notification.go) | 创建、事务内创建、分页、标已读、全部已读、归档、未读数 |
 | `NotificationChannel` | 外部投递接口，已装配 Telegram；投递业务显式选择外发的通知 |
 
-通知内容为纯文本，`actionRoute` 为站内路径，`actionLabel` 为跳转文案，幂等键由业务提供。`External` 默认关闭，业务显式设置后进入外部投递；该标志持久化且不在用户通知 API 中暴露。`ExpiresAt` 控制投递截止期，未指定时 Telegram 使用 15 分钟。SSE 发布 `core.notification.created`、`core.notification.updated` 和 `core.notification.archived`，浏览器收到后刷新查询。连接有心跳，不实现基于 Last-Event-ID 的历史补发。
+通知内容为纯文本，`actionRoute` 为站内路径，`actionLabel` 为跳转文案，幂等键由业务提供。`External` 默认关闭，业务显式设置后进入外部投递；该标志持久化且不在用户通知 API 中暴露。`ExpiresAt` 控制投递截止期，未指定时 Telegram 与移动推送使用 15 分钟。APNs/FCM payload 携带 `notificationId` 与 `actionRoute`，原生客户端只把已知站内路径映射为页面，未知路径回到通知列表。SSE 发布 `core.notification.created`、`core.notification.updated` 和 `core.notification.archived`，客户端收到后刷新查询。连接有心跳，不实现基于 Last-Event-ID 的历史补发。
 
-Telegram 使用独立 dispatcher 和已有 `event_deliveries` 持久化投递。消费者可通过 `RetryAfterError` 请求更晚的重试时间，通过 `PermanentDeliveryError` 直接终止为 `dead`；详情及设置接口见 [Telegram 通知](notifications.md)。
+Telegram 使用独立 dispatcher 和已有 `event_deliveries` 持久化投递。移动推送以 `core.notification.created` 事件消费者接入独立 dispatcher，并复用相同的投递重试记录。消费者可通过 `RetryAfterError` 请求更晚的重试时间，通过 `PermanentDeliveryError` 直接终止为 `dead`；详情及设置接口见 [Telegram 通知](notifications.md)。
 
 ## AI 和对话
 
@@ -47,7 +47,7 @@ Telegram 使用独立 dispatcher 和已有 `event_deliveries` 持久化投递。
 
 Tool 风险分为 read_only、low_write、high_write。写工具需要幂等键；high_write 还需要 `ConfirmedBy`。当前注册工具只含查询和低风险写入，没有券商交易或删除工具。已注册待办创建、查询、更新和完成，通知查询与标记已读，投资持仓、订单、监控查询与监控创建，以及资讯查询、详情和简报生成；资讯简报工具不提交外部推送。Gateway 不提供通用高风险确认交互。聊天请求可附带 `context: { route, label }`，后端校验后仅用于本轮导航上下文；`timeZone` 用于提供当前时间和解析相对日期，默认 UTC。原始用户消息独立保存。
 
-对话请求包含 `conversationId`（可省略以新建）、`message` 和 `profile`（默认 default），响应包含对话 ID、消息 ID、文本、各轮合计用量和工具执行状态。流式 HTTP 事件为 `chat.started`、`chat.delta`、`chat.tool`、`chat.completed` 或 `chat.error`；每次工具执行后立即发送状态，后续请求失败时仍保留已完成操作的反馈。对话数据由 conversation 能力保存，`GET /api/conversations/{id}/messages` 返回最近 50 条用户与助手消息。面板恢复并展示历史后才允许续聊。
+对话请求包含 `conversationId`（可省略以新建）、`message` 和 `profile`（默认 default），响应包含对话 ID、消息 ID、文本、各轮合计用量和工具执行状态。流式 HTTP 事件为 `chat.started`、`chat.delta`、`chat.tool`、`chat.completed` 或 `chat.error`；每次工具执行后立即发送状态，后续请求失败时仍保留已完成操作的反馈。`GET /api/conversations` 默认每页 20 条，`GET /api/conversations/{id}/messages` 默认每页 50 条，二者支持 `limit=1..100` 和 opaque `cursor`；返回 `nextCursor` 时继续读取。`PATCH /api/conversations/{id}` 重命名，`DELETE` 归档。消息页按时间正序返回，客户端恢复并展示历史后才允许续聊。
 
 ## 页面和 Widget
 
@@ -59,7 +59,7 @@ Dashboard 保存完整的 Widget 配置集合，包含 ID、visible、size、ord
 
 ## HTTP 入口
 
-JSON 错误使用 `code`、`message`，并可含 `details`、`requestId`，定义见 [APIError](../internal/contracts/http.go)。共享 [httpapi](../internal/foundation/httpapi/json.go) 校验 JSON、限制请求体并拒绝未知字段。前端 [api](../web/src/shared/api.ts) 负责凭据、CSRF 和错误映射，未校验的 JSON 返回 `unknown`。消费响应字段时使用 `apiValidated(path, schema, init)` 或显式 `schema.parse`，响应类型由 Zod 推导。关键 HTTP 契约通过真实后端响应与生产前端 schema 的跨端测试验证，见 [web/tests/contracts.test.mjs](../web/tests/contracts.test.mjs)。
+JSON 错误使用 `code`、`message`，并可含 `details`、`requestId`，定义见 [APIError](../internal/contracts/http.go)。共享 [httpapi](../internal/foundation/httpapi/json.go) 校验 JSON、限制请求体并拒绝未知字段。前端 [api](../web/src/shared/api.ts) 负责凭据、CSRF 和错误映射，未校验的 JSON 返回 `unknown`。消费响应字段时使用 `apiValidated(path, schema, init)` 或显式 `schema.parse`，响应类型由 Zod 推导。关键 HTTP 契约通过真实后端响应与生产前端 schema 的跨端测试验证，见 [web/tests/contracts.test.mjs](../web/tests/contracts.test.mjs)。原生接入流程见[移动端接入](mobile.md)，相关路径和字段见 [OpenAPI](mobile.openapi.yaml)。
 
 `POST /api/modules/external` 已移除，当前返回 404。下表中的外部管理、页面和代理入口仅用于已保存的外部模块记录。
 
@@ -68,6 +68,13 @@ JSON 错误使用 `code`、`message`，并可含 `details`、`requestId`，定�
 | GET | `/health/live`、`/health/ready` | 存活、数据库就绪 |
 | GET | `/api/auth/status`、`/api/auth/csrf` | 登录状态、CSRF token |
 | POST | `/api/auth/login`、`/api/auth/logout` | 登录、退出 |
+| POST | `/api/auth/token`、`/api/auth/token/refresh` | 无 Cookie 的设备登录、一次性 refresh token 轮换 |
+| POST | `/api/auth/token/revoke`、`/api/auth/logout-all` | 注销当前设备 / 注销全部网页与设备 |
+| POST | `/api/auth/browser-grant` | 用设备 Bearer 创建 60 秒一次性 WebView 换票 |
+| GET | `/api/auth/browser-session?ticket=...` | 公开消费换票，建立绑定父设备的 Cookie Session 并 303 跳转终端 |
+| GET | `/api/auth/sessions` | 登录设备列表 |
+| DELETE | `/api/auth/sessions/{id}` | 注销指定设备 |
+| POST | `/api/auth/signing-key/rotate` | 轮换设备 access token 签名密钥 |
 | GET | `/api/modules` | 合并内置与外部目录（含 `kind`），只返回缓存状态 |
 | PUT | `/api/modules/{id}/enabled` | 保存 `{ enabled }`；内置回调确认后 200，失败 503 并保留意图；外部确认后 200，等待确认时 202 |
 | PUT | `/api/modules/{id}/connection` | 更新外部连接；要求已停用，更换 origin 须重新提供凭据 |
@@ -84,9 +91,12 @@ JSON 错误使用 `code`、`message`，并可含 `details`、`requestId`，定�
 | GET | `/api/notifications/unread-count`、`/api/notifications/stream` | 未读数（可按 source 过滤）、SSE |
 | PUT | `/api/notifications/read`、`/api/notifications/archive` | 提交 `{ ids }` |
 | PUT | `/api/notifications/read-all` | 标记当前已有通知为已读 |
+| POST / PUT / DELETE | `/api/mobile/push-token` | 注册、更新、删除当前设备的 APNs/FCM token；成功返回 204 |
 | GET | `/api/ai/status` | AI 是否可用 |
 | POST | `/api/chat`、`/api/chat/stream` | 对话、流式对话 |
-| GET | `/api/conversations/{id}/messages` | 当前对话最近 50 条消息，不存在时返回 404 |
+| GET | `/api/conversations` | 分页列出未归档对话 |
+| GET | `/api/conversations/{id}/messages` | 分页读取当前对话消息，不存在时返回 404 |
+| PATCH / DELETE | `/api/conversations/{id}` | 重命名 / 归档对话 |
 | GET | `/api/settings` | AI、外观、日志等级、部署信息，密钥不回显 |
 | PUT | `/api/settings/ai`、`/api/settings/appearance` | 保存 AI 或外观 |
 | PUT | `/api/settings/logging` | 保存 `{ "level": "info" }` 并立即生效；支持 debug/info/warn/error，返回规范化等级 |
@@ -94,10 +104,14 @@ JSON 错误使用 `code`、`message`，并可含 `details`、`requestId`，定�
 | GET / PUT | `/api/settings/telegram` | 读取脱敏配置和状态 / 保存 Telegram 配置 |
 | POST | `/api/settings/telegram/test` | 发送一条测试消息，不保存候选配置 |
 | PUT | `/api/settings/password` | 验证当前密码并修改 |
+| POST | `/api/modules/investment/schwab/oauth/start` | 创建移动 Schwab 授权 |
+| GET | `/api/modules/investment/schwab/oauth/status/{id}` | 查询移动 Schwab 授权结果 |
 | POST | `/api/system/backup` | SQLite 创建服务端备份并返回文件名；PostgreSQL 返回 HTTP 501，由数据库服务执行备份 |
 
-除健康检查和鉴权入口外，上述平台 API 经过登录校验；local 模式免登录。Host、Origin 和 CSRF 保护由外层中间件处理，local 模式也保留请求保护。业务 API 另外经过模块启停门控，停用时返回 HTTP 503 和 `module_disabled`。外部业务代理还要求当前连接的当前代数已确认启用，且健康不是 `offline` 或 `incompatible`。
+除健康检查和鉴权入口外，上述平台 API 经过登录校验；local 模式免登录。Host、Origin 和 CSRF 保护由外层中间件处理，local 模式也保留请求保护。网页使用服务端 Cookie Session 与 CSRF；原生设备使用 `Authorization: Bearer`。设备登录和刷新必须是无 Cookie、无 Authorization 的 `application/json` 请求，其他请求混用 Cookie 与 Bearer 返回 400。业务 API 另外经过模块启停门控，停用时返回 HTTP 503 和 `module_disabled`。外部业务代理还要求当前连接的当前代数已确认启用，且健康不是 `offline` 或 `incompatible`。
 
-登录与状态响应包含 `mustChangePassword`。新建密码凭据首次登录时该字段为 `true`，除 `PUT /api/settings/password` 外的受保护接口返回 `403 password_change_required`。改密提交 `{ currentPassword, newPassword }`，首次新密码必须与当前密码不同；成功返回 `{ reauthenticate: true }`，用户重新登录后进入业务页面。
+登录与状态响应包含 `mustChangePassword`。新建密码凭据首次登录时该字段为 `true`，除 `PUT /api/settings/password` 外的受保护接口返回 `403 password_change_required`。改密提交 `{ currentPassword, newPassword }`，首次新密码必须与当前密码不同；成功返回 `{ reauthenticate: true }`，并注销全部网页与设备会话。
+
+WebView 换票创建接口只接受设备 Bearer，响应 `{ urlPath, expiresAt }`，目标固定为投资终端且不接受客户端 target。ticket 是 43 字符 base64url 短时登录凭据，数据库仅保存哈希，60 秒内单次消费。消费入口拒绝 Authorization，可携带 WebView 已有 Cookie；成功响应使用 `no-store`、`no-referrer`，写入网页 Session 后 303 到 `/investment/terminal`。Cookie Session 保留父设备关联，后续鉴权、状态查询和长连接检查同时验证父设备。
 
 业务 HTTP、资源标识和字段说明见 [Todo](modules/todo.md)、[Wallos](modules/todo-wallos.md)、[Investment](modules/investment.md) 和 [资讯](modules/news.md)。

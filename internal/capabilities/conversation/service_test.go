@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -298,6 +299,154 @@ func TestConversationMessagesHTTPReturnsVisibleHistory(t *testing.T) {
 	router.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/api/conversations/missing/messages", nil))
 	if missing.Code != http.StatusNotFound {
 		t.Fatalf("missing history status = %d", missing.Code)
+	}
+}
+
+func TestConversationListUsesStableCursorAndExcludesArchived(t *testing.T) {
+	service, database := openConversationService(t)
+	for _, item := range []struct {
+		id, title string
+		updated   int64
+		archived  any
+	}{
+		{id: "conversation-c", title: "第三个", updated: 300},
+		{id: "conversation-b", title: "第二个", updated: 200},
+		{id: "conversation-a", title: "第一个", updated: 100},
+		{id: "conversation-archived", title: "已归档", updated: 400, archived: int64(400)},
+	} {
+		if _, err := database.SQL().Exec(
+			"INSERT INTO ai_conversations(id, title, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?)",
+			item.id, item.title, item.updated, item.updated, item.archived,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	handler := NewHTTPHandler(service)
+	first := httptest.NewRecorder()
+	handler.List(first, httptest.NewRequest(http.MethodGet, "/api/conversations?limit=2", nil))
+	if first.Code != http.StatusOK || first.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("first page = %d, headers=%v, body=%s", first.Code, first.Header(), first.Body.String())
+	}
+	var firstPage struct {
+		Items      []Conversation `json:"items"`
+		NextCursor string         `json:"nextCursor"`
+	}
+	if err := json.Unmarshal(first.Body.Bytes(), &firstPage); err != nil {
+		t.Fatal(err)
+	}
+	if len(firstPage.Items) != 2 || firstPage.Items[0].ID != "conversation-c" || firstPage.Items[1].ID != "conversation-b" || firstPage.NextCursor == "" {
+		t.Fatalf("first page = %+v", firstPage)
+	}
+	second := httptest.NewRecorder()
+	handler.List(second, httptest.NewRequest(http.MethodGet, "/api/conversations?limit=2&cursor="+firstPage.NextCursor, nil))
+	var secondPage struct {
+		Items      []Conversation `json:"items"`
+		NextCursor string         `json:"nextCursor"`
+	}
+	if err := json.Unmarshal(second.Body.Bytes(), &secondPage); err != nil {
+		t.Fatal(err)
+	}
+	if second.Code != http.StatusOK || len(secondPage.Items) != 1 || secondPage.Items[0].ID != "conversation-a" || secondPage.NextCursor != "" {
+		t.Fatalf("second page = %d %+v", second.Code, secondPage)
+	}
+	invalid := httptest.NewRecorder()
+	handler.List(invalid, httptest.NewRequest(http.MethodGet, "/api/conversations?cursor=invalid", nil))
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid cursor status = %d", invalid.Code)
+	}
+}
+
+func TestConversationMessagesSupportCursorPagination(t *testing.T) {
+	service, database := openConversationService(t)
+	if _, err := database.SQL().Exec(
+		"INSERT INTO ai_conversations(id, title, created_at, updated_at) VALUES ('conversation-page', '分页', 1, 1)",
+	); err != nil {
+		t.Fatal(err)
+	}
+	for index := 1; index <= 5; index++ {
+		role := "user"
+		if index%2 == 0 {
+			role = "assistant"
+		}
+		content, _ := json.Marshal(fmt.Sprintf("message-%d", index))
+		if _, err := database.SQL().Exec(
+			"INSERT INTO ai_messages(id, conversation_id, role, content_json, created_at) VALUES (?, 'conversation-page', ?, ?, ?)",
+			fmt.Sprintf("message-%d", index), role, string(content), index,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	handler := NewHTTPHandler(service)
+	router := chi.NewRouter()
+	router.Get("/api/conversations/{id}/messages", handler.Messages)
+	first := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/conversations/conversation-page/messages?limit=2", nil)
+	router.ServeHTTP(first, request)
+	var firstPage struct {
+		Messages   []contracts.AIMessage `json:"messages"`
+		NextCursor string                `json:"nextCursor"`
+	}
+	if err := json.Unmarshal(first.Body.Bytes(), &firstPage); err != nil {
+		t.Fatal(err)
+	}
+	if first.Code != http.StatusOK || len(firstPage.Messages) != 2 || string(firstPage.Messages[0].Content) != `"message-4"` ||
+		string(firstPage.Messages[1].Content) != `"message-5"` || firstPage.NextCursor == "" {
+		t.Fatalf("first message page = %d %+v", first.Code, firstPage)
+	}
+	second := httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodGet, "/api/conversations/conversation-page/messages?limit=2&cursor="+firstPage.NextCursor, nil)
+	router.ServeHTTP(second, request)
+	var secondPage struct {
+		Messages   []contracts.AIMessage `json:"messages"`
+		NextCursor string                `json:"nextCursor"`
+	}
+	if err := json.Unmarshal(second.Body.Bytes(), &secondPage); err != nil {
+		t.Fatal(err)
+	}
+	if second.Code != http.StatusOK || len(secondPage.Messages) != 2 || string(secondPage.Messages[0].Content) != `"message-2"` ||
+		string(secondPage.Messages[1].Content) != `"message-3"` || secondPage.NextCursor == "" {
+		t.Fatalf("second message page = %d %+v", second.Code, secondPage)
+	}
+}
+
+func TestConversationRenameAndArchiveHTTP(t *testing.T) {
+	service, database := openConversationService(t)
+	if _, err := database.SQL().Exec(
+		"INSERT INTO ai_conversations(id, title, created_at, updated_at) VALUES ('conversation-edit', '旧标题', 1, 1)",
+	); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHTTPHandler(service)
+	router := chi.NewRouter()
+	router.Patch("/api/conversations/{id}", handler.Rename)
+	router.Delete("/api/conversations/{id}", handler.Archive)
+	rename := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPatch, "/api/conversations/conversation-edit", strings.NewReader(`{"title":" 新标题 "}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rename, request)
+	if rename.Code != http.StatusOK {
+		t.Fatalf("rename = %d %s", rename.Code, rename.Body.String())
+	}
+	var title string
+	if err := database.SQL().QueryRow("SELECT title FROM ai_conversations WHERE id = 'conversation-edit'").Scan(&title); err != nil || title != "新标题" {
+		t.Fatalf("title = %q, error = %v", title, err)
+	}
+	archive := httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodDelete, "/api/conversations/conversation-edit", nil)
+	router.ServeHTTP(archive, request)
+	if archive.Code != http.StatusNoContent {
+		t.Fatalf("archive = %d %s", archive.Code, archive.Body.String())
+	}
+	var archivedAt any
+	if err := database.SQL().QueryRow("SELECT archived_at FROM ai_conversations WHERE id = 'conversation-edit'").Scan(&archivedAt); err != nil || archivedAt == nil {
+		t.Fatalf("archived_at = %v, error = %v", archivedAt, err)
+	}
+	missing := httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPatch, "/api/conversations/conversation-edit", strings.NewReader(`{"title":"再次修改"}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(missing, request)
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("archived rename status = %d", missing.Code)
 	}
 }
 

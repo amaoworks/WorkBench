@@ -3,6 +3,7 @@ import { api, apiValidated } from "../../shared/api";
 import { savedSchema, type Widget } from "../../shared/schema";
 import { moduleQueryKey } from "../../shared/queryKeys";
 import { widgetSeed } from "../../shared/dashboard";
+import { findTaskForEdit } from "./taskActions";
 import {
   todoTodaySchema, taskCountsSchema, tasksResponseSchema, wallosSettingsSchema, wallosSyncSchema, taskSchema,
   type TaskPriority, type WallosSettingsInput
@@ -44,8 +45,14 @@ export function useTaskCounts(filters: Omit<TaskFilters, "view">) {
   });
 }
 
-export function createTask(input: { title: string; description: string; dueAt: string | null; priority: TaskPriority; category: string }) {
-  return apiValidated("/api/modules/todo/tasks", taskSchema, { method: "POST", body: JSON.stringify(input) });
+export type TaskCreateInput = {
+  title: string; description: string; dueAt: string | null; priority: TaskPriority; category: string; idempotencyKey: string;
+};
+
+export function createTask({ idempotencyKey, ...input }: TaskCreateInput) {
+  return apiValidated("/api/modules/todo/tasks", taskSchema, {
+    method: "POST", headers: { "Idempotency-Key": idempotencyKey }, body: JSON.stringify(input),
+  });
 }
 
 export type TaskUpdateInput = {
@@ -57,10 +64,19 @@ export type TaskUpdateInput = {
   completed?: boolean;
   priority?: TaskPriority;
   category?: string;
+  revision?: number;
 };
 
 export function updateTask({ id, ...input }: TaskUpdateInput) {
   return apiValidated(`/api/modules/todo/tasks/${id}`, taskSchema, { method: "PATCH", body: JSON.stringify(input) });
+}
+
+export function loadTaskForEdit(id: string) {
+  return findTaskForEdit(id, (cursor) => {
+    const params = new URLSearchParams({ limit: "100", tz: browserTimeZone() });
+    if (cursor) params.set("cursor", cursor);
+    return apiValidated(`/api/modules/todo/tasks?${params}`, tasksResponseSchema);
+  });
 }
 
 export function deleteTask(id: string) {

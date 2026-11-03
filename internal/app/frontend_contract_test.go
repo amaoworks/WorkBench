@@ -45,7 +45,21 @@ func TestFrontendContracts(t *testing.T) {
 		samples = append(samples, sample{Name: name, Schema: schema, Status: status, Body: raw})
 		return raw
 	}
+	captureNoContent := func(name, method, path string, status int) {
+		t.Helper()
+		got := request(t, handler, method, path, nil, token, cookies)
+		if got.Code != status || got.Body.Len() != 0 {
+			t.Fatalf("%s: status/body %d/%q, want %d/empty", name, got.Code, got.Body.String(), status)
+		}
+	}
 	capture("auth", "authStatus", "GET", "/api/auth/status", "", 200)
+	now := time.Now().UTC()
+	if _, err := a.DB().Exec(`
+		INSERT INTO auth_device_sessions(id,device_name,platform,credential_version,created_at,last_seen_at,expires_at)
+		VALUES(?,?,?,?,?,?,?)`, "contract-device", "Fixture iPhone", "ios", 0, now.Add(-time.Hour).UnixMilli(), now.Add(-time.Minute).UnixMilli(), now.Add(24*time.Hour).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	capture("auth.device-sessions", "deviceSessions", "GET", "/api/auth/sessions", "", 200)
 	capture("modules", "modules", "GET", "/api/modules", "", 200)
 	capture("dashboard", "dashboard", "GET", "/api/dashboard", "", 200)
 	capture("widgets", "widgets", "GET", "/api/dashboard/widgets", "", 200)
@@ -56,6 +70,26 @@ func TestFrontendContracts(t *testing.T) {
 	capture("appearance.saved", "appearance", "PUT", "/api/settings/appearance", `{"theme":"dark","motion":"reduced"}`, 200)
 	capture("logging.saved", "logging", "PUT", "/api/settings/logging", `{"level":"warn"}`, 200)
 	capture("ai.status", "aiStatus", "GET", "/api/ai/status", "", 200)
+	conversationTime := now.Add(-2 * time.Hour).UnixMilli()
+	if _, err := a.DB().Exec(`
+		INSERT INTO ai_conversations(id,title,created_at,updated_at) VALUES
+		('contract-conversation','Fixture conversation',?,?),
+		('contract-conversation-second','Second fixture',?,?)`,
+		conversationTime, conversationTime+2, conversationTime+1, conversationTime+1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.DB().Exec(`
+		INSERT INTO ai_messages(id,conversation_id,role,content_json,created_at) VALUES
+		('contract-message-1','contract-conversation','user','"First fixture message"',?),
+		('contract-message-2','contract-conversation','assistant','"Second fixture message"',?),
+		('contract-message-3','contract-conversation','user','"Third fixture message"',?)`,
+		conversationTime, conversationTime+1, conversationTime+2); err != nil {
+		t.Fatal(err)
+	}
+	capture("ai.conversations", "conversations", "GET", "/api/conversations?limit=1", "", 200)
+	capture("ai.messages", "conversationMessages", "GET", "/api/conversations/contract-conversation/messages?limit=2", "", 200)
+	capture("ai.conversation.renamed", "saved", "PATCH", "/api/conversations/contract-conversation", `{"title":"Renamed fixture"}`, 200)
+	captureNoContent("ai.conversation.archived", "DELETE", "/api/conversations/contract-conversation", 204)
 	capture("tasks.empty", "tasks", "GET", "/api/modules/todo/tasks", "", 200)
 	created := capture("task.created", "task", "POST", "/api/modules/todo/tasks", `{"title":"Contract fixture","dueAt":"2030-01-02T03:04:05Z"}`, 201)
 	var task struct {

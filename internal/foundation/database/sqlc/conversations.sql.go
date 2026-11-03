@@ -10,6 +10,50 @@ import (
 	"database/sql"
 )
 
+const archiveConversation = `-- name: ArchiveConversation :execrows
+UPDATE ai_conversations
+SET archived_at = ?1, updated_at = ?1
+WHERE id = ?2 AND archived_at IS NULL
+`
+
+type ArchiveConversationParams struct {
+	ArchivedAt sql.NullInt64 `json:"archived_at"`
+	ID         string        `json:"id"`
+}
+
+func (q *Queries) ArchiveConversation(ctx context.Context, arg ArchiveConversationParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, archiveConversation, arg.ArchivedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const getActiveConversation = `-- name: GetActiveConversation :one
+SELECT id, title, created_at, updated_at
+FROM ai_conversations
+WHERE id = ? AND archived_at IS NULL
+`
+
+type GetActiveConversationRow struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	CreatedAt int64  `json:"created_at"`
+	UpdatedAt int64  `json:"updated_at"`
+}
+
+func (q *Queries) GetActiveConversation(ctx context.Context, id string) (GetActiveConversationRow, error) {
+	row := q.db.QueryRowContext(ctx, getActiveConversation, id)
+	var i GetActiveConversationRow
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const insertAssistantMessage = `-- name: InsertAssistantMessage :exec
 INSERT INTO ai_messages(id, conversation_id, role, content_json, provider, model, created_at)
 VALUES (?, ?, 'assistant', ?, 'openai', ?, ?)
@@ -78,6 +122,126 @@ func (q *Queries) InsertUserMessage(ctx context.Context, arg InsertUserMessagePa
 	return err
 }
 
+const listConversationMessagesPage = `-- name: ListConversationMessagesPage :many
+SELECT role, content_json, created_at, id FROM (
+    SELECT m.role, m.content_json, m.created_at, m.id
+    FROM ai_messages AS m
+    JOIN ai_conversations AS c ON c.id = m.conversation_id
+    WHERE m.conversation_id = ?1
+      AND c.archived_at IS NULL
+      AND m.role IN ('user', 'assistant')
+      AND (
+        ?2 = ''
+        OR m.created_at < ?3
+        OR (m.created_at = ?3 AND m.id < ?2)
+      )
+    ORDER BY m.created_at DESC, m.id DESC
+    LIMIT ?4
+) AS recent_messages
+ORDER BY created_at, id
+`
+
+type ListConversationMessagesPageParams struct {
+	ConversationID  string      `json:"conversation_id"`
+	CursorID        interface{} `json:"cursor_id"`
+	CursorCreatedAt int64       `json:"cursor_created_at"`
+	PageSize        int64       `json:"page_size"`
+}
+
+type ListConversationMessagesPageRow struct {
+	Role        string `json:"role"`
+	ContentJson string `json:"content_json"`
+	CreatedAt   int64  `json:"created_at"`
+	ID          string `json:"id"`
+}
+
+func (q *Queries) ListConversationMessagesPage(ctx context.Context, arg ListConversationMessagesPageParams) ([]ListConversationMessagesPageRow, error) {
+	rows, err := q.db.QueryContext(ctx, listConversationMessagesPage,
+		arg.ConversationID,
+		arg.CursorID,
+		arg.CursorCreatedAt,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListConversationMessagesPageRow{}
+	for rows.Next() {
+		var i ListConversationMessagesPageRow
+		if err := rows.Scan(
+			&i.Role,
+			&i.ContentJson,
+			&i.CreatedAt,
+			&i.ID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listConversations = `-- name: ListConversations :many
+SELECT id, title, created_at, updated_at
+FROM ai_conversations
+WHERE archived_at IS NULL
+  AND (
+    ?1 = ''
+    OR updated_at < ?2
+    OR (updated_at = ?2 AND id < ?1)
+  )
+ORDER BY updated_at DESC, id DESC
+LIMIT ?3
+`
+
+type ListConversationsParams struct {
+	CursorID        interface{} `json:"cursor_id"`
+	CursorUpdatedAt int64       `json:"cursor_updated_at"`
+	PageSize        int64       `json:"page_size"`
+}
+
+type ListConversationsRow struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	CreatedAt int64  `json:"created_at"`
+	UpdatedAt int64  `json:"updated_at"`
+}
+
+func (q *Queries) ListConversations(ctx context.Context, arg ListConversationsParams) ([]ListConversationsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listConversations, arg.CursorID, arg.CursorUpdatedAt, arg.PageSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListConversationsRow{}
+	for rows.Next() {
+		var i ListConversationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRecentConversationMessages = `-- name: ListRecentConversationMessages :many
 SELECT role, content_json FROM (
     SELECT role, content_json, created_at, id FROM ai_messages
@@ -117,6 +281,26 @@ func (q *Queries) ListRecentConversationMessages(ctx context.Context, arg ListRe
 		return nil, err
 	}
 	return items, nil
+}
+
+const renameConversation = `-- name: RenameConversation :execrows
+UPDATE ai_conversations
+SET title = ?1, updated_at = ?2
+WHERE id = ?3 AND archived_at IS NULL
+`
+
+type RenameConversationParams struct {
+	Title     string `json:"title"`
+	UpdatedAt int64  `json:"updated_at"`
+	ID        string `json:"id"`
+}
+
+func (q *Queries) RenameConversation(ctx context.Context, arg RenameConversationParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, renameConversation, arg.Title, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const touchConversation = `-- name: TouchConversation :execrows

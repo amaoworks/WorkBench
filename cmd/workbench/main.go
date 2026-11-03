@@ -81,6 +81,23 @@ func parseOptions(args []string, getenv func(string) string, output io.Writer) (
 		return options{}, errors.New("WORKBENCH_FUTU_ALLOW_NON_LOCAL must be true or false")
 	}
 	flags.BoolVar(&opt.config.FutuAllowNonLocal, "futu-allow-non-local", allowFutuNonLocal, "allow a non-loopback Futu OpenD host")
+	mobilePushEnabled, err := strconv.ParseBool(envDefault("WORKBENCH_MOBILE_PUSH_ENABLED", "false"))
+	if err != nil {
+		return options{}, errors.New("WORKBENCH_MOBILE_PUSH_ENABLED must be true or false")
+	}
+	apnsSandbox, err := strconv.ParseBool(envDefault("WORKBENCH_MOBILE_PUSH_APNS_SANDBOX", "false"))
+	if err != nil {
+		return options{}, errors.New("WORKBENCH_MOBILE_PUSH_APNS_SANDBOX must be true or false")
+	}
+	opt.config.MobilePush = app.MobilePushDeployment{
+		Enabled:               mobilePushEnabled,
+		APNsP8File:            getenv("WORKBENCH_MOBILE_PUSH_APNS_P8_FILE"),
+		APNsTeamID:            getenv("WORKBENCH_MOBILE_PUSH_APNS_TEAM_ID"),
+		APNsKeyID:             getenv("WORKBENCH_MOBILE_PUSH_APNS_KEY_ID"),
+		APNsBundleID:          getenv("WORKBENCH_MOBILE_PUSH_APNS_BUNDLE_ID"),
+		APNsSandbox:           apnsSandbox,
+		FCMServiceAccountFile: getenv("WORKBENCH_MOBILE_PUSH_FCM_SERVICE_ACCOUNT_FILE"),
+	}
 	flags.StringVar(&mode, "auth", envDefault("WORKBENCH_AUTH", string(config.AuthMode)), "authentication mode: local or password")
 	flags.StringVar(&opt.config.PublicURL, "public-url", getenv("WORKBENCH_PUBLIC_URL"), "browser-facing HTTPS origin served by a reverse proxy")
 	allowInsecureHTTP, err := strconv.ParseBool(envDefault("WORKBENCH_ALLOW_INSECURE_HTTP", "false"))

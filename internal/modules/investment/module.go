@@ -56,6 +56,8 @@ type Module struct {
 	tvOrigin       string
 	tvProxy        *httputil.ReverseProxy
 	tokenMu        sync.Mutex
+	oauthMu        sync.Mutex
+	oauthSessions  map[string]mobileOAuthSession
 	streamer       *streamer
 	futu           *futuGateway
 	opend          *openDService
@@ -94,8 +96,9 @@ func New(deps Dependencies) (*Module, error) {
 				return http.ErrUseLastResponse
 			},
 		},
-		schwabAPI: defaultSchwabAPI,
-		tvOrigin:  defaultTVOrigin,
+		schwabAPI:     defaultSchwabAPI,
+		tvOrigin:      defaultTVOrigin,
+		oauthSessions: make(map[string]mobileOAuthSession),
 	}
 	module.tvProxy = newTVProxy(module.tvOrigin, deps.ChartCacheDir)
 	location, err := time.LoadLocation("America/New_York")
@@ -177,6 +180,8 @@ func (m *Module) Register(r contracts.ModuleRegistrar) error {
 		r.Handle("PUT", "/api/modules/investment/schwab", http.HandlerFunc(m.saveSchwab)),
 		r.Handle("POST", "/api/modules/investment/schwab/disconnect", http.HandlerFunc(m.disconnectSchwab)),
 		r.Handle("GET", "/api/modules/investment/schwab/oauth/login", http.HandlerFunc(m.oauthLogin)),
+		r.Handle("POST", "/api/modules/investment/schwab/oauth/start", http.HandlerFunc(m.oauthStart)),
+		r.Handle("GET", "/api/modules/investment/schwab/oauth/status/{id}", http.HandlerFunc(m.oauthStatus)),
 		r.Handle("POST", "/api/modules/investment/schwab/oauth/refresh", http.HandlerFunc(m.oauthRefreshHTTP)),
 		r.Handle("GET", "/api/modules/investment/schwab/trader/ws", http.HandlerFunc(m.serveStreamer)),
 		r.Handle("GET", "/api/modules/investment/schwab/marketdata/ws", http.HandlerFunc(m.serveStreamer)),

@@ -53,7 +53,7 @@ func (s *Service) originAllowed(value, host string) bool {
 }
 
 const corsMethods = "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS"
-const corsHeaders = "Accept, Authorization, Content-Type, X-CSRF-Token, X-Request-ID"
+const corsHeaders = "Accept, Authorization, Content-Type, Idempotency-Key, X-CSRF-Token, X-Request-ID"
 
 func (s *Service) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

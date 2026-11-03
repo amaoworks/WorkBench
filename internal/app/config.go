@@ -33,6 +33,7 @@ type Config struct {
 	FutuOpenDBinary   string
 	FutuOpenDAddress  string
 	FutuAllowNonLocal bool
+	MobilePush        MobilePushDeployment
 }
 
 func DefaultConfig() (Config, error) {

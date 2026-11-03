@@ -126,8 +126,19 @@ func TestMigrateCoreUpgradesVersionOneDatabaseWithoutDataLoss(t *testing.T) {
 			('todo-notice', 'todo', 'info', 'task', '', 'todo:due:task', 1)`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := database.SQL().Exec("INSERT INTO sessions(token, data, expiry) VALUES ('existing-browser-token-hash', ?, ?)", []byte("existing-session"), int64(2000000000000)); err != nil {
+		t.Fatal(err)
+	}
 	if err := database.MigrateCore(ctx); err != nil {
 		t.Fatalf("upgrade core database: %v", err)
+	}
+	var browserID string
+	var browserCreated, browserSeen int64
+	if err := database.SQL().QueryRow("SELECT id, created_at, last_seen_at FROM auth_browser_sessions WHERE token_hash = 'existing-browser-token-hash'").Scan(&browserID, &browserCreated, &browserSeen); err != nil {
+		t.Fatalf("existing browser session was not enrolled during upgrade: %v", err)
+	}
+	if browserID == "" || browserID == "existing-browser-token-hash" || browserCreated != 2000000000000-86400000 || browserSeen != browserCreated {
+		t.Fatal("invalid upgraded browser session metadata")
 	}
 	var title string
 	if err := database.SQL().QueryRow("SELECT title FROM ai_conversations WHERE id = 'conversation-one'").Scan(&title); err != nil {
