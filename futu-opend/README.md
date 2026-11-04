@@ -4,7 +4,7 @@ OpenD 提供富途行情网关；夜盘是工作台投资模块的独立功能�
 
 ## 原生工作台自动启动
 
-Linux x86_64 原生部署可直接在「设置 → 业务模块 → 投资设置」填写账号密码，勾选「启用富途牛牛」并保存。首次启用由工作台从官方地址下载 OpenD（约 445 MiB），校验 SHA-256 后安装并启动；页面显示安装、启动、行情登录状态。安装或启动失败时可点击「重试启动」。
+Linux x86_64 原生部署由管理员在「后台设置 → 业务管理 → 投资」填写共享账号密码，勾选「启用富途牛牛」并保存。首次启用由工作台从官方地址下载 OpenD（约 445 MiB），校验 SHA-256 后安装并启动；页面显示安装、启动、行情登录状态。安装或启动失败时可点击「重试启动」。
 
 程序缓存和私有登录数据默认保存在数据库同级的 `futu-opend` 目录；用 `WORKBENCH_FUTU_RUNTIME_DIR` 可修改目录，已有完整安装可用 `WORKBENCH_FUTU_OPEND_BINARY` 指定其中的可执行文件。地址和端口仍由部署配置管理。需 glibc、libstdc++、libgcc、zlib；安装包自带 OpenSSL 等其余库。ARM64、scratch/Alpine 容器及远程 OpenD 使用下方的配套容器部署。
 
@@ -22,9 +22,9 @@ docker compose -f compose.yaml -f futu-opend/compose.workbench.yaml --env-file .
 
 根目录 `.env` 配置工作台版本、HTTPS 地址等，参见根目录 `.env.example`；此模式无需填写 `FUTU_ACCOUNT_ID`、`FUTU_ACCOUNT_PWD_MD5`。
 
-1. 在「设置 → 业务模块 → 投资设置」填写 Futu 账号和登录密码，保存并启用 Futu。主机 `futu-opend`、端口 `11111` 和非本机许可已由 Compose 配置，不在页面填写。
+1. 管理员在「后台设置 → 业务管理 → 投资」填写 Futu 账号和登录密码，保存并启用 Futu。主机 `futu-opend`、端口 `11111` 和非本机许可已由 Compose 配置，不在页面填写。
 2. 保存后，OpenD 自动加载登录配置。账号或密码变化会重启 OpenD，工作台重新建立行情连接。
-3. 在「设置 → 业务模块 → 投资设置」单独启用夜盘行情。
+3. 在「后台设置 → 业务管理 → 投资」单独启用夜盘行情。所有用户在个人投资设置中查看共享夜盘只读状态。
 
 停用 Futu 会关闭夜盘及配套 OpenD；重新启用 Futu 后不会自动恢复夜盘开关。Futu 设置与接口归属投资模块，投资停用时不开放业务接口。
 
@@ -32,7 +32,7 @@ docker compose -f compose.yaml -f futu-opend/compose.workbench.yaml --env-file .
 
 工作台将 OpenD 所需的密码 MD5 保存在私有数据库，并通过 `futu_login` 共享卷的 `login.json` 发布。密码和摘要均不回显；密码留空保留，更换账号需重新填写，清除密码会停用 Futu。摘要仍是有效登录凭据，需和数据库备份一起妥善保管。共享目录权限为 `0750`、文件 `0640`，OpenD 通过专用组只读访问。
 
-也可通过 `WORKBENCH_FUTU_CONFIG_DIR`（或 `-futu-config-dir`）选择共享目录模式，让 `manage.py` 使用 `FUTU_LOGIN_CONFIG=<该目录>/login.json`、`FUTU_OPEND_DIR` 和 `FUTU_CONFIG_TEMPLATE`。配置共享目录后，工作台交由配套进程启动 OpenD，不再启动本机子进程。容器首次部署需执行上述 Compose 命令；之后在设置里控制 OpenD 启停，无需让工作台访问 Docker socket。
+也可通过 `WORKBENCH_FUTU_CONFIG_DIR`（或 `-futu-config-dir`）选择共享目录模式，让 `manage.py` 使用 `FUTU_LOGIN_CONFIG=<该目录>/login.json`、`FUTU_OPEND_DIR` 和 `FUTU_CONFIG_TEMPLATE`。配置共享目录后，工作台交由配套进程启动 OpenD，不再启动本机子进程。容器首次部署需执行上述 Compose 命令；之后在后台投资设置里控制 OpenD 启停，无需让工作台访问 Docker socket。
 
 ## 连接地址由部署配置管理
 

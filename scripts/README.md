@@ -207,6 +207,22 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 
 `WORKBENCH_BIN` 默认使用仓库根目录的 `./workbench`。截图写入 `/tmp/workbench-frontend-ux-*.png`。
 
+### 个人设置与后台设置
+
+`settings.e2e.cjs` 连接显式指定的临时密码模式工作空间。准备一个管理员和一个普通用户，两者均完成首次改密，投资业务保持启用。脚本验证头像菜单的键盘与触屏操作、旧管理分区链接、异步加载后的分区定位、后台路由权限与请求隔离、投资个人授权和共享配置、未配置与停用状态提示，以及浅色/深色下的 1440/390/360px 布局；不修改共享配置，不登录券商或发送通知。
+
+```bash
+PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
+  CHROMIUM_PATH=/usr/bin/chromium \
+  WORKBENCH_TEST_URL=http://127.0.0.1:18090 \
+  WORKBENCH_TEST_ADMIN_PASSWORD='<临时管理员密码>' \
+  WORKBENCH_TEST_USER_USERNAME='<临时普通用户名>' \
+  WORKBENCH_TEST_USER_PASSWORD='<临时普通用户密码>' \
+  node scripts/settings.e2e.cjs
+```
+
+管理员用户名默认为 `admin`，可通过 `WORKBENCH_TEST_ADMIN_USERNAME` 指定。服务与账号由调用方准备和清理。
+
 ### 开发登录
 
 `dev-auth.e2e.cjs` 使用临时数据库、密码和自签证书，启动真实开发脚本并通过 HTTPS → Vite → Go 链路验证登录。覆盖缺少 `-public-url` 时的 `403 invalid_origin`、配置后的登录、Secure Cookie、首次改密、资讯导航和刷新后的会话保留，以及投资终端模块、真实图表库和非空虚构 K 线加载。需要本机 OpenSSL；图表库通过 Go 代理访问 TradingView 公开静态资源站，券商 API 和实时连接使用虚构响应。

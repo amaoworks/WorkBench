@@ -4,11 +4,11 @@
 
 ## Telegram
 
-管理员在「设置 → 通知推送」（`/settings?tab=notifications`）管理共享 Telegram 机器人，在「用户管理 → 通知目标」为用户分配接收目标。用户只能启停和测试自己的推送；不能读取 Bot Token 或修改其他用户的目标。待办到期、价格预警和资讯简报等外发通知只发送到收件人自己的目标。
+管理员在「后台设置 → 通知服务」（`/admin/settings?tab=notifications`）管理共享 Telegram 机器人的 Bot Token 和服务开关，在「后台设置 → 用户管理 → 通知目标」为用户分配接收目标。所有用户（包括管理员）在「个人设置 → 通知推送」（`/settings?tab=notifications`）启停自己的接收、查看目标、发送测试消息和查看投递状态；不能读取 Bot Token 或修改其他用户的目标。待办到期、价格预警和资讯简报等外发通知只发送到收件人自己的目标。
 
 1. 在 Telegram 向 [@BotFather](https://t.me/BotFather) 创建机器人，获取 Bot Token。
 2. 私聊请先向机器人发送 `/start`；群组请添加机器人，频道需要发布权限。填写目标的数字 Chat ID（群组可为负数）或公开频道 `@用户名`。数字 ID 可从自己机器人的 [getUpdates 响应](https://core.telegram.org/bots/api#getupdates) 中读取 `message.chat.id`。
-3. 管理员保存并启用 Bot Token，为用户保存 Chat ID。用户在个人推送中启用接收并点击「发送测试消息」确认。个人测试只使用已保存的本人目标，测试消息会真实发送。
+3. 管理员在后台通知服务保存并启用 Bot Token，在用户管理的「通知目标」为用户保存 Chat ID。用户在个人通知推送中启用接收并点击「发送测试消息」确认。个人测试只使用已保存的本人目标，测试消息会真实发送。
 
 服务端通过 HTTPS 调用 [sendMessage](https://core.telegram.org/bots/api#sendmessage)，无需接收消息的 webhook。部署环境需能访问 `api.telegram.org`。Token 不在读取接口中回显，留空保留，可显式清除；它与其他凭据一样保存在私有工作空间数据库及备份中，数据库本身未加密。
 
@@ -18,7 +18,7 @@
 - 启用或更换本人接收目标后，只发送此后产生的新通知。更换 Bot Token 会提升机器人代次，旧目标需要管理员重新分配，不会自动发送给新机器人。停用服务、个人接收、账号或来源模块时跳过投递，历史收件箱不补发。
 - 通知可设置明确的投递截止时间；未设置时在创建后 15 分钟内有效。超过截止时间的投递终止为失败，站内通知仍保留。
 - 每个机器人串行发送，间隔至少 3.1 秒。网络/服务错误使用持久化指数退避，最多 12 次尝试；429 尊重 `retry_after`，无效凭据或权限等永久错误直接停止。不同机器人的候选配置测试相互隔离。
-- 设置页显示最近尝试、最近成功、脱敏错误，以及自当前目标启用以来的终止失败数量。失败消息不提供手工重放，调整配置用于后续新通知。
+- 个人通知推送显示本人的最近尝试、最近成功和脱敏错误；后台通知服务不将管理员本人的状态作为全站统计。失败消息不提供手工重放，调整配置用于后续新通知。
 - 采用至少一次投递：Telegram 已接收而本地事件尚未确认时若进程崩溃，恢复后仍可能重复。辅助状态保存失败不会主动重发已确认送达的消息。
 - 消息使用纯文本，最长 4096 个字符；内容过长时截断正文并保留工作台链接。
 
@@ -31,7 +31,7 @@
 | POST | `/api/settings/telegram/recipient/test` | 测试已保存的本人目标 |
 | GET / PUT | `/api/settings/telegram/recipients/{userID}` | 管理员读取 / 分配 `{ enabled, chatId }` |
 
-接口使用平台鉴权、来源检查和 CSRF 保护。通道实现在 `internal/capabilities/notifications/telegram*.go`，前端在 `web/src/features/settings/TelegramPanel.tsx`。测试使用本地传输替身，不发送真实消息。
+接口使用平台鉴权、来源检查和 CSRF 保护。通道实现在 `internal/capabilities/notifications/telegram*.go`，前端个人接收与后台服务表单位于 `web/src/features/settings/`。测试使用本地传输替身，不发送真实消息。
 
 ## 移动推送
 

@@ -229,20 +229,56 @@ async function openModuleMenu(page, label) {
     await page.keyboard.press("Control+j");
     await aiPanel.waitFor({ state: "detached" });
 
-    // Settings is reached from the account menu only; the menu holds 设置 (and 退出登录 with a password) and nothing that duplicates settings.
-    assert.equal(await page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "设置", exact: true }).count(), 0);
-    await page.getByRole("button", { name: "账户菜单", exact: true }).click();
+    // Personal and administrator settings are separate account-menu entries, never top-level business navigation.
+    assert.equal(await page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: /设置/ }).count(), 0);
+    await page.getByRole("button", { name: /^账户菜单/ }).click();
     const accountMenu = page.getByRole("menu", { name: "账户菜单", exact: true });
     for (const removed of ["外观", "账户安全"]) assert.equal(await accountMenu.getByRole("menuitem", { name: removed }).count(), 0, `account menu duplicates ${removed}`);
     assert.equal(await accountMenu.getByRole("menuitemradio").count(), 0, "theme is chosen in settings, not the account menu");
-    assert.deepEqual((await accountMenu.getByRole("menuitem").allInnerTexts()).map((text) => text.trim()), ["设置"]);
-    await accountMenu.getByRole("menuitem", { name: "设置", exact: true }).click();
+    assert.deepEqual((await accountMenu.getByRole("menuitem").allInnerTexts()).map((text) => text.trim()), ["个人设置", "后台设置"]);
+    assert.equal(await accountMenu.getByRole("menuitem", { name: "后台设置", exact: true }).getAttribute("href"), "/admin/settings");
+    await accountMenu.getByRole("menuitem", { name: "个人设置", exact: true }).click();
     await expectURL(page, "/settings");
     const palettes = page.getByRole("group", { name: "风格", exact: true });
     await palettes.getByRole("button").first().waitFor();
     assert.deepEqual((await palettes.getByRole("button").allInnerTexts()).map((text) => text.trim()), ["宝蓝", "陶橙"]);
     assert.equal(await page.getByText(/TradingView|Claude/).count(), 0, "palette names must not expose third-party brands");
     assert.equal(await page.locator(".workspace-avatar.is-active").count(), 1);
+    assert.equal(await page.getByLabel("Bot Token", { exact: true }).count(), 0);
+    assert.equal(await page.getByRole("switch", { name: "投资", exact: true }).count(), 0);
+    await page.getByRole("button", { name: /^账户菜单/ }).click();
+    await accountMenu.getByRole("menuitem", { name: "后台设置", exact: true }).click();
+    await expectURL(page, "/admin/settings");
+    await page.getByRole("heading", { name: "后台设置", exact: true }).waitFor();
+    await page.getByLabel("Bot Token", { exact: true }).waitFor();
+    assert.equal(await page.getByRole("heading", { name: "个人推送", exact: true }).count(), 0);
+    assert.equal(await page.locator(".workspace-avatar.is-active").count(), 1);
+    await page.goto(`${baseURL}/settings?tab=ai`);
+    await expectURL(page, "/admin/settings", { tab: "ai" });
+    await page.getByLabel("接口地址", { exact: true }).waitFor();
+
+    // Simulate an ordinary identity with the same fixture user ID; backend ownership remains unchanged.
+    const authStatus = await (await page.request.get(`${baseURL}/api/auth/status`)).json();
+    await page.route("**/api/auth/status", (route) => route.fulfill({ json: { ...authStatus, user: { ...authStatus.user, role: "user" } } }));
+    const administrationRequests = [];
+    const observeAdministration = (request) => {
+      const path = new URL(request.url()).pathname;
+      if (path.startsWith("/api/admin/") || path === "/api/settings/telegram") administrationRequests.push(path);
+    };
+    page.on("request", observeAdministration);
+    await page.goto(`${baseURL}/admin/settings?tab=users`);
+    await page.getByRole("heading", { name: "无权访问后台设置", exact: true }).waitFor();
+    assert.deepEqual(administrationRequests, [], "ordinary direct visits must not mount administration queries");
+    await page.getByRole("button", { name: /^账户菜单/ }).click();
+    assert.deepEqual((await accountMenu.getByRole("menuitem").allInnerTexts()).map((text) => text.trim()), ["个人设置"]);
+    await accountMenu.getByRole("menuitem", { name: "个人设置", exact: true }).click();
+    await page.getByRole("heading", { name: "个人设置", exact: true }).waitFor();
+    await page.goto(`${baseURL}/settings?tab=ai`);
+    await page.getByRole("heading", { name: "个人设置", exact: true }).waitFor();
+    assert.equal(new URL(page.url()).pathname, "/settings");
+    assert.deepEqual(administrationRequests, []);
+    page.off("request", observeAdministration);
+    await page.unroute("**/api/auth/status");
     await page.goto(baseURL);
 
     // Desktop pointer and keyboard navigation.
@@ -266,7 +302,7 @@ async function openModuleMenu(page, label) {
 
     // Settings is already mounted before module settings is opened repeatedly from the module list.
     await page.goto(`${baseURL}/settings?tab=modules`);
-    await page.getByRole("heading", { name: "业务", exact: true }).waitFor();
+    await page.getByRole("heading", { name: "业务", exact: true, level: 2 }).waitFor();
     for (let attempt = 0; attempt < 2; attempt++) {
       await page.getByRole("button", { name: "待办设置", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "待办设置", exact: true });

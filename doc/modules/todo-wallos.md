@@ -2,7 +2,7 @@
 
 这是 [Todo 模块](todo.md)内的单向订阅读取集成。实现见 [wallos.go](../../internal/modules/todo/wallos.go) 和 [wallos_amount.go](../../internal/modules/todo/wallos_amount.go)，前端入口见 [WallosSettings](../../web/src/modules/todo/WallosSettings.tsx)。
 
-在「设置 → 业务模块 → 待办 → 设置」填写 Wallos 的部署地址与当前用户的 API Key，启用自动同步，保存后点击「立即同步」。地址可以包含部署子路径，例如 `https://example.com/wallos`。工作台服务端必须能够访问该地址；支持自托管内网 HTTP 和证书有效的 HTTPS。
+在「个人设置 → 业务 → 待办」填写 Wallos 的部署地址与当前用户的 API Key，启用自动同步，保存后点击「立即同步」。地址可以包含部署子路径，例如 `https://example.com/wallos`。工作台服务端必须能够访问该地址；支持自托管内网 HTTP 和证书有效的 HTTPS。
 
 ## 提醒规则
 

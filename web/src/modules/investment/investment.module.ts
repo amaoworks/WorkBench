@@ -4,6 +4,7 @@ import type { ModuleUI } from "../registry";
 export default {
   id: "investment",
   settings: lazy(() => import("./InvestmentSettings")),
+  adminSettings: lazy(() => import("./InvestmentAdminSettings")),
   pages: { "investment.overview": lazy(() => import("./InvestmentPage")) },
   subpages: {
     positions: lazy(() => import("./PositionsPage")),

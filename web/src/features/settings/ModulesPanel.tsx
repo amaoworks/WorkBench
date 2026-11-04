@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { api, apiResponse } from "../../shared/api";
 import { moduleSchema, type ExternalModule, type WorkbenchModule } from "../../shared/schema";
 import { useModules } from "../../app/queries";
-import { Button } from "../../components/ui/Button";
+import { Button, ButtonLink } from "../../components/ui/Button";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { Skeleton } from "../../components/ui/States";
 import { ModuleSettingsDialog } from "./ModuleSettingsDialog";
@@ -15,9 +15,12 @@ import { Switch } from "../../components/ui/Switch";
 import { useConfirmDelete } from "../../components/ui/useConfirmDelete";
 import { clearModuleQueries } from "../../shared/queryKeys";
 import { useIsAdmin } from "../../shared/auth";
+import { adminSettingsRegistry, settingsRegistry } from "../../modules/registry";
 
-export function ModulesPanel() {
+export function ModulesPanel({ scope = "personal" }: { scope?: "personal" | "admin" }) {
   const isAdmin = useIsAdmin();
+  const management = scope === "admin" && isAdmin;
+  const registry = management ? adminSettingsRegistry : settingsRegistry;
   const modules = useModules();
   const client = useQueryClient();
   const heading = useRef<HTMLHeadingElement>(null);
@@ -60,7 +63,7 @@ export function ModulesPanel() {
       <h3 ref={heading} tabIndex={-1} className="sr-only">
         业务
       </h3>
-      {modules.data.items.filter((module) => isAdmin || module.kind === "builtin").map((module) => (
+      {modules.data.items.filter((module) => management || (module.kind === "builtin" && settingsRegistry[module.id])).map((module) => (
         <div key={module.id} className="module-row">
           <div>
             <h3>{module.name}</h3>
@@ -75,11 +78,19 @@ export function ModulesPanel() {
               </Notice>
             )}
             {module.kind === "external" && module.connectionNote && <p className="text-sm text-[var(--muted)]">{module.connectionNote}</p>}
+            {!management && !module.enabled && (
+              <p className="mt-2 text-sm text-[var(--muted)]">{isAdmin ? "在后台设置中启用。" : "联系管理员启用。"}</p>
+            )}
           </div>
           <div className="module-actions">
-            <ModuleSettingsDialog module={module} />
-            {isAdmin && module.kind === "external" && <ExternalActions module={module} onChange={refresh} fallbackFocus={() => heading.current} />}
-            {isAdmin && module.kind === "builtin" && module.lastError && (
+            {(management || module.enabled) && (registry[module.id] || (management && module.kind === "external" && module.settingsEntry)) && (
+              <ModuleSettingsDialog module={module} scope={management ? "admin" : "personal"} />
+            )}
+            {!management && !module.enabled && isAdmin && (
+              <ButtonLink variant="secondary" to="/admin/settings?tab=modules">业务管理</ButtonLink>
+            )}
+            {management && module.kind === "external" && <ExternalActions module={module} onChange={refresh} fallbackFocus={() => heading.current} />}
+            {management && module.kind === "builtin" && module.lastError && (
               <Button
                 variant="secondary"
                 disabled={toggle.isPending}
@@ -88,7 +99,7 @@ export function ModulesPanel() {
                 重试
               </Button>
             )}
-            {isAdmin && (
+            {management && (
               <Switch
                 label={module.name}
                 checked={module.enabled}

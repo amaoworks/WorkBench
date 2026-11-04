@@ -14,7 +14,7 @@
 
 每条规则每个 `America/New_York` 交易日最多触发一次。涨跌两向可以分别建规则；编辑、暂停和重新启用同一规则不会清除当日记录。后台请求期间删除/修改规则、停用投资或变更授权，会阻止迟到结果触发提醒。触发快照、通知和通知事件在同一事务提交，重启后去重仍有效。删除规则会保留历史。
 
-提醒保留在站内；可在「设置 → 通知推送」配置 Telegram，见 [Telegram 通知](../notifications.md)。监控页不重复 Telegram 的启用状态和设置入口，只在已启用的推送最近失败时提示；规则卡片不显示「已用/上限」条数，后台检查空闲时也不显示状态标记，没有规则时显示空状态。页面展示最新价、前收盘价、涨跌幅、行情时间、检查状态和分页触发记录。后台超过三分钟未检查会显示中断。
+提醒保留在站内；可在「个人设置 → 通知推送」启用本人的 Telegram 接收，见 [Telegram 通知](../notifications.md)。监控页不重复 Telegram 的启用状态和设置入口，只在已启用的推送最近失败时提示；规则卡片不显示「已用/上限」条数，后台检查空闲时也不显示状态标记，没有规则时显示空状态。页面展示最新价、前收盘价、涨跌幅、行情时间、检查状态和分页触发记录。后台超过三分钟未检查会显示中断。
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
@@ -25,9 +25,9 @@
 
 ## Schwab 连接
 
-管理员在「设置 → 业务模块 → 投资」维护 Developer Portal 的 App Key、App Secret，以及与登记完全一致的 HTTPS 回调地址；路径必须为 `/oauth/schwab`。该 URL 必须能从用户浏览器到达工作台进程，反向代理需实际支持 HTTPS，应用以 HTTP 提供后端并配置对应的 `WORKBENCH_PUBLIC_URL`。部署示例见[部署与发布](../deployment.md)。HTTP 页面不会自动生成可用回调；旧 HTTP 回调也会在发起授权前被拒绝。Secret 读取时不回显。更换 App Key 或回调必须重新填写 Secret；Key、Secret 或回调变化均清除旧令牌和长连接。
+管理员在「后台设置 → 业务管理 → 投资」（`/admin/settings?tab=modules&module=investment`）维护 Developer Portal 的 App Key、App Secret，以及与登记完全一致的 HTTPS 回调地址；路径必须为 `/oauth/schwab`。该 URL 必须能从用户浏览器到达工作台进程，反向代理需实际支持 HTTPS，应用以 HTTP 提供后端并配置对应的 `WORKBENCH_PUBLIC_URL`。部署示例见[部署与发布](../deployment.md)。HTTP 页面不会自动生成可用回调；旧 HTTP 回调也会在发起授权前被拒绝。Secret 读取时不回显。更换 App Key 或回调必须重新填写 Secret；Key、Secret 或回调变化均清除旧令牌和长连接。
 
-应用配置保存后，每个用户分别点击「登录 Schwab」，并在账户关联确认页点击 Done。应用凭据全局保存，券商令牌、账户范围、持仓、订单和交易属于当前用户。管理员角色不允许跨用户访问账户。公开回调 `/oauth/schwab` 通过有效期十分钟的一次性 state 查找发起用户并校验授权，匹配后先持久化消费，再由服务端换取并保存令牌。缺少 code、授权过期或换取令牌失败也会消费匹配的 state，须重新发起授权，不能重试同一回调。回调独立于工作台会话，因为跨站跳转不携带 `SameSite=Strict` 会话 Cookie。成功页先建立工作台同站点文档，再自动返回 `/investment`，保留手动返回链接；`no-referrer` 避免授权查询参数进入下一跳 Referer。重新授权成功也会关闭旧 Streamer，终端重连后重新读取账户列表。
+应用配置保存后，每个用户（包括管理员）分别在「个人设置 → 业务 → 投资」（`/settings?tab=modules&module=investment`）点击「登录 Schwab」，并在账户关联确认页点击 Done。共享应用未配置时，管理员可跳转后台配置，普通用户显示联系管理员；本人未授权或授权失效时进入个人授权流程。应用凭据全局保存，券商令牌、账户范围、持仓、订单和交易属于当前用户。管理员角色不允许跨用户访问账户。公开回调 `/oauth/schwab` 通过有效期十分钟的一次性 state 查找发起用户并校验授权，匹配后先持久化消费，再由服务端换取并保存令牌。缺少 code、授权过期或换取令牌失败也会消费匹配的 state，须重新发起授权，不能重试同一回调。回调独立于工作台会话，因为跨站跳转不携带 `SameSite=Strict` 会话 Cookie。成功页先建立工作台同站点文档，再自动返回 `/investment`，保留手动返回链接；`no-referrer` 避免授权查询参数进入下一跳 Referer。重新授权成功也会关闭旧 Streamer，终端重连后重新读取账户列表。
 
 原生端先携带 App Bearer 调用 `POST /api/modules/investment/schwab/oauth/start`，取得 `authorizationUrl`、`statusId` 和十分钟有效期，再用系统浏览器打开 `authorizationUrl`。Schwab 完成后仍回到公开 `/oauth/schwab`，由服务端校验一次性 state 并换取令牌；系统浏览器不携带 App Bearer，URL 中也不放 App access token。原生端回到前台后，携带 App Bearer 轮询 `GET /api/modules/investment/schwab/oauth/status/{statusId}`，直到状态由 `pending` 变为 `succeeded` 或 `failed`。终态不再变更，重复回调不会再次换取令牌；有效期内已接受的回调等待令牌交换完成后确定结果。同一用户新的授权请求会使其尚未完成的旧请求失败，不影响其他用户；过期或进程重启后重新发起。
 
@@ -41,7 +41,7 @@
 
 Schwab 行情覆盖常规、盘前、盘后和延长时段（约 04:00–20:00 ET），不含美股夜盘（20:00–04:00 ET）。夜盘由本机或 Compose 中的 Futu OpenD 补齐，**只做行情，不接入富途交易**。
 
-管理员在「设置 → 业务模块 → 投资设置」管理 Schwab 应用配置、富途牛牛和夜盘总开关；普通用户在个人投资设置管理自己的 Schwab 授权。富途登录、OpenD、上游订阅池和公共 K 线缓存共享，自选、监控、偏好与通知归个人。Linux x86_64 原生部署在保存账号密码并启用富途牛牛后，自动下载、校验并启动 OpenD；页面显示进程状态和行情登录状态，失败可重试。容器部署可使用配套 OpenD。停用富途牛牛会关闭夜盘，重新启用不会自动恢复夜盘。主机、端口和非本机许可由部署配置管理，不在设置页面或账号保存 API 中修改。兼容版本与首次登录验证见 [OpenD 部署说明](https://github.com/amaoworks/WorkBench/blob/main/futu-opend/README.md)。密码和登录摘要不回显。
+管理员在「后台设置 → 业务管理 → 投资」管理 Schwab 应用配置、富途牛牛和夜盘总开关；所有用户（包括管理员）在「个人设置 → 业务 → 投资」管理本人的 Schwab 授权，并查看共享夜盘只读状态。富途登录、OpenD、上游订阅池和公共 K 线缓存共享，自选、监控、偏好与通知归个人。Linux x86_64 原生部署在保存账号密码并启用富途牛牛后，自动下载、校验并启动 OpenD；页面显示进程状态和行情登录状态，失败可重试。容器部署可使用配套 OpenD。停用富途牛牛会关闭夜盘，重新启用不会自动恢复夜盘。主机、端口和非本机许可由部署配置管理，不在设置页面或账号保存 API 中修改。兼容版本与首次登录验证见 [OpenD 部署说明](https://github.com/amaoworks/WorkBench/blob/main/futu-opend/README.md)。密码和登录摘要不回显。
 
 - Regular / Premarket / Postmarket / Extended：仍只走 Schwab。
 - 「行情时段」集成在 TradingView 图表顶部工具栏，通过官方 `headerReady()` / `createDropdown()` 接入，不再单独占据一行。桌面在右侧显示「行情：常规/扩展/夜盘/全天」；窄屏使用简短标题并移至工具栏靠前位置。菜单位置随宽度切换时仅重建按钮，不重建图表；仅提供常规 (RTH)、扩展 (ETH)、夜盘 (Night)、全天 (24H) 四个行情选项，不另加说明菜单项。仅在夜盘覆盖启用且标的支持时显示 Night/24H。原生底部时段按钮隐藏，避免重复入口。

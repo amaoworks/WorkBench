@@ -249,8 +249,8 @@ export function AIPanel({ open, onClose, context }: { open: boolean; onClose: ()
               <Notice
                 title="AI 尚未启用"
                 action={user.role === "admin" ? (
-                  <ButtonLink variant="secondary" size="sm" to="/settings?tab=ai" onClick={onClose}>
-                    打开设置
+                  <ButtonLink variant="secondary" size="sm" to="/admin/settings?tab=ai" onClick={onClose}>
+                    后台设置
                   </ButtonLink>
                 ) : undefined}
               />

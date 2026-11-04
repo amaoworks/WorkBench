@@ -45,10 +45,10 @@ async function choose(page, trigger, option) {
     await page.getByRole("button", { name: "加载更多", exact: true }).click();
     await page.locator(".todo-groups .task-row").nth(50).waitFor();
     assert.equal(await page.locator(".todo-groups .task-row").count(), 51, "加载更多 must append the second page of tasks");
-    await page.goto(`${baseURL}/settings?tab=modules`);
+    await page.goto(`${baseURL}/admin/settings?tab=modules`);
     await page.getByRole("button", { name: "投资设置", exact: true }).click();
     const investmentSettings = page.getByRole("dialog", { name: "投资设置", exact: true });
-    const schwabForm = investmentSettings.locator("form").filter({ has: page.getByLabel("App Key", { exact: true }) });
+    const schwabForm = investmentSettings.locator("form.investment-settings");
     assert.equal(await page.getByLabel("OAuth 回调地址", { exact: true }).inputValue(), baseURL.startsWith("https:") ? `${baseURL}/oauth/schwab` : "");
     await page.getByLabel("App Key", { exact: true }).fill("browser-test-key");
     await page.getByLabel("App Secret", { exact: true }).fill("browser-test-secret");
@@ -61,8 +61,7 @@ async function choose(page, trigger, option) {
     await schwabForm.getByRole("button", { name: "保存", exact: true }).click();
     assert.equal((await saved).status(), 200);
     await page.getByText("Schwab 设置已保存", { exact: true }).waitFor();
-    await investmentSettings.getByRole("status").filter({ hasText: "未连接 Schwab" }).waitFor();
-    await investmentSettings.getByText("请完成 OAuth 授权。", { exact: true }).waitFor();
+    assert.equal(await investmentSettings.getByRole("button", { name: "登录 Schwab", exact: true }).count(), 0, "shared configuration must not contain the administrator's personal OAuth action");
     assert.equal(await page.getByLabel("App Secret", { exact: true }).inputValue(), "");
     const config = await (await page.request.get(`${baseURL}/api/modules/investment/schwab`)).json();
     assert.equal(config.hasAppSecret, true);
@@ -73,7 +72,7 @@ async function choose(page, trigger, option) {
     await schwabForm.getByRole("button", { name: "保存", exact: true }).click();
     assert.equal((await rejected).status(), 400);
     await page.getByText("更换 App Key 时请重新填写 App Secret", { exact: true }).waitFor();
-    assert(await page.getByRole("button", { name: "登录 Schwab", exact: true }).isDisabled());
+    assert.equal(await page.getByRole("button", { name: "登录 Schwab", exact: true }).count(), 0);
     // The rejected edit is still unsaved, so closing asks before discarding it.
     await page.getByRole("button", { name: "关闭业务设置", exact: true }).click();
     const discard = page.getByRole("alertdialog", { name: "放弃未保存的修改？", exact: true });
@@ -89,7 +88,7 @@ async function choose(page, trigger, option) {
     await page.getByRole("heading", { name: "今天，一目了然", exact: true }).waitFor();
     await page.waitForLoadState("networkidle");
     assert.equal(await page.getByRole("region", { name: "资产快照", exact: true }).count(), 0);
-    await page.goto(`${baseURL}/settings?tab=modules`);
+    await page.goto(`${baseURL}/admin/settings?tab=modules`);
     await page.getByRole("switch", { name: "投资", exact: true }).click();
     await page.getByRole("link", { name: "投资", exact: true }).click();
     await page.getByRole("region", { name: "投资终端", exact: true }).waitFor();
@@ -109,7 +108,7 @@ async function choose(page, trigger, option) {
     await page.getByRole("button", { name: "打开导航", exact: true }).waitFor();
     await page.screenshot({ path: "/tmp/workbench-platform-mobile.png", fullPage: true, animations: "disabled" });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, "mobile overflow");
-    await page.goto(`${baseURL}/settings?tab=modules`);
+    await page.goto(`${baseURL}/admin/settings?tab=modules`);
     await page.getByRole("switch", { name: "待办", exact: true }).waitFor();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, "settings mobile overflow");
     await page.getByRole("button", { name: "投资设置", exact: true }).click();

@@ -79,8 +79,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 
     await page.setViewportSize({ width: 1440, height: 1000 });
     // Settings lives in the account menu, not the top bar.
-    await page.getByRole("button", { name: "账户菜单", exact: true }).click();
-    await page.getByRole("menuitem", { name: "设置", exact: true }).click();
+    await page.getByRole("button", { name: /^账户菜单/ }).click();
+    await page.getByRole("menuitem", { name: "个人设置", exact: true }).click();
     await page.getByRole("button", { name: "投资设置", exact: true }).click();
     const dialog = page.getByRole("dialog");
     await dialog.getByRole("alert").filter({ hasText: "Schwab 授权已失效" }).waitFor();

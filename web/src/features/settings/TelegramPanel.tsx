@@ -11,22 +11,15 @@ import { Notice } from "../../components/ui/Notice";
 import { Skeleton } from "../../components/ui/States";
 import { Switch } from "../../components/ui/Switch";
 import { useTelegramSettings } from "./queries";
-import { TelegramRecipientPanel } from "./TelegramRecipientPanel";
 import type { TelegramSettings } from "./schema";
 
 export function TelegramPanel() {
   const isAdmin = useIsAdmin();
   const settings = useTelegramSettings(isAdmin);
-  return (
-    <div className="space-y-6">
-      <TelegramRecipientPanel />
-      {isAdmin && (settings.isPending ? <Skeleton className="h-40" /> : settings.isError ? (
-        <Notice tone="danger" title="Telegram 服务加载失败">{settings.error.message}</Notice>
-      ) : (
-        <TelegramBotForm key={`${settings.data.enabled}:${settings.data.hasBotToken}`} value={settings.data} />
-      ))}
-    </div>
-  );
+  if (!isAdmin) return null;
+  if (settings.isPending) return <Skeleton className="h-40" />;
+  if (settings.isError) return <Notice tone="danger" title="Telegram 服务加载失败">{settings.error.message}</Notice>;
+  return <TelegramBotForm key={`${settings.data.enabled}:${settings.data.hasBotToken}`} value={settings.data} />;
 }
 
 function TelegramBotForm({ value }: { value: TelegramSettings }) {
@@ -52,7 +45,7 @@ function TelegramBotForm({ value }: { value: TelegramSettings }) {
       event.preventDefault();
       save.mutate();
     }}>
-      <div className="control-heading"><h3>Telegram 服务</h3><Badge>管理员</Badge></div>
+      <div className="control-heading"><h3>Telegram 服务</h3><Badge>全部用户</Badge></div>
       <fieldset className="form-fields" disabled={save.isPending}>
         <div className="settings-line">
           <span>启用共享服务</span>

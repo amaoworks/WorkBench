@@ -106,8 +106,14 @@ after(() => server.close());
 const { AuthContext, userStorageKey } = await server.ssrLoadModule("/src/shared/auth.ts");
 const { default: InvestmentSettings } = await server.ssrLoadModule("/src/modules/investment/InvestmentSettings.tsx");
 const { ModulesPanel } = await server.ssrLoadModule("/src/features/settings/ModulesPanel.tsx");
+const { default: InvestmentAdminSettings } = await server.ssrLoadModule("/src/modules/investment/InvestmentAdminSettings.tsx");
+const { default: SettingsPage } = await server.ssrLoadModule("/src/features/settings/SettingsPage.tsx");
+const { default: AdminSettingsPage } = await server.ssrLoadModule("/src/features/settings/AdminSettingsPage.tsx");
+const { TelegramPanel } = await server.ssrLoadModule("/src/features/settings/TelegramPanel.tsx");
+const { ModuleSettingsDialog } = await server.ssrLoadModule("/src/features/settings/ModuleSettingsDialog.tsx");
+const { settingsRegistry, adminSettingsRegistry } = await server.ssrLoadModule("/src/modules/registry.ts");
 
-function renderAs(t, role, component) {
+function renderAs(t, role, component, { path = "/settings", seed } = {}) {
   const previousWindow = globalThis.window;
   globalThis.window = { location: { protocol: "https:", origin: "https://workbench.test" }, matchMedia: () => ({ matches: false }) };
   t.after(() => {
@@ -126,14 +132,32 @@ function renderAs(t, role, component) {
     enabled: true, overnightEnabled: true, managed: true, serviceState: "running", serviceError: "",
     account: "futu-admin-account", hasPassword: true, connected: true, qotLogined: true, lastError: "",
   });
-  client.setQueryData(["settings"], { appearance });
+  client.setQueryData(["settings"], {
+    appearance,
+    ai: { enabled: false, model: "fixture-model", baseUrl: "https://ai.invalid/v1", hasApiKey: false },
+    logging: { level: "info" },
+    deployment: {
+      listenAddress: "127.0.0.1:9090", dataPath: "/workspace/data.db", databaseDriver: "sqlite",
+      backupSupported: true, authMode: "password", publicUrl: "https://workbench.test", allowedHosts: [],
+    },
+  });
+  client.setQueryData(["settings", "telegram", "bot"], {
+    enabled: true, chatId: "not-a-global-recipient", hasBotToken: true, failedDeliveries: 3,
+    status: { lastAttemptAt: null, lastSuccessAt: null, lastError: "personal-delivery-error" },
+  });
+  client.setQueryData(["settings", "telegram", "recipient"], {
+    enabled: true, chatId: "personal-chat-id", configured: true, hasBotToken: true,
+    status: { lastAttemptAt: null, lastSuccessAt: null, lastError: "personal-delivery-error" },
+  });
+  client.setQueryData(["admin", "users"], { items: [user] });
   client.setQueryData(["modules"], { items: [{
     id: "todo", name: "待办", version: "1", icon: "todo", kind: "builtin", contractVersion: 1,
     navigation: [], enabled: true, observedEnabled: true,
   }] });
+  seed?.(client);
   return renderToStaticMarkup(createElement(AuthContext.Provider, {
     value: { authenticated: true, mode: "password", mustChangePassword: false, user: { ...user, role } },
-  }, createElement(QueryClientProvider, { client }, createElement(MemoryRouter, null, component))));
+  }, createElement(QueryClientProvider, { client }, createElement(MemoryRouter, { initialEntries: [path] }, component))));
 }
 
 test("private browser keys are distinct for every user", () => {
@@ -142,24 +166,172 @@ test("private browser keys are distinct for every user", () => {
   assert.notEqual(userStorageKey("a.b", "nav.v1"), userStorageKey("a", "b.nav.v1"));
 });
 
-test("ordinary investment settings expose personal OAuth without shared credentials or provider controls", (t) => {
-  const html = renderAs(t, "user", createElement(InvestmentSettings, { enabled: true }));
-  assert.match(html, /登录 Schwab/);
-  assert.match(html, /共享夜盘行情/);
-  assert.doesNotMatch(html, /App Key|App Secret|Bot Token|futu-admin-account|OAuth 回调地址/);
+for (const role of ["user", "admin"]) {
+  test(`${role} investment settings expose only personal OAuth and shared availability`, (t) => {
+    let client;
+    const html = renderAs(t, role, createElement(InvestmentSettings, { enabled: true }), {
+      seed: (value) => { client = value; client.removeQueries({ queryKey: ["investment", "futu"], exact: true }); },
+    });
+    assert.match(html, /登录 Schwab/);
+    assert.equal(client.getQueryCache().find({ queryKey: ["investment", "futu"], exact: true }), undefined, "personal authorization must not mount shared-provider queries");
+    assert.match(html, /共享夜盘行情/);
+    assert.doesNotMatch(html, /App Key|App Secret|Bot Token|futu-admin-account|OAuth 回调地址|启用夜盘行情|启用富途牛牛行情/);
+  });
+
+  test(`${role} personal business settings never expose global enabled toggles`, (t) => {
+    const html = renderAs(t, role, createElement(ModulesPanel));
+    assert.match(html, /待办设置/);
+    assert.doesNotMatch(html, /role="switch"/);
+  });
+
+  test(`${role} disabled investment settings explain who can enable the business`, (t) => {
+    const html = renderAs(t, role, createElement(InvestmentSettings, { enabled: false }));
+    assert.match(html, /投资业务已停用/);
+    if (role === "admin") {
+      assert.match(html, /href="\/admin\/settings\?tab=modules"/);
+      assert.match(html, /在后台设置中启用/);
+    } else {
+      assert.match(html, /联系管理员启用/);
+      assert.doesNotMatch(html, /href="\/admin\/settings/);
+    }
+    assert.doesNotMatch(html, /登录 Schwab|App Key|role="switch"/);
+  });
+}
+
+const builtin = (id, name, overrides = {}) => ({
+  id, name, version: "1", icon: id, kind: "builtin", contractVersion: 1,
+  navigation: [], enabled: true, observedEnabled: true, ...overrides,
+});
+const external = {
+  id: "legacy", name: "历史外部业务", kind: "external", version: "1", icon: "blocks",
+  contractVersion: 1, navigation: [], enabled: false, hasSettings: true,
+  health: "healthy", pending: false, connectionNote: "legacy-connection-note",
+};
+const modules = [builtin("todo", "待办"), builtin("investment", "投资"), builtin("no_settings", "无配置业务"), external];
+const seedModules = (client) => client.setQueryData(["modules"], { items: modules });
+
+for (const role of ["user", "admin"]) {
+  test(`${role} personal settings include appearance, business, recipient and security but no administration`, (t) => {
+    const html = renderAs(t, role, createElement(SettingsPage));
+    assert.match(html, /个人设置/);
+    for (const section of ["appearance", "modules", "notifications", "security"]) assert.match(html, new RegExp(`id="settings-${section}"`));
+    assert.match(html, /个人推送/);
+    assert.match(html, /personal-chat-id/);
+    assert.doesNotMatch(html, /id="settings-(ai|users|data)"|App Key|Bot Token|创建用户|日志等级|启用 Telegram 服务|启用 AI 服务/);
+  });
+
+  test(`${role} personal module list excludes legacy and businesses without personal configuration`, (t) => {
+    const html = renderAs(t, role, createElement(ModulesPanel), { seed: seedModules });
+    assert.match(html, /待办设置/);
+    assert.match(html, /投资设置/);
+    assert.doesNotMatch(html, /历史外部业务|无配置业务|legacy-connection-note|role="switch"|解除接入/);
+  });
+}
+
+test("administration page exposes only workspace management sections", (t) => {
+  const html = renderAs(t, "admin", createElement(AdminSettingsPage), { path: "/admin/settings" });
+  assert.match(html, /后台设置/);
+  for (const section of ["users", "modules", "ai", "notifications", "data"]) assert.match(html, new RegExp(`data-section="${section}"`));
+  assert.match(html, /Bot Token/);
+  assert.match(html, /启用 Telegram 服务/);
+  assert.match(html, /启用 AI 服务/);
+  assert.match(html, /日志等级/);
+  assert.doesNotMatch(html, /个人推送|personal-chat-id|personal-delivery-error|当前密码|data-section="appearance"|data-section="security"/);
 });
 
-test("administrators retain Schwab application and shared Futu settings", (t) => {
-  const html = renderAs(t, "admin", createElement(InvestmentSettings, { enabled: true }));
+test("ordinary direct administration visits render permission denial without mounting administration queries", (t) => {
+  let client;
+  const html = renderAs(t, "user", createElement(AdminSettingsPage), {
+    path: "/admin/settings?tab=users",
+    seed: (value) => { client = value; client.clear(); },
+  });
+  assert.match(html, /无权|无权限|权限不足|仅管理员/);
+  assert.doesNotMatch(html, /Bot Token|创建用户|启用 AI 服务|settings-nav/);
+  assert.deepEqual(client.getQueryCache().getAll(), [], "denied pages must not create any settings or administration query");
+});
+
+test("administration business settings expose global controls and only registered shared settings", (t) => {
+  const html = renderAs(t, "admin", createElement(ModulesPanel, { scope: "admin" }), { seed: seedModules });
+  assert.match(html, /历史外部业务/);
+  assert.match(html, /legacy-connection-note/);
+  assert.match(html, /无配置业务/);
+  assert.match(html, /role="switch"/);
+  assert.match(html, /解除接入/);
+  assert.match(html, /投资设置/);
+  assert.doesNotMatch(html, /待办设置|无配置业务设置|历史外部业务设置/);
+});
+
+for (const role of ["user", "admin"]) {
+  test(`${role} disabled personal businesses show role-specific enablement guidance instead of inactive settings`, (t) => {
+    const html = renderAs(t, role, createElement(ModulesPanel), {
+      seed: (client) => client.setQueryData(["modules"], { items: [builtin("todo", "待办", { enabled: false, observedEnabled: false })] }),
+    });
+    assert.doesNotMatch(html, /待办设置|role="switch"/);
+    if (role === "admin") {
+      assert.match(html, /在后台设置中启用/);
+      assert.match(html, /href="\/admin\/settings\?tab=modules"/);
+    } else {
+      assert.match(html, /联系管理员启用/);
+      assert.doesNotMatch(html, /href="\/admin\/settings/);
+    }
+  });
+}
+
+test("failed business retries belong only to administration", (t) => {
+  const seed = (client) => client.setQueryData(["modules"], { items: [builtin("investment", "投资", { lastError: "fixture-startup-error" })] });
+  const personal = renderAs(t, "admin", createElement(ModulesPanel), { seed });
+  assert.doesNotMatch(personal, />重试<|role="switch"/);
+  const admin = renderAs(t, "admin", createElement(ModulesPanel, { scope: "admin" }), { seed });
+  assert.match(admin, />重试</);
+  assert.match(admin, /fixture-startup-error/);
+});
+
+test("shared investment configuration contains provider credentials but never personal OAuth actions", (t) => {
+  const html = renderAs(t, "admin", createElement(InvestmentAdminSettings, { enabled: true }));
   assert.match(html, /App Key/);
   assert.match(html, /App Secret/);
   assert.match(html, /OAuth 回调地址/);
   assert.match(html, /futu-admin-account/);
+  assert.match(html, /启用夜盘行情/);
+  assert.doesNotMatch(html, /登录 Schwab|重新授权|断开连接/);
 });
 
-test("ordinary users retain personal business settings but not global enabled toggles", (t) => {
-  const html = renderAs(t, "user", createElement(ModulesPanel));
-  assert.match(html, /待办设置/);
-  assert.doesNotMatch(html, /role="switch"/);
-  assert.match(renderAs(t, "admin", createElement(ModulesPanel)), /role="switch"/);
+test("business settings registries separate personal and shared capabilities", (t) => {
+  assert.ok(settingsRegistry.todo);
+  assert.ok(settingsRegistry.investment);
+  assert.ok(adminSettingsRegistry.investment);
+  assert.equal(adminSettingsRegistry.todo, undefined);
+  assert.match(renderAs(t, "admin", createElement(ModuleSettingsDialog, { module: builtin("todo", "待办") })), /待办设置/);
+  assert.equal(settingsRegistry.no_settings, undefined);
+  assert.equal(adminSettingsRegistry.no_settings, undefined);
+  assert.match(renderAs(t, "admin", createElement(ModuleSettingsDialog, { module: builtin("investment", "投资"), scope: "admin" })), /投资设置/);
 });
+
+test("Telegram service panel never mounts the administrator's personal recipient query", (t) => {
+  let client;
+  const html = renderAs(t, "admin", createElement(TelegramPanel), {
+    path: "/admin/settings?tab=notifications",
+    seed: (value) => { client = value; client.removeQueries({ queryKey: ["settings", "telegram", "recipient"], exact: true }); },
+  });
+  assert.match(html, /Bot Token/);
+  assert.match(html, /启用 Telegram 服务/);
+  assert.doesNotMatch(html, /个人推送|Chat ID|发送测试消息|personal-delivery-error|最近成功|失败投递/);
+  assert.equal(client.getQueryCache().find({ queryKey: ["settings", "telegram", "recipient"], exact: true }), undefined);
+});
+
+for (const role of ["user", "admin"]) {
+  test(`${role} unconfigured Schwab applications have actionable role-specific guidance`, (t) => {
+    const html = renderAs(t, role, createElement(InvestmentSettings, { enabled: true }), {
+      seed: (client) => client.setQueryData(["investment", "schwab"], {
+        configured: false, appKey: "", hasAppSecret: false, callbackUrl: "", connected: false,
+        reauthorizationRequired: false, lastError: "",
+      }),
+    });
+    if (role === "admin") assert.match(html, /href="\/admin\/settings\?tab=modules(?:&amp;|&)module=investment"/);
+    else {
+      assert.match(html, /联系管理员/);
+      assert.doesNotMatch(html, /href="\/admin\/settings/);
+    }
+    assert.doesNotMatch(html, /App Key|App Secret/);
+  });
+}

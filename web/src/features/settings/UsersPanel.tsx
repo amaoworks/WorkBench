@@ -7,7 +7,7 @@ import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { Field } from "../../components/ui/Field";
 import { Notice } from "../../components/ui/Notice";
 import { Skeleton } from "../../components/ui/States";
-import { useCurrentUser } from "../../shared/auth";
+import { useAuth, useCurrentUser } from "../../shared/auth";
 import { useCreateUser, useManagedUsers, useResetUserPassword, useUpdateUser } from "./queries";
 import type { ManagedUser } from "./schema";
 import { TelegramRecipientMapping } from "./TelegramRecipientPanel";
@@ -17,6 +17,7 @@ type PasswordResult = { username: string; password: string };
 export function UsersPanel() {
   const users = useManagedUsers();
   const current = useCurrentUser();
+  const { mode } = useAuth();
   const [creating, setCreating] = useState(false);
   const [password, setPassword] = useState<PasswordResult | null>(null);
   const createButton = useRef<HTMLButtonElement>(null);
@@ -30,7 +31,11 @@ export function UsersPanel() {
   return (
     <div className="space-y-4">
       <div className="flex justify-end">
-        <Button ref={createButton} variant="secondary" onClick={() => setCreating((value) => !value)}>
+        <Button
+          ref={createButton} variant="secondary" disabled={mode !== "password"}
+          title={mode !== "password" ? "本机免登录不支持创建用户" : undefined}
+          onClick={() => setCreating((value) => !value)}
+        >
           <UserPlus size={16} />创建用户
         </Button>
       </div>

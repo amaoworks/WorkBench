@@ -60,7 +60,11 @@ func (m *Module) oauthLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		message := html.EscapeString(startErr.Message)
 		if startErr.Status == http.StatusBadRequest {
-			message += `。<a href="/settings?tab=modules">返回设置修正回调地址</a>。`
+			if contracts.IsAdmin(r.Context()) {
+				message += `。<a href="/admin/settings?tab=modules&amp;module=investment">前往后台设置修正回调地址</a>。`
+			} else {
+				message += "。联系管理员修正回调地址。"
+			}
 		}
 		writeHTML(w, startErr.Status, message)
 		return
@@ -125,7 +129,7 @@ func (m *Module) beginSchwabOAuth(ctx context.Context) (string, string, time.Tim
 		return "", "", time.Time{}, &oauthStartError{Status: http.StatusInternalServerError, Message: "无法读取 Schwab 配置"}
 	}
 	if rec.AppKey == "" || rec.AppSecret == "" || rec.CallbackURL == "" {
-		return "", "", time.Time{}, &oauthStartError{Status: http.StatusConflict, Message: "请先在设置中保存 Schwab App Key、Secret 和回调地址"}
+		return "", "", time.Time{}, &oauthStartError{Status: http.StatusConflict, Message: "Schwab 应用未配置"}
 	}
 	if err := validateSchwabInput(schwabSettingsInput{AppKey: rec.AppKey, AppSecret: rec.AppSecret, CallbackURL: rec.CallbackURL}); err != nil {
 		return "", "", time.Time{}, &oauthStartError{Status: http.StatusBadRequest, Message: err.Error()}

@@ -36,8 +36,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     const errors = [];
     page.on("pageerror", error => errors.push(error.message));
-    await page.goto(baseURL + "/settings?tab=modules");
-    await page.getByRole("heading", { name: "业务", exact: true }).waitFor();
+    await page.goto(baseURL + "/admin/settings?tab=modules");
+    await page.getByRole("heading", { name: "业务管理", exact: true }).waitFor();
     assert.equal(await page.getByText("添加外部模块", { exact: true }).count(), 0);
     const { token } = await (await page.request.get(baseURL + "/api/auth/csrf")).json();
     const put = (path, data) => page.request.put(baseURL + path, { data, headers: { "X-CSRF-Token": token, Origin: baseURL } });
@@ -54,7 +54,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     assert.equal(await page.getByLabel("OpenD 主机", { exact: true }).count(), 0);
     assert.equal(await page.getByLabel("API 端口", { exact: true }).count(), 0);
     assert.equal(await page.getByRole("checkbox", { name: "允许非本机地址" }).count(), 0);
-    const futuForm = page.locator("form").filter({ has: page.getByRole("heading", { name: "富途牛牛行情", exact: true }) });
+    const investmentForm = page.getByRole("dialog", { name: "投资设置", exact: true }).locator("form.investment-settings");
+    assert.equal(await investmentForm.getByRole("button", { name: "登录 Schwab", exact: true }).count(), 0);
     let requestArrived;
     let releaseRequest;
     await page.route("**/api/modules/investment/futu", async (route) => {
@@ -66,18 +67,18 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     const save = async ({ confirmDisable = false } = {}) => {
       const arrived = new Promise((resolve) => { requestArrived = resolve; });
       const response = page.waitForResponse(r => r.url() === baseURL + "/api/modules/investment/futu" && r.request().method() === "PUT");
-      await futuForm.getByRole("button", { name: "保存", exact: true }).click();
+      await investmentForm.getByRole("button", { name: "保存", exact: true }).click();
       if (confirmDisable) {
         const confirm = page.getByRole("alertdialog", { name: "停用富途牛牛行情？", exact: true });
         await confirm.getByRole("button", { name: "停用并保存", exact: true }).click();
       }
       await arrived;
-      const pending = futuForm.getByRole("button", { name: "保存中…", exact: true });
+      const pending = investmentForm.getByRole("button", { name: "保存中…", exact: true });
       await pending.waitFor();
       assert(await pending.isDisabled());
       releaseRequest();
       assert.equal((await response).status(), 200);
-      await futuForm.getByRole("button", { name: "保存", exact: true }).waitFor();
+      await investmentForm.getByRole("button", { name: "保存", exact: true }).waitFor();
       requestArrived = undefined;
       releaseRequest = undefined;
     };
@@ -103,8 +104,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     }
     await page.getByRole("switch", { name: "启用夜盘行情", exact: true }).click();
     const savedNight = page.waitForResponse(r => r.url().endsWith("/investment/overnight") && r.request().method() === "PUT");
-    const overnightForm = page.locator("form").filter({ has: page.getByRole("heading", { name: "夜盘行情", exact: true }) });
-    await overnightForm.getByRole("button", { name: "保存", exact: true }).click();
+    await investmentForm.getByRole("button", { name: "保存", exact: true }).click();
     assert.equal((await savedNight).status(), 200);
     await page.getByRole("switch", { name: "启用富途牛牛行情", exact: true }).click();
     const previousPID = managed ? null : Number(await readFile(join(directory, "runtime", "fixture.pid"), "utf8"));

@@ -258,8 +258,8 @@ async function visitWithoutOverflow(page, url, label, ready) {
       externalPresent = false;
       await route.fulfill({ status: 204, body: "" });
     });
-    await page.goto(`${baseURL}/settings?tab=modules`);
-    await page.getByRole("heading", { name: "业务", exact: true }).waitFor();
+    await page.goto(`${baseURL}/admin/settings?tab=modules`);
+    await page.getByRole("heading", { name: "业务管理", exact: true }).waitFor();
     const detach = page.getByRole("button", { name: "解除接入", exact: true });
     await detach.click();
     const moduleDialog = page.getByRole("alertdialog", { name: "解除外部业务", exact: true });
@@ -267,7 +267,7 @@ async function visitWithoutOverflow(page, url, label, ready) {
     await expectFocus(detach, "canceling external-business deletion must restore the trigger focus");
     await detach.click();
     await moduleDialog.getByRole("button", { name: "确认删除", exact: true }).click();
-    await expectFocus(page.getByRole("heading", { name: "业务", exact: true }), "successful external-business deletion must focus the section heading");
+    await expectFocus(page.getByRole("heading", { name: "业务", exact: true, level: 3 }), "successful external-business deletion must focus the business-list fallback heading");
     assert.equal(externalDeletes, 1);
     await page.unroute(/\/api\/modules$/);
     await page.unroute("**/api/modules/external/ux_external");
@@ -292,7 +292,7 @@ async function visitWithoutOverflow(page, url, label, ready) {
     await page.unroute(/\/api\/settings$/);
 
     await page.getByRole("link", { name: "通知推送", exact: true }).click();
-    const telegramSwitch = page.getByRole("switch", { name: "启用推送", exact: true });
+    const telegramSwitch = page.getByRole("switch", { name: "接收 Telegram 提醒", exact: true });
     await telegramSwitch.waitFor();
     const switchBox = await telegramSwitch.boundingBox();
     const trackBox = await telegramSwitch.locator(".studio-switch-track").boundingBox();
@@ -344,20 +344,30 @@ async function visitWithoutOverflow(page, url, label, ready) {
         await visitWithoutOverflow(page, `${baseURL}/news${suffix}`, `News ${tab} at ${prefix}`, newsReady[tab]);
       }
       const settingsReady = {
-        modules: () => page.getByRole("heading", { name: "业务", exact: true }).waitFor(),
+        modules: () => page.getByRole("heading", { name: "业务", exact: true, level: 2 }).waitFor(),
         ai: () => page.getByLabel("接口地址", { exact: true }).waitFor(),
-        notifications: () => page.getByRole("switch", { name: "启用推送", exact: true }).waitFor(),
+        notifications: () => page.getByRole("switch", { name: "接收 Telegram 提醒", exact: true }).waitFor(),
         security: () => page.getByRole("region", { name: "账户安全", exact: true }).getByText("本机免登录", { exact: true }).waitFor(),
         appearance: () => page.getByRole("group", { name: "主题", exact: true }).waitFor(),
         data: () => page.getByRole("region", { name: "运行信息", exact: true }).waitFor()
       };
-      for (const tab of ["modules", "ai", "notifications", "security", "appearance", "data"]) {
-        await visitWithoutOverflow(page, `${baseURL}/settings?tab=${tab}`, `Settings ${tab} at ${prefix}`, settingsReady[tab]);
+      for (const tab of ["modules", "notifications", "security", "appearance"]) {
+        await visitWithoutOverflow(page, `${baseURL}/settings?tab=${tab}`, `Personal settings ${tab} at ${prefix}`, settingsReady[tab]);
+      }
+      const adminReady = {
+        users: () => page.getByRole("heading", { name: "用户管理", exact: true }).waitFor(),
+        modules: () => page.getByRole("heading", { name: "业务管理", exact: true }).waitFor(),
+        ai: settingsReady.ai,
+        notifications: () => page.getByRole("switch", { name: "启用 Telegram 服务", exact: true }).waitFor(),
+        data: settingsReady.data
+      };
+      for (const tab of Object.keys(adminReady)) {
+        await visitWithoutOverflow(page, `${baseURL}/admin/settings?tab=${tab}`, `Administration ${tab} at ${prefix}`, adminReady[tab]);
       }
       await page.goto(`${baseURL}/settings?tab=modules`);
-      await page.getByRole("heading", { name: "业务", exact: true }).waitFor();
+      await page.getByRole("heading", { name: "业务", exact: true, level: 2 }).waitFor();
       for (const dialog of [
-        { module: "投资", ready: () => page.getByLabel("App Key", { exact: true }).waitFor() },
+        { module: "投资", ready: () => page.getByRole("button", { name: "登录 Schwab", exact: true }).waitFor() },
         {
           module: "待办",
           ready: () => page.getByLabel("Wallos 地址", { exact: true }).waitFor(),
@@ -401,6 +411,13 @@ async function visitWithoutOverflow(page, url, label, ready) {
         await page.getByRole("button", { name: "关闭业务设置", exact: true }).click();
         await page.getByRole("dialog", { name: `${dialog.module}设置`, exact: true }).waitFor({ state: "hidden" });
       }
+      await page.goto(`${baseURL}/admin/settings?tab=modules&module=investment`);
+      const sharedInvestment = page.getByRole("dialog", { name: "投资设置", exact: true });
+      await sharedInvestment.getByLabel("App Key", { exact: true }).waitFor();
+      assert.equal(await sharedInvestment.getByRole("button", { name: "登录 Schwab", exact: true }).count(), 0);
+      await expectNoOverflow(page, `Shared investment settings dialog at ${prefix}`);
+      await sharedInvestment.getByRole("button", { name: "关闭业务设置", exact: true }).click();
+      await sharedInvestment.waitFor({ state: "hidden" });
       await page.goto(`${baseURL}/settings?tab=appearance`);
       await page.getByRole("group", { name: "主题", exact: true }).waitFor();
       for (const theme of ["浅色", "深色", "跟随系统"]) {

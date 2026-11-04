@@ -434,14 +434,15 @@ async function expectFormControlStyles(page, reference, label) {
       await page.screenshot({ path: `/tmp/workbench-news-${width}.png`, fullPage: true, animations: "disabled" });
     }
 
-    await page.goto(`${baseURL}/settings?tab=modules`);
+    await page.goto(`${baseURL}/admin/settings?tab=modules`);
     const newsSwitch = page.getByRole("switch", { name: "资讯", exact: true });
     await newsSwitch.click();
     await page.waitForFunction(() => document.querySelector('[role="switch"][aria-label="资讯"]')?.getAttribute("aria-checked") === "false");
     assert.equal(await page.getByRole("link", { name: "资讯", exact: true }).count(), 0);
     assert.equal((await page.request.get(`${baseURL}/api/modules/news/settings`)).status(), 503);
-    await page.getByRole("button", { name: "资讯设置", exact: true }).click();
-    await page.getByText("启用后可配置采集、AI 和简报。", { exact: true }).waitFor();
+    await page.goto(`${baseURL}/settings?tab=modules`);
+    await page.getByText("在后台设置中启用。", { exact: true }).waitFor();
+    assert.equal(await page.getByRole("button", { name: "资讯设置", exact: true }).count(), 0);
 
     assert.deepEqual(fixtureErrors, []);
     assert.deepEqual(pageErrors, []);

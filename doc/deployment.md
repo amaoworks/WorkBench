@@ -118,7 +118,7 @@ WORKBENCH_DATABASE_URL=postgresql://${POSTGRES_USER}:p%2Fq@postgres:${POSTGRES_P
 docker compose up -d --no-build
 ```
 
-AI、Wallos、Schwab 和富途账号等业务配置在工作台设置页面保存；OpenD 连接地址和非本机许可由部署配置管理。
+共享 AI 服务、Schwab 应用配置和富途账号在后台设置保存；个人 Wallos 连接、资讯偏好和 Schwab 授权在个人设置管理。OpenD 连接地址和非本机许可由部署配置管理。
 
 夜盘覆盖使用独立的 OpenD 容器，构建文件位于源码仓库的 [futu-opend](https://github.com/amaoworks/WorkBench/tree/main/futu-opend) 目录。Release 的部署包和二进制包均不包含该目录；使用部署包时，从同版本标签的源码归档中复制完整的 `futu-opend/` 目录到部署包根目录。
 
@@ -129,7 +129,7 @@ docker compose -f compose.yaml -f futu-opend/compose.workbench.yaml --env-file .
 docker compose -f compose.image.yaml -f futu-opend/compose.workbench.yaml --env-file .env up -d --build
 ```
 
-在「设置 → 业务模块 → 投资设置」填写 Futu 账号和登录密码，保存并启用 Futu，然后单独启用夜盘。主机、端口和非本机许可已由配套 Compose 配置；独立部署使用 `WORKBENCH_FUTU_OPEND_ADDRESS`、`WORKBENCH_FUTU_ALLOW_NON_LOCAL`。需要使用支持共享登录配置的当前工作台镜像和配套 OpenD 镜像。首次登录若要求验证码，telnet `127.0.0.1:22222`。独立 OpenD 与账号保留规则见源码中的 `futu-opend/README.md`；在线说明见 [OpenD 部署说明](https://github.com/amaoworks/WorkBench/blob/main/futu-opend/README.md)。
+管理员在「后台设置 → 业务管理 → 投资」填写 Futu 账号和登录密码，保存并启用 Futu，然后单独启用夜盘。主机、端口和非本机许可已由配套 Compose 配置；独立部署使用 `WORKBENCH_FUTU_OPEND_ADDRESS`、`WORKBENCH_FUTU_ALLOW_NON_LOCAL`。需要使用支持共享登录配置的当前工作台镜像和配套 OpenD 镜像。首次登录若要求验证码，telnet `127.0.0.1:22222`。独立 OpenD 与账号保留规则见源码中的 `futu-opend/README.md`；在线说明见 [OpenD 部署说明](https://github.com/amaoworks/WorkBench/blob/main/futu-opend/README.md)。
 
 配置宿主机反向代理后，通过 `.env` 中的 HTTPS 地址访问。Workbench 容器以 UID/GID `65532:65532` 运行，`/data` 挂载持久化卷，`/tmp` 使用容器文件系统。日志输出到 stderr，并由 Compose 配置滚动保存。命名卷首次创建时继承镜像中 `/data` 的权限。
 
@@ -227,7 +227,7 @@ docker compose exec -T workbench /workbench -version
 
 ## 升级、备份与恢复
 
-1. SQLite 在设置的「数据与运行」创建在线备份，并把备份保存到工作空间以外的位置。PostgreSQL 使用数据库服务备份或 `pg_dump`，应用不内置该工具。备份包含业务数据和凭据，应限制读取权限。
+1. SQLite 在「后台设置 → 数据与运行」创建全库在线备份，并把备份保存到工作空间以外的位置。PostgreSQL 使用数据库服务备份或 `pg_dump`，应用不内置该工具。备份包含业务数据和凭据，应限制读取权限。
 2. 停止服务。二进制部署更换可执行文件；源码 Compose 更新源码后执行 `docker compose up -d --build`；发布镜像 Compose 修改 `.env` 的版本后使用 `compose.image.yaml` 执行 `pull` 和 `up -d`。保留原数据卷及 Compose 项目名。
 3. 检查版本、健康状态和日志，登录确认数据。首次启动会执行所需数据库迁移。
 
@@ -301,4 +301,4 @@ Actions 通过内置 `GITHUB_TOKEN` 发布：镜像任务有 `packages: write`�
 
 ## 日志与排障
 
-在设置 → 数据与运行中保存日志等级，支持 debug/info/warn/error，立即生效且重启保留。Compose 的 `WORKBENCH_LOG_LEVEL` 和二进制的 `-log-level` 只提供未保存设置时的初始值。服务日志为 JSON，输出到 stderr，容器通过 `docker compose logs -f --tail 100 workbench` 查看，systemd 使用 `journalctl -u workbench -f`。Compose 已配置每份 10 MB、最多 3 份的日志轮转；二进制文件重定向需自行轮转。详细分级和字段见[运行日志](configuration.md#运行日志)。
+在后台设置 → 数据与运行中保存日志等级，支持 debug/info/warn/error，立即生效且重启保留。Compose 的 `WORKBENCH_LOG_LEVEL` 和二进制的 `-log-level` 只提供未保存设置时的初始值。服务日志为 JSON，输出到 stderr，容器通过 `docker compose logs -f --tail 100 workbench` 查看，systemd 使用 `journalctl -u workbench -f`。Compose 已配置每份 10 MB、最多 3 份的日志轮转；二进制文件重定向需自行轮转。详细分级和字段见[运行日志](configuration.md#运行日志)。

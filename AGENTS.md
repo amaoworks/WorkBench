@@ -40,7 +40,7 @@ Workbench 是本地优先、支持多用户的个人工作台，采用 Go 模块
 
 ### 5. 前端类型与注册约定
 * 共享 `api` 返回 `unknown`，禁止裸泛型断言；消费 JSON 响应必须使用 `apiValidated(url, schema)` 或 `schema.parse(await api(url))`。业务 schema 放在模块内的 `schema.ts`，平台共享 schema 放在共享目录。
-* 内置业务前端在 `web/src/modules/<id>/<id>.module.ts` 声明实际提供的资源，由平台 Registry 装配。`pages`、`widgets` 字段可为空映射，`settings`、`icons` 可选；禁止在外壳层强耦合业务组件。
+* 内置业务前端在 `web/src/modules/<id>/<id>.module.ts` 声明实际提供的资源，由平台 Registry 装配。`pages`、`widgets` 字段可为空映射，`settings`、`adminSettings`、`icons` 可选；个人配置与共享配置分别通过 `settings` 和 `adminSettings` 注册，禁止在外壳层强耦合业务组件。
 * 界面组件、页面状态、控件选型、可达性与响应式遵循 [doc/frontend-guidelines.md](doc/frontend-guidelines.md)，优先复用共享组件，不重复实现交互。
 
 ---

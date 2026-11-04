@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Aperture, ChevronDown, LogOut, Menu, Sparkles, UserRound, X } from "lucide-react";
+import { Aperture, ChevronDown, LogOut, Menu, Shield, Sparkles, UserRound, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "../shared/cn";
 import { aiShortcut } from "../shared/keyboard";
@@ -217,7 +217,7 @@ function MenuLink({ item, active, onSelect }: { item: ModuleMenuItem; active: bo
   );
 }
 
-// Theme and palette live on the settings page; the menu only leads there and signs out.
+// Personal preferences and platform administration have separate destinations.
 function UserMenu() {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -228,6 +228,7 @@ function UserMenu() {
   useDismiss(open, root, close);
   const location = useLocation();
   const onSettings = location.pathname === "/settings";
+  const onAdminSettings = location.pathname === "/admin/settings";
   const auth = useAuth();
   const [leaving, setLeaving] = useState(false);
   async function logout() {
@@ -251,7 +252,7 @@ function UserMenu() {
       <button
         ref={button}
         type="button"
-        className={cn("workspace-avatar focus-ring", onSettings && "is-active")}
+        className={cn("workspace-avatar focus-ring", (onSettings || onAdminSettings) && "is-active")}
         aria-label={`账户菜单 · ${auth.user?.displayName || auth.user?.username || "账户"}`}
         aria-haspopup="menu"
         aria-expanded={open}
@@ -274,7 +275,12 @@ function UserMenu() {
           ref={menu} id={id} role="menu" aria-label="账户菜单" className="workspace-menu workspace-user-menu"
           onKeyDown={(event) => menuKeys(event, menu.current, closeAndFocus)}
         >
-          <MenuLink item={{ label: "设置", to: "/settings", icon: settingsIcon }} active={onSettings} onSelect={() => setOpen(false)} />
+          <MenuLink item={{ label: "个人设置", to: "/settings", icon: settingsIcon }} active={onSettings} onSelect={() => setOpen(false)} />
+          {auth.user?.role === "admin" && (
+            <MenuLink
+              item={{ label: "后台设置", to: "/admin/settings", icon: Shield }} active={onAdminSettings} onSelect={() => setOpen(false)}
+            />
+          )}
           {auth.mode === "password" && (
             <>
               <div className="workspace-menu-sep" role="separator" />

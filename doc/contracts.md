@@ -53,7 +53,7 @@ Tool 风险分为 read_only、low_write、high_write。写工具需要幂等键�
 
 [WidgetDefinition](../internal/contracts/widget.go) 声明 ID、模块、schemaVersion、标题、widgetKind、dataRoute、尺寸和默认顺序。尺寸为 small/medium/large。导航用 `pageKey` 关联页面。
 
-前端 [ModuleUI](../web/src/modules/registry.ts) 提供 pages、widgets，以及可选的 icons、settings、menu（顶部导航下拉项）和 subpages（子页面）。后端只能通过这些稳定标识选择本地编译的组件。Widget 接收 `{ widget }`，业务设置接收 `{ enabled }`。
+前端 [ModuleUI](../web/src/modules/registry.ts) 提供 pages、widgets，以及可选的 icons、settings（个人业务配置）、adminSettings（后台共享业务配置）、menu（顶部导航下拉项）和 subpages（子页面）。后端只能通过这些稳定标识选择本地编译的组件。Widget 接收 `{ widget }`，两类业务设置均接收 `{ enabled }`。`settings` 在 `/settings` 装配，`adminSettings` 仅在管理员路由 `/admin/settings` 装配；界面入口拆分不改变 API、配置归属或后端权限。
 
 Dashboard 保存完整的 Widget 配置集合，包含 ID、visible、size、order；目录查询保留停用业务以便编辑偏好，展示查询只返回启用且可见的卡片。
 

@@ -113,8 +113,8 @@ async function toggleTheme(page) {
     await page.setViewportSize({ width: 1440, height: 1000 });
     // System appearance changes must propagate without navigating or reloading the chart.
     // Settings lives in the account menu, not the top bar.
-    await page.getByRole("button", { name: "账户菜单", exact: true }).click();
-    await page.getByRole("menuitem", { name: "设置", exact: true }).click();
+    await page.getByRole("button", { name: /^账户菜单/ }).click();
+    await page.getByRole("menuitem", { name: "个人设置", exact: true }).click();
     await page.getByRole("link", { name: "外观", exact: true }).click();
     await Promise.all([
       page.waitForResponse(response => response.url().endsWith("/api/settings/appearance") && response.request().method() === "PUT"),

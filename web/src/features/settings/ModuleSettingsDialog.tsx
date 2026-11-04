@@ -3,7 +3,7 @@ import { Suspense, useCallback, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Settings2, X } from "lucide-react";
 import { Button } from "../../components/ui/Button";
-import { settingsRegistry } from "../../modules/registry";
+import { adminSettingsRegistry, settingsRegistry } from "../../modules/registry";
 import type { WorkbenchModule } from "../../shared/schema";
 import { ExternalSettingsFrame } from "../../app/ExternalPage";
 import { useSettings } from "./queries";
@@ -12,9 +12,13 @@ import { Skeleton } from "../../components/ui/States";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { SettingsDialogContext, type SettingsDialogControl } from "../../shared/settingsDialog";
+import { useIsAdmin } from "../../shared/auth";
 
-export function ModuleSettingsDialog({ module }: { module: WorkbenchModule }) {
-  const Settings = settingsRegistry[module.id];
+export function ModuleSettingsDialog({ module, scope = "personal" }: {
+  module: WorkbenchModule; scope?: "personal" | "admin";
+}) {
+  const isAdmin = useIsAdmin();
+  const Settings = (scope === "admin" ? adminSettingsRegistry : settingsRegistry)[module.id];
   const settings = useSettings();
   const theme =
     settings.data?.appearance.theme === "dark" ||
@@ -50,6 +54,8 @@ export function ModuleSettingsDialog({ module }: { module: WorkbenchModule }) {
     }),
     [setOpen],
   );
+  if (scope === "admin" && !isAdmin) return null;
+  if (module.kind === "external" ? scope !== "admin" || !module.settingsEntry : !Settings) return null;
   return (
     <Dialog.Root open={open} onOpenChange={(next) => (next ? setOpen(true) : control.requestClose())}>
       <Dialog.Trigger asChild>

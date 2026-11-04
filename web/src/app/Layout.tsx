@@ -5,7 +5,7 @@ import { Route, Routes, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { apiValidated } from "../shared/api";
 import { ThemeContext } from "../shared/theme";
-import { useCurrentUser, userStorageKey } from "../shared/auth";
+import { useCurrentUser, useIsAdmin, userStorageKey } from "../shared/auth";
 import { Button, ButtonLink } from "../components/ui/Button";
 import { Notice } from "../components/ui/Notice";
 import { Skeleton } from "../components/ui/States";
@@ -19,6 +19,7 @@ import { matchesLocation, type NavEntry } from "./navigation";
 const DashboardPage = lazy(() => import("../features/dashboard/DashboardPage"));
 const NotificationsPage = lazy(() => import("../features/notifications/NotificationsPage"));
 const SettingsPage = lazy(() => import("../features/settings/SettingsPage"));
+const AdminSettingsPage = lazy(() => import("../features/settings/AdminSettingsPage"));
 
 import { pageRegistry, iconRegistry, menuRegistry, subpageRegistry } from "../modules/registry";
 import { ExternalPage } from "./ExternalPage";
@@ -148,7 +149,8 @@ export function Layout() {
     ];
   }, [modules.data, moduleNav, navCache, unread.data?.count]);
   // Settings lives in the account menu rather than the top bar, so name it here for the AI context.
-  const context = location.pathname === "/settings" ? "设置" : pageContext(entries, location.pathname, location.search);
+  const context = location.pathname === "/settings" ? "个人设置"
+    : location.pathname === "/admin/settings" ? "后台设置" : pageContext(entries, location.pathname, location.search);
   return (
     <ThemeContext.Provider value={dark ? "dark" : "light"}>
       <div className="workbench-shell min-h-screen">
@@ -163,6 +165,7 @@ export function Layout() {
                 <Route index element={<DashboardPage />} />
                 <Route path="notifications" element={<NotificationsPage />} />
                 <Route path="settings" element={<SettingsPage />} />
+                <Route path="admin/settings" element={<AdminSettingsPage />} />
                 {navigation.map((item) => {
                   const Page = pageRegistry[item.pageKey];
                   return Page ? <Route key={item.pageKey} path={item.route.replace(/^\//, "")} element={<Page />} /> : null;
@@ -210,6 +213,7 @@ function PageSkeleton() {
  */
 function RouteFallback({ modules }: { modules: ReturnType<typeof useModules> }) {
   const { pathname } = useLocation();
+  const isAdmin = useIsAdmin();
   if (modules.isPending) return <PageSkeleton />;
   if (modules.isError)
     return (
@@ -220,21 +224,19 @@ function RouteFallback({ modules }: { modules: ReturnType<typeof useModules> }) 
   const owner = modules.data.items.find((item) =>
     item.navigation.some((nav) => pathname === nav.route || pathname.startsWith(`${nav.route.replace(/\/$/, "")}/`)),
   );
-  const settingsLink = (
-    <ButtonLink variant="secondary" to={owner ? `/settings?tab=modules&module=${encodeURIComponent(owner.id)}` : "/settings?tab=modules"}>
-      业务设置
-    </ButtonLink>
-  );
+  const settingsLink = isAdmin ? (
+    <ButtonLink variant="secondary" to="/admin/settings?tab=modules">业务管理</ButtonLink>
+  ) : undefined;
   if (owner && !owner.enabled)
     return (
       <Notice title={`${owner.name}未启用`} action={settingsLink}>
-        在业务设置中启用后即可使用此页面。
+        {isAdmin ? "在后台设置中启用。" : "联系管理员启用。"}
       </Notice>
     );
   if (owner?.lastError)
     return (
       <Notice tone="danger" title={`${owner.name}运行异常`} action={settingsLink}>
-        {owner.lastError}
+        {isAdmin ? owner.lastError : "联系管理员检查业务状态。"}
       </Notice>
     );
   if (owner && (owner.pending || (owner.kind === "builtin" && owner.observedEnabled !== true)))

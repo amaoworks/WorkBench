@@ -29,7 +29,7 @@ export function ExternalPage() {
       </Notice>
     );
   if (!module || module.kind !== "external") return <UnknownExternal />;
-  if (!module.enabled) return <Notice title="业务已停用" action={<ButtonLink to="/settings?tab=modules">打开设置</ButtonLink>} />;
+  if (!module.enabled) return <Notice title="业务已停用" action={<ButtonLink to="/admin/settings?tab=modules">业务管理</ButtonLink>} />;
   if (module.pending) return <Notice title="正在启用">等待服务确认。</Notice>;
   if (module.health === "offline" || module.health === "incompatible" || module.health === "unknown") {
     return (

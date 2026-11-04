@@ -9,7 +9,7 @@ src/app/                 登录、应用装配、顶部导航外壳、路由兜�
 src/features/ai/         平台 AI 对话面板
 src/features/dashboard/ 总览及布局配置
 src/features/notifications/ 通知列表与 SSE
-src/features/settings/  外观、模块管理、AI、通知推送、安全、数据与运行设置
+src/features/settings/  个人设置、后台设置及共享分类布局
 src/modules/registry.ts 编译期业务注册目录
 src/modules/<id>/       业务页面、Widget、模块设置、queries.ts、schema.ts
 src/components/ui/      通用界面组件
@@ -22,9 +22,9 @@ src/assets/fonts/       本地打包的 Outfit 标题字体（woff2 与 SIL OFL 
 
 ## 模块注册和缓存
 
-`src/modules/<id>/<id>.module.ts` 声明 pages、widgets，以及可选的 icons、settings、`menu`（顶部导航下拉项；目前只有投资声明，空菜单渲染为普通链接）和 `subpages`（挂在 `${route}/${path}` 下的子页面）。共用的导航类型与匹配规则在 `src/app/navigation.ts`。Registry 自动收集声明，组件按需加载。后端 `pageKey/widgetKind` 只映射到已编译的本地注册项；Shell 和总览不包含业务组件实现。外部模块不进入该注册表，页面为 `/apps/{id}/{pageName}`，由通用 iframe 容器加载 `/modules/{id}/ui/*` 与设置 `/modules/{id}/settings/*`。未知图标回退到宿主默认图标。
+`src/modules/<id>/<id>.module.ts` 声明 pages、widgets，以及可选的 icons、settings、adminSettings、`menu`（顶部导航下拉项；目前只有投资声明，空菜单渲染为普通链接）和 `subpages`（挂在 `${route}/${path}` 下的子页面）。共用的导航类型与匹配规则在 `src/app/navigation.ts`。Registry 自动收集声明，组件按需加载。后端 `pageKey/widgetKind` 只映射到已编译的本地注册项；Shell 和总览不包含业务组件实现。外部模块不进入该注册表，页面为 `/apps/{id}/{pageName}`，由通用 iframe 容器加载 `/modules/{id}/ui/*` 与设置 `/modules/{id}/settings/*`。未知图标回退到宿主默认图标。
 
-模块设置接收 `{ enabled: boolean }`，停用时不发起业务查询。设置弹窗由平台管理，没有设置组件的模块展示暂无配置内容。
+`settings` 声明个人业务配置，`adminSettings` 声明管理员共享业务配置，均接收 `{ enabled: boolean }`，停用时不发起业务查询。Registry 分别装配到个人设置和后台设置，弹窗由平台管理；没有对应配置组件时不显示设置按钮。管理员自己的授权与偏好仍在个人设置中。
 
 业务 queryKey 以模块 ID 开头，Widget 使用 `[moduleId, "widget", widget.id]`。启停模块后平台取消旧查询、清除对应业务和 Widget 缓存，再刷新模块、总览与 AI 状态；业务写入后刷新实际受影响的查询。分页使用后端 nextCursor。接入示例见[业务开发指南](../doc/business-development.md)。
 
@@ -34,9 +34,9 @@ src/assets/fonts/       本地打包的 Outfit 标题字体（woff2 与 SIL OFL 
 
 - 图标使用 Lucide。标题使用 PageHeader，卡片和按钮使用共享 Card、Button；按钮形式的站内跳转使用 ButtonLink。
 - 配色读取 `styles.css` 的语义变量，兼容明暗主题，尊重系统及工作空间的减少动态效果设置。默认 palette `default`（宝蓝），可选 `claude`（陶橙）；主题默认跟随系统。标题字体 Outfit 随构建打包，不访问外部字体 CDN。
-- 外壳是顶部导航，不使用侧栏和页脚。`Ctrl+J`（macOS 上是 `⌘J`）打开或关闭 AI 面板；头像菜单只有设置和（password 模式）退出登录，主题只在「设置 → 外观」切换。
+- 外壳是顶部导航，不使用侧栏和页脚。`Ctrl+J`（macOS 上是 `⌘J`）打开或关闭 AI 面板；头像菜单包含个人设置、仅管理员可见的后台设置，以及 password 模式下的退出登录；主题只在「个人设置 → 外观」切换。
 - 删除确认使用共享 ConfirmDialog 与 useConfirmDelete，支持键盘操作，并按操作结果恢复焦点。
-- 设置是单页：左侧吸顶分类导航，右侧依次是 外观、业务模块、AI、通知推送、账户安全、数据与运行 分区卡片，行内左侧名称、右侧控件。`/settings?tab=modules|ai|notifications|security|appearance|data` 滚动到对应分区，`?module=<id>` 打开业务设置弹窗。
+- 个人设置 `/settings` 包含外观、业务、通知推送、账户安全；后台设置 `/admin/settings` 包含用户管理、业务管理、AI 服务、通知服务、数据与运行。后台先检查角色再挂载管理查询。两页共用左侧吸顶分类与右侧分区布局，`?tab=` 定位分类，`?tab=modules&module=<id>` 打开各自作用范围的业务弹窗。旧 `/settings?tab=ai|users|data` 只为管理员重定向后台，个人投资链接仍指向本人授权。
 - 业务设置弹窗最大宽度 480px，支持 Escape、遮罩及关闭按钮，接入 `useReportDirty` 拦截未保存草稿关闭，并将焦点还给触发按钮。
 - 通知的查看、已读、归档使用共享 Button/ButtonLink 的 ghost、sm 规格；业务只提供 actionRoute 和 actionLabel。
 - 宽度不超过 900px 时设置分类变为横向滚动胶囊，避免纵向溢出；新增页面检查桌面和窄屏宽度。

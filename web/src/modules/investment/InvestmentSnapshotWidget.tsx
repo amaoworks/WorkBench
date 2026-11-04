@@ -32,7 +32,7 @@ export default function InvestmentSnapshotWidget({ widget }: { widget: Widget })
   const data = snapshot.data;
   if (data.status === "disconnected")
     return (
-      <WidgetSetup action={<ButtonLink size="sm" variant="secondary" to="/settings?tab=modules">去配置</ButtonLink>}>
+      <WidgetSetup action={<ButtonLink size="sm" variant="secondary" to="/settings?tab=modules&module=investment">连接券商</ButtonLink>}>
         未连接 Schwab
       </WidgetSetup>
     );

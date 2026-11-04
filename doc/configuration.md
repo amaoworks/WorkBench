@@ -38,7 +38,7 @@ Go 版本以 [go.mod](../go.mod) 为准，当前为 1.27.1。前端使用 Node.j
 | `-auth` | `WORKBENCH_AUTH` | `local`；可选 `password` |
 | `-futu-opend-address` | `WORKBENCH_FUTU_OPEND_ADDRESS` | OpenD 的 TCP 主机与端口，默认 `127.0.0.1:11111`；仅在部署配置中管理 |
 | `-futu-allow-non-local` | `WORKBENCH_FUTU_ALLOW_NON_LOCAL` | 是否允许非本机 OpenD 地址，默认 `false` |
-| `-futu-config-dir` | `WORKBENCH_FUTU_CONFIG_DIR` | 与配套 OpenD 共享的登录配置目录；账号密码在投资设置中填写 |
+| `-futu-config-dir` | `WORKBENCH_FUTU_CONFIG_DIR` | 与配套 OpenD 共享的登录配置目录；账号密码在后台投资设置中填写 |
 | `-futu-runtime-dir` | `WORKBENCH_FUTU_RUNTIME_DIR` | 原生 OpenD 私有运行目录，默认数据库同级 `futu-opend`；首次启用自动下载安装 |
 | `-futu-opend-binary` | `WORKBENCH_FUTU_OPEND_BINARY` | 已安装的兼容 OpenD 程序路径；留空使用自动安装的 10.9.6908 |
 | — | `WORKBENCH_MOBILE_PUSH_ENABLED` | `false`；启用 APNs/FCM 移动推送，至少配置一个服务商 |
@@ -99,18 +99,36 @@ export WORKBENCH_DATA='./data/data.db'
 
 `WORKBENCH_CORS_ALLOW_ORIGIN` 为浏览器跨来源访问设置白名单。每项必须是完整 HTTP/HTTPS origin；不支持通配符。启用 HTTPS 外部地址时，白名单也必须全部使用 HTTPS。中间件处理预检请求、凭据响应头和 CSRF 来源白名单。HTTPS 部署配置 CORS 白名单时，Session 和 CSRF Cookie 使用 `SameSite=None`；其他部署保持 `SameSite=Strict`。纯 HTTP 跨站请求仍可能受浏览器 Cookie 限制，可使用同站点的不同端口。Session/CSRF 安全属性依据 `public-url` 计算，应用不信任动态 `X-Forwarded-*` 请求头。反代 Nginx/Caddy 配置、WebSocket 与 SSE 缓冲要求详见[部署与发布 - 反向代理](deployment.md#反向代理)，请求保护边界见[安全边界](security.md)。
 
-旧的 `-tls-cert` 和 `-tls-key` 参数已移除，TLS 统一由反向代理终止。可在设置的「数据与运行」查看当前生效的监听地址、数据库类型、数据库路径（仅 SQLite；PostgreSQL 不显示本地数据路径）、认证模式与外部 Host。
+旧的 `-tls-cert` 和 `-tls-key` 参数已移除，TLS 统一由反向代理终止。可在「后台设置 → 数据与运行」查看当前生效的监听地址、数据库类型、数据库路径（仅 SQLite；PostgreSQL 不显示本地数据路径）、认证模式与外部 Host。
 
 ## 设置页面
 
-设置是单页，左侧分类导航，右侧依次为以下分区；`/settings?tab=appearance|modules|ai|notifications|security|data` 滚动到对应分区，`?module=<id>` 打开业务设置弹窗：
+从头像菜单进入「个人设置」或「后台设置」；后者仅管理员可见并受路由权限保护。两个页面共用桌面吸顶分类与移动端横向分类布局，`?tab=` 定位分区，`?module=<id>` 打开该页面对应的业务设置弹窗。
 
-- 外观：风格可选 宝蓝（默认）或 陶橙，主题可选浅色、深色或跟随系统（默认），并可减少动态效果；自动保存。头像菜单不提供主题切换。
-- 业务模块：启停已编译业务；模块提供设置组件时可打开独立弹窗。
-- AI 配置：开关、端点、模型、密钥，支持测试连接与保存。端点须兼容 Responses API；测试会发送简短请求，可能产生费用。保存后新请求使用新 Provider。
-- 通知推送：Telegram Bot Token、Chat ID、启停、测试发送和投递状态，见 [Telegram 通知](notifications.md)。
-- 账户安全：验证当前密码后修改密码，已有登录全部失效。
-- 数据与运行：切换日志等级，查看数据库类型和部署参数；SQLite 可创建在线备份，PostgreSQL 显示外部备份提示。
+### 个人设置
+
+所有用户（包括管理员）在 `/settings` 管理本人的设置：
+
+| 分区 | `tab` | 内容 |
+|---|---|---|
+| 外观 | `appearance` | 风格 宝蓝（默认）或 陶橙；浅色、深色、跟随系统（默认）主题；减少动态效果，自动保存 |
+| 业务 | `modules` | Wallos 连接与提醒、资讯 AI 处理及语言/存储/简报偏好、Schwab 本人授权与断开、共享夜盘只读状态 |
+| 通知推送 | `notifications` | 本人接收开关、目标展示、测试消息和投递状态，见[外部通知](notifications.md) |
+| 账户安全 | `security` | 验证当前密码后修改本人密码、管理本人登录设备；改密使本人的已有登录失效 |
+
+### 后台设置
+
+管理员在 `/admin/settings` 管理影响整个工作台的配置：
+
+| 分区 | `tab` | 内容 |
+|---|---|---|
+| 用户管理 | `users` | 创建用户、角色、禁用、重置密码及分配通知目标 |
+| 业务管理 | `modules` | 业务启停、运行重试、历史外部业务管理；投资的 Schwab 应用凭据与回调、富途登录及 OpenD、夜盘总开关 |
+| AI 服务 | `ai` | 开关、端点、模型、密钥、测试连接；端点须兼容 Responses API，保存后新请求使用新 Provider |
+| 通知服务 | `notifications` | Telegram Bot Token 和共享服务开关；接收目标在用户管理中分配 |
+| 数据与运行 | `data` | 日志等级、数据库类型和部署参数；SQLite 全库在线备份，PostgreSQL 外部备份提示 |
+
+旧 `/settings?tab=ai|users|data` 对管理员以 `replace` 跳转到后台相应分区，普通用户留在个人设置；原 `/settings?module=investment` 仍打开本人授权。共享投资配置使用 `/admin/settings?tab=modules&module=investment`。
 
 在分区间切换不会丢失当前页面内的表单草稿；刷新或离开页面不会持久化未保存输入。AI、Wallos、Schwab 和 Telegram 密钥只写入、不回显，留空通常保留已有值；更换端点、App Key 或回调须重新提供密钥。详细边界见[安全说明](security.md)。
 
@@ -145,11 +163,11 @@ Schwab OAuth 回调必须使用实际可访问工作台的 HTTPS 入口，例如
 
 ## 备份和恢复
 
-SQLite 设置中的备份调用 `POST /api/system/backup`，在数据库同目录的 `backups/` 下生成文件，接口返回文件名。后端使用 `VACUUM INTO` 创建一致性快照并执行完整性检查，不提供浏览器下载或在线恢复入口。
+「后台设置 → 数据与运行」中的 SQLite 备份调用 `POST /api/system/backup`，在数据库同目录的 `backups/` 下生成文件，接口返回文件名。后端使用 `VACUUM INTO` 创建一致性快照并执行完整性检查，不提供浏览器下载或在线恢复入口。
 
 SQLite 恢复时先停止使用该工作空间的进程，保留现有数据库及其 sidecar 文件用于回退。将备份复制到一个新的数据库路径，通过 `-data` 指向它启动，程序会执行所需迁移。不要把备份覆盖到仍在运行的数据库上，也不要把旧 WAL 与恢复的数据库混用。
 
-PostgreSQL 设置页显示“由数据库服务管理”，`POST /api/system/backup` 返回 HTTP 501。使用数据库服务提供的备份机制或 `pg_dump`/`pg_restore` 执行备份与恢复，应用不调用或内置这些工具。
+PostgreSQL 在「后台设置 → 数据与运行」显示“由数据库服务管理”，`POST /api/system/backup` 返回 HTTP 501。使用数据库服务提供的备份机制或 `pg_dump`/`pg_restore` 执行备份与恢复，应用不调用或内置这些工具。
 
 数据库及备份含凭据和业务内容。SQLite 创建数据库目录时使用 0700，数据库和完成的备份文件设为 0600；PostgreSQL 连接串所在环境文件及数据库服务备份应限制读取权限。文件布局、迁移表和维护行为见[数据设计](data-model.md)。
 
@@ -157,7 +175,7 @@ PostgreSQL 设置页显示“由数据库服务管理”，`POST /api/system/bac
 
 ## 运行日志
 
-设置 → 数据与运行 → 运行日志中选择最低记录等级并保存，无需重启。等级保存到当前数据库的 `workspace_settings.logging`，重启后优先于 `-log-level` 和 `WORKBENCH_LOG_LEVEL`；未保存过时使用启动默认值。日志等级不会改变程序行为或健康检查结果。
+后台设置 → 数据与运行 → 运行日志中选择最低记录等级并保存，无需重启。等级保存到当前数据库的 `workspace_settings.logging`，重启后优先于 `-log-level` 和 `WORKBENCH_LOG_LEVEL`；未保存过时使用启动默认值。日志等级不会改变程序行为或健康检查结果。
 
 | 最低等级 | 记录内容 |
 |---|---|

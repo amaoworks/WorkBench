@@ -75,7 +75,7 @@ contracts → 标准库
 
 业务通过构造函数接收数据库连接、事件发布器、通知服务和文本生成等依赖，不直接依赖其他业务或通用能力实现。能力层可以组合能力，例如 conversation 使用 ai Gateway。底座不依赖业务，模块不读写其他业务的表。
 
-前端业务目录使用共享组件、HTTP 客户端和平台描述类型，通过 `*.module.ts` 提供页面、Widget、图标和可选设置。Shell 根据平台返回的标识映射本地注册项，不包含具体业务页面实现。模块之间不直接导入彼此实现。组件选型、页面状态、可达性和响应式约定见[前端界面规范](frontend-guidelines.md)。
+前端业务目录使用共享组件、HTTP 客户端和平台描述类型，通过 `*.module.ts` 提供页面、Widget、图标，以及可选的个人设置 `settings` 和后台共享设置 `adminSettings`。Shell 根据平台返回的标识映射本地注册项，不包含具体业务页面实现。模块之间不直接导入彼此实现。组件选型、页面状态、可达性和响应式约定见[前端界面规范](frontend-guidelines.md)。
 
 [架构测试](../internal/modules/architecture_test.go) 检查后端业务跨模块导入和直接依赖能力/app 实现；[ESLint 配置](../web/eslint.config.js) 按模块目录生成前端跨模块及 app 导入限制。SQL 表归属仍需审查；共享数据库连接没有提供模块级权限隔离。
 
@@ -89,7 +89,7 @@ contracts → 标准库
 
 新增模块通过 `internal/app/app.go` 的后端清单及前端 `<id>.module.ts` 文件注册，代码随程序构建。历史外部模块从已保存的目录恢复，不再开放网址接入；通用 `/modules/{id}/...` 与 `/api/modules/{id}/proxy/*` 按注册表快照分发。内置启停影响模块 HTTP、Job、事件消费者、AI Tool、导航和总览卡片。外部模块的 `enabled` 是用户期望；业务页面/API/WS 只在当前连接的当前代数确认启用且健康不是 `offline`/`incompatible` 后开放。设置页在停用时仍可访问。停用不会删除表、历史数据或布局偏好。隐藏 Widget 只影响总览展示。
 
-内置模块的 `enabled` 同样表示持久化期望；`observedEnabled` 表示生命周期回调确认的状态。回调执行期间 `pending=true`、实际状态未知，业务入口关闭；回调失败返回 HTTP 503，目录显示 `health=degraded` 和 `lastError`，保留意图且不开放业务入口。用户可重试同一意图，重启时也会重新恢复。每个模块的持久化和回调串行执行，关闭不会与该模块回调并发。初始化失败会关闭所有已传入模块的资源，正常关闭每个资源一次。这里的确认表示回调完成，不替代 OpenD 等模块自己的运行健康检查。
+内置模块的 `enabled` 同样表示持久化期望；`observedEnabled` 表示生命周期回调确认的状态。回调执行期间 `pending=true`、实际状态未知，业务入口关闭；回调失败返回 HTTP 503，目录显示 `health=degraded` 和 `lastError`，保留意图且不开放业务入口。管理员可在后台业务管理重试同一意图，重启时也会重新恢复。每个模块的持久化和回调串行执行，关闭不会与该模块回调并发。初始化失败会关闭所有已传入模块的资源，正常关闭每个资源一次。这里的确认表示回调完成，不替代 OpenD 等模块自己的运行健康检查。
 
 ## 关键协作流程
 
@@ -97,5 +97,5 @@ contracts → 标准库
 - Job 的定义来自代码，数据库保存调度状态和运行记录。支持 cron、interval、once，运行前检查模块状态；恢复时依据 misfire 配置跳过或补跑一次，启动补跑与正常调度共享单实例执行门控，并在 `Shutdown` 时统一取消和等待。
 - 通知服务统一保存通知及变更事件。SSE 将变更告知浏览器，浏览器再查询通知数据；它不提供完整事件历史回放。
 - 对话使用 AI Gateway，可调用启用模块注册的 Tool；业务主动生成文本使用 `contracts.TextGenerator`，该接口不执行业务工具。两者共享设置中的 Provider，保存设置后新请求使用新配置。
-- Dashboard 合并模块 Widget 声明和持久化布局，业务 Widget 自己读取数据。平台设置和业务设置分别由 `features/settings` 与模块的设置组件负责。外部模块使用宿主通用 iframe 容器加载远端页面和设置，不注册总览 Widget、Job、事件或 AI Tool。
+- Dashboard 合并模块 Widget 声明和持久化布局，业务 Widget 自己读取数据。平台设置和业务设置分别由 `features/settings` 与模块的设置组件负责。个人设置位于 `/settings`，管理员也在此管理本人配置；后台设置位于受管理员路由保护的 `/admin/settings`，负责用户、全局启停及共享服务。模块两类设置通过 Registry 装配，不在外壳绑定具体业务组件。外部模块使用宿主通用 iframe 容器加载远端页面和后台业务设置，不注册总览 Widget、Job、事件或 AI Tool。
 

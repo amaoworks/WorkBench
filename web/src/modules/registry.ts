@@ -11,7 +11,10 @@ export type ModuleMenuItem = {
 
 export type ModuleUI = {
   id: string;
+  /** Current user's business preferences and connections. */
   settings?: LazyExoticComponent<ComponentType<{ enabled: boolean }>>;
+  /** Shared business configuration, mounted only in administrator settings. */
+  adminSettings?: LazyExoticComponent<ComponentType<{ enabled: boolean }>>;
   pages: Record<string, LazyExoticComponent<ComponentType>>;
   widgets: Record<string, LazyExoticComponent<ComponentType<{ widget: Widget }>>>;
   icons?: Record<string, ComponentType<{ size?: number }>>;
@@ -29,6 +32,7 @@ export const pageRegistry: ModuleUI["pages"] = {};
 export const widgetRegistry: ModuleUI["widgets"] = {};
 export const iconRegistry: NonNullable<ModuleUI["icons"]> = {};
 export const settingsRegistry: Record<string, NonNullable<ModuleUI["settings"]>> = {};
+export const adminSettingsRegistry: Record<string, NonNullable<ModuleUI["adminSettings"]>> = {};
 export const menuRegistry: Record<string, ModuleMenuItem[]> = {};
 export const subpageRegistry: Record<string, NonNullable<ModuleUI["subpages"]>> = {};
 const ids = new Set<string>();
@@ -36,6 +40,7 @@ for (const { default: module } of Object.values(definitions)) {
   if (ids.has(module.id)) throw new Error(`重复的业务模块：${module.id}`);
   ids.add(module.id);
   if (module.settings) settingsRegistry[module.id] = module.settings;
+  if (module.adminSettings) adminSettingsRegistry[module.id] = module.adminSettings;
   if (module.menu?.length) menuRegistry[module.id] = module.menu;
   if (module.subpages) {
     for (const path of Object.keys(module.subpages)) {

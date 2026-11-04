@@ -608,10 +608,24 @@ func TestSchwabCallbackChangeRequiresSecretAndExactPath(t *testing.T) {
 func TestSchwabLoginRejectsLegacyHTTPCallback(t *testing.T) {
 	module := openInvestmentModule(t)
 	seedSchwab(t, module, schwabRecord{AppKey: "key", AppSecret: "secret", CallbackURL: "http://127.0.0.1/oauth/schwab"})
-	got := httptest.NewRecorder()
-	module.oauthLogin(got, testRequest(http.MethodGet, "/api/modules/investment/schwab/oauth/login", nil))
-	if got.Code != http.StatusBadRequest || got.Header().Get("Location") != "" || !strings.Contains(got.Body.String(), "HTTPS") {
-		t.Fatalf("invalid legacy callback must be rejected before navigating to Schwab: %d", got.Code)
+	for _, role := range []contracts.Role{contracts.RoleAdmin, contracts.RoleUser} {
+		t.Run(string(role), func(t *testing.T) {
+			ctx := contracts.WithPrincipal(context.Background(), contracts.Principal{UserID: "owner", Role: role})
+			request := httptest.NewRequest(http.MethodGet, "/api/modules/investment/schwab/oauth/login", nil).WithContext(ctx)
+			got := httptest.NewRecorder()
+			module.oauthLogin(got, request)
+			body := got.Body.String()
+			if got.Code != http.StatusBadRequest || got.Header().Get("Location") != "" || !strings.Contains(body, "HTTPS") {
+				t.Fatalf("invalid legacy callback must be rejected before navigating to Schwab: %d", got.Code)
+			}
+			if role == contracts.RoleAdmin {
+				if !strings.Contains(body, `href="/admin/settings?tab=modules&amp;module=investment"`) || strings.Contains(body, "联系管理员") {
+					t.Fatalf("admin must receive the shared application settings link: %s", body)
+				}
+			} else if !strings.Contains(body, "联系管理员修正回调地址") || strings.Contains(body, "href=") || strings.Contains(body, "/admin/settings") {
+				t.Fatalf("ordinary user must not be directed to administrator settings: %s", body)
+			}
+		})
 	}
 }
 

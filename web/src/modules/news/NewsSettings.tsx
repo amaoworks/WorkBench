@@ -146,7 +146,7 @@ function SettingsForm({ initial }: { initial: Settings }) {
           生成后提交推送
         </div>
         <Link className="text-sm text-[var(--brand)] hover:underline" to="/settings?tab=notifications">
-          配置 Telegram
+          通知推送
         </Link>
       </section>
       <Button disabled={save.isPending}>{save.isPending ? "保存中…" : "保存"}</Button>

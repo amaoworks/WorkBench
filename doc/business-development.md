@@ -85,7 +85,7 @@ export default {
 
 `subpages` 把额外页面挂到模块导航路由下，路径为 `${route}/${path}`，如 `/investment/positions`。路径只允许小写字母、数字、连字符和 `/`。子页面只在模块的导航路由可用时渲染，模块停用或启动中时由平台路由兜底显示对应状态。子页面不需要后端 pageKey，所以不能和后端已经占用的路径重名，例如 `/investment/terminal`。新功能优先放到新的子页面上，不要改动已有页面的结构。
 
-Registry 通过 `./*/*.module.ts` 收集声明，校验模块和资源标识。页面 key、Widget kind 必须与后端对应；组件通过 `React.lazy` 加载。提供模块设置时增加 `settings` 懒加载组件，接收 `{ enabled: boolean }`；关闭状态下暂停业务查询并提示启用模块。
+Registry 通过 `./*/*.module.ts` 收集声明，校验模块和资源标识。页面 key、Widget kind 必须与后端对应；组件通过 `React.lazy` 加载。个人业务配置声明为可选的 `settings` 懒加载组件，在 `/settings` 展示；共享业务配置声明为可选的 `adminSettings`，仅在 `/admin/settings` 展示。两者接收 `{ enabled: boolean }`，只登记实际提供的资源；目前投资同时提供本人 Schwab 授权与后台共享投资配置。设置组件仍归业务模块，外壳通过 Registry 装配，不直接导入业务实现。业务关闭时暂停业务查询，并按用户权限展示启用入口或联系管理员的状态。
 
 接口函数与查询 hooks 放 `queries.ts`，响应的 Zod schema 和推导的业务类型放 `schema.ts`。`api` 返回 `unknown`；需要读取响应时使用 `apiValidated` 或 `schema.parse`，不要通过类型断言绕过校验。新增或修改关键接口时，在 `internal/app/frontend_contract_test.go` 捕获真实响应，并在 `web/tests/contracts.test.mjs` 注册对应生产 schema。页面保留表单状态、交互反馈和渲染。参考 [Todo queries](../web/src/modules/todo/queries.ts) 与 [Investment queries](../web/src/modules/investment/queries.ts)。
 
@@ -103,7 +103,7 @@ Registry 通过 `./*/*.module.ts` 收集声明，校验模块和资源标识。�
 
 当前仅从项目代码和文件注册新业务，不开放通过网址新增外部模块。已保存的外部模块仍以独立 HTTP 服务运行，不导入 `workbench/internal/...`，也不编入核心二进制；宿主保留管理和页面加载兼容。现行接口见[接口与契约](contracts.md)，远端 v1 类型见 [contracts/external.go](../internal/contracts/external.go)，第一阶段设计与协议见[历史记录](archive/external-modules-phase-1.md)。[examples/external-module](../examples/external-module/README.md) 用于兼容测试。
 
-前端 `web/src/modules/registry.ts` 仍只收集内置页面。外部页面走 `/apps/{id}/{pageName}` 和通用 iframe；未知图标回退到宿主默认图标。设置弹窗在业务停用时保持可开；启用超时显示 pending，不能显示成功。
+前端 `web/src/modules/registry.ts` 仍只收集内置页面。外部页面走 `/apps/{id}/{pageName}` 和通用 iframe；未知图标回退到宿主默认图标。历史外部业务的管理与设置入口位于后台业务管理，设置弹窗在业务停用时保持可开；启用超时显示 pending，不能显示成功。
 
 ## 验证和文档维护
 

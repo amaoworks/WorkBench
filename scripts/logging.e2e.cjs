@@ -14,7 +14,7 @@ async function choose(page, trigger, option) {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
-    await page.goto(`${baseURL}/settings?tab=data`);
+    await page.goto(`${baseURL}/admin/settings?tab=data`);
     const select = page.getByLabel("日志等级", { exact: true });
     const save = page.getByRole("region", { name: "数据与运行", exact: true }).getByRole("button", { name: "保存", exact: true });
     let requestArrived;

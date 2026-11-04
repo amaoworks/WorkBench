@@ -91,11 +91,14 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
       await page.screenshot({ path: `/tmp/wallos-settings-${width}.png` });
     }
     await page.getByRole("button", { name: "关闭业务设置", exact: true }).click();
+    await page.goto(`${baseURL}/admin/settings?tab=modules`);
     await page.getByRole("switch", { name: "待办", exact: true }).click();
     await page.waitForFunction(() => document.querySelector('[aria-label="待办"]')?.getAttribute("aria-checked") === "false");
     assert.equal((await page.request.get(`${baseURL}/api/modules/todo/wallos`)).status(), 503);
-    await page.getByRole("button", { name: "待办设置", exact: true }).click();
-    await page.getByText("启用后可配置 Wallos 联动。", { exact: true }).waitFor();
+    await page.goto(`${baseURL}/settings?tab=modules`);
+    await page.getByText("在后台设置中启用。", { exact: true }).waitFor();
+    assert.equal(await page.getByRole("button", { name: "待办设置", exact: true }).count(), 0);
+    await page.getByRole("link", { name: "业务管理", exact: true }).waitFor();
     assert.deepEqual(errors, []);
     console.log("PASS: real API settings/save/sync, secret redaction, deduplication, generated task and completion, desktop/mobile settings, disabled module gate.");
   } finally {

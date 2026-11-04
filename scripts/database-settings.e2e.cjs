@@ -12,7 +12,7 @@ assert(["sqlite", "postgres"].includes(driver));
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
     const settingsResponse = page.waitForResponse((response) => response.url() === `${baseURL}/api/settings`);
-    await page.goto(`${baseURL}/settings?tab=data`);
+    await page.goto(`${baseURL}/admin/settings?tab=data`);
     const settings = await (await settingsResponse).json();
     assert.equal(settings.deployment.databaseDriver, driver);
     assert.equal(settings.deployment.backupSupported, driver === "sqlite");
