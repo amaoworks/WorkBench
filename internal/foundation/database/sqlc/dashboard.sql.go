@@ -10,31 +10,36 @@ import (
 )
 
 const getDashboardLayout = `-- name: GetDashboardLayout :one
-SELECT value FROM workspace_settings WHERE section = 'dashboard'
+SELECT value FROM user_settings WHERE user_id = ? AND section = 'dashboard'
 `
 
-func (q *Queries) GetDashboardLayout(ctx context.Context) (string, error) {
-	row := q.db.QueryRowContext(ctx, getDashboardLayout)
+func (q *Queries) GetDashboardLayout(ctx context.Context, userID string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getDashboardLayout, userID)
 	var value string
 	err := row.Scan(&value)
 	return value, err
 }
 
 const resetDashboardLayout = `-- name: ResetDashboardLayout :exec
-DELETE FROM workspace_settings WHERE section = 'dashboard'
+DELETE FROM user_settings WHERE user_id = ? AND section = 'dashboard'
 `
 
-func (q *Queries) ResetDashboardLayout(ctx context.Context) error {
-	_, err := q.db.ExecContext(ctx, resetDashboardLayout)
+func (q *Queries) ResetDashboardLayout(ctx context.Context, userID string) error {
+	_, err := q.db.ExecContext(ctx, resetDashboardLayout, userID)
 	return err
 }
 
 const saveDashboardLayout = `-- name: SaveDashboardLayout :exec
-INSERT INTO workspace_settings(section, value) VALUES ('dashboard', ?)
-ON CONFLICT(section) DO UPDATE SET value = excluded.value
+INSERT INTO user_settings(user_id, section, value) VALUES (?, 'dashboard', ?)
+ON CONFLICT(user_id, section) DO UPDATE SET value = excluded.value
 `
 
-func (q *Queries) SaveDashboardLayout(ctx context.Context, value string) error {
-	_, err := q.db.ExecContext(ctx, saveDashboardLayout, value)
+type SaveDashboardLayoutParams struct {
+	UserID string `json:"user_id"`
+	Value  string `json:"value"`
+}
+
+func (q *Queries) SaveDashboardLayout(ctx context.Context, arg SaveDashboardLayoutParams) error {
+	_, err := q.db.ExecContext(ctx, saveDashboardLayout, arg.UserID, arg.Value)
 	return err
 }

@@ -24,13 +24,18 @@ type Module struct {
 	queries       *todosqlc.Queries
 	now           func() time.Time
 	wallosMu      sync.Mutex
+	users         contracts.UserDirectory
 }
 
-func New(db *sql.DB, events contracts.EventPublisher, notifications contracts.NotificationService) (*Module, error) {
+func New(db *sql.DB, events contracts.EventPublisher, notifications contracts.NotificationService, dirs ...contracts.UserDirectory) (*Module, error) {
 	if db == nil || events == nil || notifications == nil {
 		return nil, errors.New("database, events, and notifications are required")
 	}
-	return &Module{db: db, events: events, notifications: notifications, queries: todosqlc.New(db), now: time.Now}, nil
+	var users contracts.UserDirectory
+	if len(dirs) > 0 {
+		users = dirs[0]
+	}
+	return &Module{db: db, events: events, notifications: notifications, queries: todosqlc.New(db), now: time.Now, users: users}, nil
 }
 
 func (m *Module) Manifest() contracts.ModuleManifest {
@@ -54,8 +59,10 @@ func (m *Module) Register(r contracts.ModuleRegistrar) error {
 			Schedule: contracts.ScheduleSpec{Kind: contracts.ScheduleInterval, Interval: time.Hour},
 			TimeZone: "UTC", Timeout: 45 * time.Second,
 			OverlapPolicy: contracts.OverlapSkip, MisfirePolicy: contracts.MisfireRunOnce,
-			Retry:   contracts.RetryPolicy{MaxAttempts: 3, InitialWait: time.Minute, MaxWait: 5 * time.Minute},
-			Handler: func(ctx context.Context, _ contracts.JobRun) error { _, err := m.syncWallos(ctx); return err },
+			Retry: contracts.RetryPolicy{MaxAttempts: 3, InitialWait: time.Minute, MaxWait: 5 * time.Minute},
+			Handler: func(ctx context.Context, _ contracts.JobRun) error {
+				return m.forActiveUsers(ctx, func(ctx context.Context) error { _, err := m.syncWallos(ctx); return err })
+			},
 		}),
 		r.Handle(http.MethodGet, "/api/modules/todo/tasks", http.HandlerFunc(m.listTasks)),
 		r.Handle(http.MethodGet, "/api/modules/todo/tasks/counts", http.HandlerFunc(m.taskCounts)),

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+	"workbench/internal/contracts"
 
 	"workbench/internal/foundation/httpapi"
 	investmentsqlc "workbench/internal/modules/investment/sqlc"
@@ -39,7 +40,7 @@ type preferenceInput struct {
 
 func (m *Module) getPreferences(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	rows, err := m.queries.ListPreferences(r.Context())
+	rows, err := m.queries.ListPreferences(r.Context(), contracts.UserID(r.Context()))
 	if err != nil {
 		httpapi.Error(w, http.StatusInternalServerError, "preferences_read_failed", "无法读取投资偏好")
 		return
@@ -72,11 +73,11 @@ func (m *Module) savePreference(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	content := compact.String()
-	saved, err := m.queries.SavePreference(r.Context(), investmentsqlc.SavePreferenceParams{
+	saved, err := m.queries.SavePreference(r.Context(), investmentsqlc.SavePreferenceParams{UserID: contracts.UserID(r.Context()),
 		Name: input.Name, Content: content, Writer: input.Writer, BaseRevision: *input.Revision, Sequence: input.Sequence,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
-		current, readErr := m.queries.GetPreference(r.Context(), input.Name)
+		current, readErr := m.queries.GetPreference(r.Context(), investmentsqlc.GetPreferenceParams{UserID: contracts.UserID(r.Context()), Name: input.Name})
 		if readErr == nil && current.Writer == input.Writer && current.BaseRevision == *input.Revision &&
 			(current.Sequence > input.Sequence || (current.Sequence == input.Sequence && current.Content == content)) {
 			httpapi.Write(w, http.StatusOK, map[string]int64{"revision": current.Revision, "sequence": current.Sequence})

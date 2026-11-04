@@ -72,11 +72,11 @@ func TestMobilePushRoutesRequireEnabledDeviceSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = enabled.Close() })
-	if _, err := enabled.DB().Exec(`UPDATE auth_credentials SET must_change_password = 0`); err != nil {
+	if _, err := enabled.DB().Exec(`UPDATE auth_users SET must_change_password = 0`); err != nil {
 		t.Fatal(err)
 	}
 	csrfToken, cookies = csrf(t, enabled.Handler())
-	login := request(t, enabled.Handler(), http.MethodPost, "/api/auth/login", []byte(`{"password":"Push-Test-123!"}`), csrfToken, cookies)
+	login := request(t, enabled.Handler(), http.MethodPost, "/api/auth/login", []byte(`{"username":"admin","password":"Push-Test-123!"}`), csrfToken, cookies)
 	if login.Code != http.StatusOK {
 		t.Fatalf("login status = %d, body = %s", login.Code, login.Body.String())
 	}

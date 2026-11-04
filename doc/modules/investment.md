@@ -25,13 +25,13 @@
 
 ## Schwab 连接
 
-在「设置 → 业务模块 → 投资」填写 Developer Portal 的 App Key、App Secret，以及与登记完全一致的 HTTPS 回调地址；路径必须为 `/oauth/schwab`。该 URL 必须能从用户浏览器到达工作台进程，反向代理需实际支持 HTTPS，应用以 HTTP 提供后端并配置对应的 `WORKBENCH_PUBLIC_URL`。部署示例见[部署与发布](../deployment.md)。HTTP 页面不会自动生成可用回调；旧 HTTP 回调也会在发起授权前被拒绝。Secret 读取时不回显。更换 App Key 或回调必须重新填写 Secret；Key、Secret 或回调变化均清除旧令牌和长连接。
+管理员在「设置 → 业务模块 → 投资」维护 Developer Portal 的 App Key、App Secret，以及与登记完全一致的 HTTPS 回调地址；路径必须为 `/oauth/schwab`。该 URL 必须能从用户浏览器到达工作台进程，反向代理需实际支持 HTTPS，应用以 HTTP 提供后端并配置对应的 `WORKBENCH_PUBLIC_URL`。部署示例见[部署与发布](../deployment.md)。HTTP 页面不会自动生成可用回调；旧 HTTP 回调也会在发起授权前被拒绝。Secret 读取时不回显。更换 App Key 或回调必须重新填写 Secret；Key、Secret 或回调变化均清除旧令牌和长连接。
 
-保存后点击「登录 Schwab」，并在账户关联确认页点击 Done。公开回调 `/oauth/schwab` 校验有效期十分钟的一次性 state，匹配后先持久化消费，再由服务端换取并保存令牌。缺少 code、授权过期或换取令牌失败也会消费匹配的 state，须重新发起授权，不能重试同一回调。回调独立于工作台会话，因为跨站跳转不携带 `SameSite=Strict` 会话 Cookie。成功页先建立工作台同站点文档，再自动返回 `/investment`，保留手动返回链接；`no-referrer` 避免授权查询参数进入下一跳 Referer。重新授权成功也会关闭旧 Streamer，终端重连后重新读取账户列表。
+应用配置保存后，每个用户分别点击「登录 Schwab」，并在账户关联确认页点击 Done。应用凭据全局保存，券商令牌、账户范围、持仓、订单和交易属于当前用户。管理员角色不允许跨用户访问账户。公开回调 `/oauth/schwab` 通过有效期十分钟的一次性 state 查找发起用户并校验授权，匹配后先持久化消费，再由服务端换取并保存令牌。缺少 code、授权过期或换取令牌失败也会消费匹配的 state，须重新发起授权，不能重试同一回调。回调独立于工作台会话，因为跨站跳转不携带 `SameSite=Strict` 会话 Cookie。成功页先建立工作台同站点文档，再自动返回 `/investment`，保留手动返回链接；`no-referrer` 避免授权查询参数进入下一跳 Referer。重新授权成功也会关闭旧 Streamer，终端重连后重新读取账户列表。
 
-原生端先携带 App Bearer 调用 `POST /api/modules/investment/schwab/oauth/start`，取得 `authorizationUrl`、`statusId` 和十分钟有效期，再用系统浏览器打开 `authorizationUrl`。Schwab 完成后仍回到公开 `/oauth/schwab`，由服务端校验一次性 state 并换取令牌；系统浏览器不携带 App Bearer，URL 中也不放 App access token。原生端回到前台后，携带 App Bearer 轮询 `GET /api/modules/investment/schwab/oauth/status/{statusId}`，直到状态由 `pending` 变为 `succeeded` 或 `failed`。终态不再变更，重复回调不会再次换取令牌；有效期内已接受的回调等待令牌交换完成后确定结果。新的授权请求会使尚未完成的旧请求失败；过期或进程重启后重新发起。
+原生端先携带 App Bearer 调用 `POST /api/modules/investment/schwab/oauth/start`，取得 `authorizationUrl`、`statusId` 和十分钟有效期，再用系统浏览器打开 `authorizationUrl`。Schwab 完成后仍回到公开 `/oauth/schwab`，由服务端校验一次性 state 并换取令牌；系统浏览器不携带 App Bearer，URL 中也不放 App access token。原生端回到前台后，携带 App Bearer 轮询 `GET /api/modules/investment/schwab/oauth/status/{statusId}`，直到状态由 `pending` 变为 `succeeded` 或 `failed`。终态不再变更，重复回调不会再次换取令牌；有效期内已接受的回调等待令牌交换完成后确定结果。同一用户新的授权请求会使其尚未完成的旧请求失败，不影响其他用户；过期或进程重启后重新发起。
 
-`investment.schwab_refresh` 每二十分钟检查访问令牌；REST 请求和新连接也会按需刷新。令牌刷新后关闭旧流，浏览器自动重新登录连接。断开操作保留应用配置，清除券商令牌。所有券商访问令牌仅在服务端使用，代理不转发浏览器 Cookie。
+`investment.schwab_refresh` 每二十分钟检查访问令牌；REST 请求和新连接也会按需刷新。令牌刷新后关闭旧流，浏览器自动重新登录连接。断开操作保留应用配置，只清除本人的券商令牌及连接。所有券商访问令牌仅在服务端使用，代理不转发浏览器 Cookie。
 
 刷新时确认令牌失效（`invalid_grant`，或 `invalid_client` 明确指出 refresh token 无效、过期或撤销）会持久保存 `reauthorizationRequired=true`，清除失效令牌并关闭旧连接。投资页、总览卡片及设置页显示「Schwab 授权已失效」和「重新授权」入口；点击后进入现有 OAuth 流程，只有成功回调才恢复已连接状态。终端断开会通知父页立即读取状态，其他页面的状态轮询作为补充。此机制处理实际失效，不发送提前到期提醒。
 
@@ -41,7 +41,7 @@
 
 Schwab 行情覆盖常规、盘前、盘后和延长时段（约 04:00–20:00 ET），不含美股夜盘（20:00–04:00 ET）。夜盘由本机或 Compose 中的 Futu OpenD 补齐，**只做行情，不接入富途交易**。
 
-在「设置 → 业务模块 → 投资设置」集中管理 Schwab、富途牛牛和夜盘。Linux x86_64 原生部署在保存账号密码并启用富途牛牛后，自动下载、校验并启动 OpenD；页面显示进程状态和行情登录状态，失败可重试。容器部署可使用配套 OpenD。停用富途牛牛会关闭夜盘，重新启用不会自动恢复夜盘。主机、端口和非本机许可由部署配置管理，不在设置页面或账号保存 API 中修改。兼容版本与首次登录验证见 [OpenD 部署说明](https://github.com/amaoworks/WorkBench/blob/main/futu-opend/README.md)。密码和登录摘要不回显。
+管理员在「设置 → 业务模块 → 投资设置」管理 Schwab 应用配置、富途牛牛和夜盘总开关；普通用户在个人投资设置管理自己的 Schwab 授权。富途登录、OpenD、上游订阅池和公共 K 线缓存共享，自选、监控、偏好与通知归个人。Linux x86_64 原生部署在保存账号密码并启用富途牛牛后，自动下载、校验并启动 OpenD；页面显示进程状态和行情登录状态，失败可重试。容器部署可使用配套 OpenD。停用富途牛牛会关闭夜盘，重新启用不会自动恢复夜盘。主机、端口和非本机许可由部署配置管理，不在设置页面或账号保存 API 中修改。兼容版本与首次登录验证见 [OpenD 部署说明](https://github.com/amaoworks/WorkBench/blob/main/futu-opend/README.md)。密码和登录摘要不回显。
 
 - Regular / Premarket / Postmarket / Extended：仍只走 Schwab。
 - 「行情时段」集成在 TradingView 图表顶部工具栏，通过官方 `headerReady()` / `createDropdown()` 接入，不再单独占据一行。桌面在右侧显示「行情：常规/扩展/夜盘/全天」；窄屏使用简短标题并移至工具栏靠前位置。菜单位置随宽度切换时仅重建按钮，不重建图表；仅提供常规 (RTH)、扩展 (ETH)、夜盘 (Night)、全天 (24H) 四个行情选项，不另加说明菜单项。仅在夜盘覆盖启用且标的支持时显示 Night/24H。原生底部时段按钮隐藏，避免重复入口。
@@ -96,7 +96,7 @@ Night 视图只读取 Futu 的历史数据；24H 历史并发读取 Schwab 与 F
 
 ## 长连接恢复
 
-Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后才通知浏览器 ready。行情服务首次使用 SUBS，之后使用 ADD；HTTP 成功仅在 Schwab 确认订阅后返回。浏览器端把 100 毫秒内各组件（自选表、图表、详情、下单面板）新增的品种合并为每个服务一条 ADD，已在订阅或待确认的品种不重复发送。
+Go 为每个用户维护独立 Streamer，同一用户的浏览器连接共享该 Streamer 并串行登录，收到 LOGIN 与账户订阅确认后才通知浏览器 ready。行情服务首次使用 SUBS，之后使用 ADD；HTTP 成功仅在 Schwab 确认订阅后返回。浏览器端把 100 毫秒内各组件（自选表、图表、详情、下单面板）新增的品种合并为每个服务一条 ADD，已在订阅或待确认的品种不重复发送。
 
 上游断开时同时关闭浏览器连接，浏览器三秒后重连。首次 ready 只建立订阅，不重置正在加载的历史 K 线。断线后重新 ready 时恢复所有活动品种订阅、清空行情快照，并调用 TradingView 的 `resetCache` 与各图表的 `resetData` 重载历史，同时重新读取账户状态。历史回补即使不是首次请求也会恢复实时 K 线基准；断线前的历史响应和已关闭 WebSocket 的迟到事件会被丢弃。终端显示连接恢复中的状态提示。慢客户端不静默丢弃订单事件，而是断开后重新获取状态。参见 [TradingView 数据恢复约定](https://www.tradingview.com/charting-library-docs/latest/connecting_data/Datafeed-Issues/#internet-connection-issues)。
 
@@ -121,8 +121,8 @@ Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后
 | GET/PUT | `/api/modules/investment/watchlists` | 工作台自选表读取/保存（需要编辑版本、会话和序号） |
 | GET/PUT | `/api/modules/investment/preferences` | 投资偏好读取/按项保存；`chart`、`layout`、`account`、`view` 和 `tv:` 设置键，保存需要编辑版本、会话和序号 |
 | GET | `/api/modules/investment/schwab` | 应用配置、连接状态、`reauthorizationRequired` 及最近错误 |
-| PUT | `/api/modules/investment/schwab` | 保存 `appKey`、`appSecret`、`callbackUrl` |
-| POST | `/api/modules/investment/schwab/disconnect` | 清除令牌和连接 |
+| PUT | `/api/modules/investment/schwab` | 管理员保存 `appKey`、`appSecret`、`callbackUrl` |
+| POST | `/api/modules/investment/schwab/disconnect` | 清除本人的令牌和连接 |
 | GET | `/api/modules/investment/schwab/oauth/login` | 跳转到 Schwab 授权页 |
 | POST | `/api/modules/investment/schwab/oauth/start` | 为原生端创建一次性授权 URL，返回 `authorizationUrl`、`statusId`、`status`、`expiresAt` |
 | GET | `/api/modules/investment/schwab/oauth/status/{statusId}` | 原生端查询 `pending`、`succeeded` 或 `failed` 授权结果 |
@@ -132,9 +132,9 @@ Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后
 | GET/POST/PUT/DELETE/PATCH | `/api/modules/investment/schwab/marketdata/v1/*` | Market Data REST 代理 |
 | GET | `/api/modules/investment/schwab/trader/ws`、`marketdata/ws` | 浏览器事件连接 |
 | POST | `/api/modules/investment/schwab/marketdata/ws/command` | LEVELONE 服务的 ADD 订阅命令 |
-| GET/PUT | `/api/modules/investment/futu` | Futu 账号密码、服务开关与连接状态 |
+| GET/PUT | `/api/modules/investment/futu` | 管理员读取/管理 Futu 账号密码、服务开关与连接状态 |
 | POST | `/api/modules/investment/futu/disconnect` | 停用 Futu，同时关闭夜盘 |
-| GET/PUT | `/api/modules/investment/overnight` | 独立夜盘开关，启用前校验 Futu 依赖 |
+| GET/PUT | `/api/modules/investment/overnight` | 用户读取安全状态；管理员修改夜盘总开关，启用前校验 Futu 依赖 |
 | GET | `/api/modules/investment/futu/kline` | 夜盘当前窗口及额度兜底历史；24H 可用 `requireHistory=true` 要求历史回补失败时明确报错 |
 | GET | `/api/modules/investment/futu/quote/ws` | 夜盘推送（覆盖关闭时 409，不升级；就绪帧 `ready` 含 `owner` 与 `generation`，54 秒 ping / 60 秒读取超时，断开自动回收该连接订阅引用） |
 | POST | `/api/modules/investment/futu/quote/ws/command` | 夜盘 ADD/UNSUB；`resolution` 为空时只订阅 BASIC 报价，否则订阅指定 K 线及 BASIC；浏览器等待 `ready` 后必传 `owner` 与 `generation`，缺 `owner` 返回 409（升级前已打开的终端需刷新页面加载新协议，不再允许匿名引用），缺或旧 `generation`、旧 `owner` 返回 `applied:false` 和当前代次 |
@@ -170,7 +170,7 @@ Go 对一条共享 Streamer 串行登录，收到 LOGIN 与账户订阅确认后
 
 ## 数据、验证与参考
 
-模块构造时要求数据库和通知服务。价格监控通过行情接口读取交易时段与报价，Schwab 适配器在提交前保护授权版本检查。Streamer 接收凭据读取、上游地址和日志依赖；Futu 网关接收配置读取、查询、OpenD 服务和日志依赖。配置表为 `investment_schwab` 与 `investment_futu`，夜盘 K 线缓存在 `investment_futu_bars`。升级迁移移除历史演示表 `investment_quotes` 和 `investment_summary`，旧迁移文件保留。SQL 和 sqlc 生成代码均在模块目录。
+模块构造时要求数据库和通知服务。价格监控通过行情接口读取交易时段与报价，Schwab 适配器在提交前保护授权版本检查。Streamer 接收凭据读取、上游地址和日志依赖；Futu 网关接收配置读取、查询、OpenD 服务和日志依赖。应用配置表为 `investment_schwab_app`，个人授权表为 `investment_schwab_connections`，共享富途配置为 `investment_futu`，夜盘 K 线缓存在 `investment_futu_bars`。升级迁移移除历史演示表 `investment_quotes` 和 `investment_summary`，旧迁移文件保留。SQL 和 sqlc 生成代码均在模块目录。
 
 React 投资页目前不读取偏好的 `view` 项（接口与 schema 保留，供后续页面铺满使用）；图表选择、账户和 TradingView 设置由终端各自校验。删除偏好后的空值保留版本号，后续保存仍参与版本冲突检查。
 

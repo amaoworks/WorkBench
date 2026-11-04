@@ -63,8 +63,10 @@ func (m *Module) netWorthJob() contracts.JobDefinition {
 		Schedule: contracts.ScheduleSpec{Kind: contracts.ScheduleCron, Expression: "15 16 * * 1-5"},
 		TimeZone: netWorthTimeZone, Timeout: 45 * time.Second,
 		OverlapPolicy: contracts.OverlapSkip, MisfirePolicy: contracts.MisfireRunOnce,
-		Retry:   contracts.RetryPolicy{MaxAttempts: 3, InitialWait: time.Minute, MaxWait: 5 * time.Minute},
-		Handler: func(ctx context.Context, _ contracts.JobRun) error { return m.captureNetWorth(ctx) },
+		Retry: contracts.RetryPolicy{MaxAttempts: 3, InitialWait: time.Minute, MaxWait: 5 * time.Minute},
+		Handler: func(ctx context.Context, _ contracts.JobRun) error {
+			return m.forEachUser(ctx, func(child *Module, ctx context.Context) error { return child.captureNetWorth(ctx) })
+		},
 	}
 }
 
@@ -119,7 +121,7 @@ func (m *Module) storeNetWorthSnapshot(ctx context.Context, authorizedAt int64, 
 	}
 	defer tx.Rollback()
 	queries := m.queries.WithTx(tx)
-	if err := queries.DeleteNetWorthAccountScope(ctx, authorizedAt); err != nil {
+	if err := queries.DeleteNetWorthAccountScope(ctx, investmentsqlc.DeleteNetWorthAccountScopeParams{UserID: contracts.UserID(ctx), AuthorizedAt: authorizedAt}); err != nil {
 		return err
 	}
 	skipped := make([]string, 0)
@@ -127,7 +129,7 @@ func (m *Module) storeNetWorthSnapshot(ctx context.Context, authorizedAt int64, 
 		if account.Hash == "" {
 			return errors.New("net worth snapshot account hash is missing")
 		}
-		if err := queries.AddNetWorthAccountScope(ctx, investmentsqlc.AddNetWorthAccountScopeParams{
+		if err := queries.AddNetWorthAccountScope(ctx, investmentsqlc.AddNetWorthAccountScopeParams{UserID: contracts.UserID(ctx),
 			AuthorizedAt: authorizedAt, AccountHash: account.Hash,
 		}); err != nil {
 			return err
@@ -136,7 +138,7 @@ func (m *Module) storeNetWorthSnapshot(ctx context.Context, authorizedAt int64, 
 			skipped = append(skipped, account.Hash)
 			continue
 		}
-		if err := queries.UpsertNetWorthSnapshot(ctx, investmentsqlc.UpsertNetWorthSnapshotParams{
+		if err := queries.UpsertNetWorthSnapshot(ctx, investmentsqlc.UpsertNetWorthSnapshotParams{UserID: contracts.UserID(ctx),
 			AccountHash: account.Hash, Day: day, NetWorth: *account.NetWorth, Cash: *account.Cash,
 			Invested: *account.Invested, DayPnl: *account.DayPnl, CapturedAt: now.UnixMilli(),
 		}); err != nil {
@@ -189,7 +191,7 @@ func (m *Module) loadNetWorthHistory(ctx context.Context, rangeValue, account st
 		return out, err
 	}
 	authorizedAt := rec.AuthorizedAt.UnixMilli()
-	out.Accounts, err = m.queries.ListNetWorthAccounts(ctx, authorizedAt)
+	out.Accounts, err = m.queries.ListNetWorthAccounts(ctx, investmentsqlc.ListNetWorthAccountsParams{UserID: contracts.UserID(ctx), AuthorizedAt: authorizedAt})
 	if err != nil {
 		return out, err
 	}
@@ -199,7 +201,7 @@ func (m *Module) loadNetWorthHistory(ctx context.Context, rangeValue, account st
 	if account != "" && !slices.Contains(out.Accounts, account) {
 		return out, errors.New("account is not available for the current authorization")
 	}
-	rows, err := m.queries.ListNetWorthSnapshots(ctx, investmentsqlc.ListNetWorthSnapshotsParams{AuthorizedAt: authorizedAt, StartDay: startDay})
+	rows, err := m.queries.ListNetWorthSnapshots(ctx, investmentsqlc.ListNetWorthSnapshotsParams{UserID: contracts.UserID(ctx), AuthorizedAt: authorizedAt, StartDay: startDay})
 	if err != nil || len(rows) == 0 {
 		return out, err
 	}

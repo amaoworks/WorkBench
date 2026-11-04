@@ -99,7 +99,7 @@ func TestOverviewSnapshotAndQuotesUseCache(t *testing.T) {
 	module.now = func() time.Time { return now }
 	seedSchwab(t, module, schwabRecord{AppKey: "key", AppSecret: "secret", CallbackURL: "https://127.0.0.1:8080/oauth/schwab",
 		AccessToken: "access-token", RefreshToken: "refresh", TokenExpiresAt: now.Add(time.Hour), AuthorizedAt: now.Add(-24 * time.Hour)})
-	snapshot := module.overviewSnapshot(context.Background())
+	snapshot := module.overviewSnapshot(testContext(context.Background()))
 	if snapshot.Status != "ok" || snapshot.NetWorth != 110000 || snapshot.Cash != 10000 || snapshot.BuyingPower != 20000 || snapshot.Positions != 3 {
 		t.Fatalf("snapshot: %+v", snapshot)
 	}
@@ -109,22 +109,22 @@ func TestOverviewSnapshotAndQuotesUseCache(t *testing.T) {
 	if want := []string{"AAPL", "TSLA", "MSFT"}; len(snapshot.Symbols) != 3 || snapshot.Symbols[0] != want[0] || snapshot.Symbols[2] != want[2] {
 		t.Fatalf("symbols: %v", snapshot.Symbols)
 	}
-	quotes := module.overviewQuotes(context.Background())
+	quotes := module.overviewQuotes(testContext(context.Background()))
 	if quotes.Status != "ok" || quotes.Session != "regular" || len(quotes.Items) != 2 || !quotes.Items[0].Held || len(quotes.Items[0].Spark) != 3 || quotes.Items[1].Spark != nil {
 		t.Fatalf("quotes: %+v", quotes)
 	}
 	now = now.Add(20 * time.Second)
-	module.overviewSnapshot(context.Background())
-	module.overviewQuotes(context.Background())
+	module.overviewSnapshot(testContext(context.Background()))
+	module.overviewQuotes(testContext(context.Background()))
 	if accountCalls.Load() != 1 || quoteCalls.Load() != 1 {
 		t.Fatalf("cache missed: accounts=%d quotes=%d", accountCalls.Load(), quoteCalls.Load())
 	}
 	now = now.Add(time.Minute)
-	module.overviewSnapshot(context.Background())
+	module.overviewSnapshot(testContext(context.Background()))
 	if accountCalls.Load() != 2 {
 		t.Fatalf("expired cache not refreshed: %d", accountCalls.Load())
 	}
-	alerts, err := module.overviewAlerts(context.Background())
+	alerts, err := module.overviewAlerts(testContext(context.Background()))
 	if err != nil || alerts.Schwab.Status != "connected" || alerts.Schwab.RefreshExpiresAt == nil ||
 		!alerts.Schwab.RefreshExpiresAt.Equal(now.Add(-80*time.Second).Add(-24*time.Hour).Add(7*24*time.Hour)) {
 		t.Fatalf("alerts: %+v %v", alerts, err)
@@ -138,13 +138,13 @@ func TestOverviewDisconnectedDoesNotCallSchwab(t *testing.T) {
 	defer upstream.Close()
 	module := openInvestmentModule(t)
 	module.schwabAPI = upstream.URL
-	if got := module.overviewSnapshot(context.Background()); got.Status != "disconnected" {
+	if got := module.overviewSnapshot(testContext(context.Background())); got.Status != "disconnected" {
 		t.Fatalf("snapshot: %+v", got)
 	}
-	if got := module.overviewQuotes(context.Background()); got.Status != "disconnected" || len(got.Items) != 0 {
+	if got := module.overviewQuotes(testContext(context.Background())); got.Status != "disconnected" || len(got.Items) != 0 {
 		t.Fatalf("quotes: %+v", got)
 	}
-	alerts, err := module.overviewAlerts(context.Background())
+	alerts, err := module.overviewAlerts(testContext(context.Background()))
 	if err != nil || alerts.Schwab.Status != "unconfigured" || alerts.Futu.Enabled {
 		t.Fatalf("alerts: %+v %v", alerts, err)
 	}

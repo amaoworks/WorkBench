@@ -22,7 +22,10 @@ type Store struct {
 	wake  chan struct{}
 	now   func() time.Time
 	newID func() (string, error)
+	users contracts.UserDirectory
 }
+
+func (s *Store) SetUserDirectory(users contracts.UserDirectory) { s.users = users }
 
 func NewStore(db *sql.DB) *Store {
 	return &Store{
@@ -87,10 +90,26 @@ func (s *Store) PublishTx(ctx context.Context, tx *sql.Tx, event contracts.NewEv
 	if err != nil {
 		return "", fmt.Errorf("generate event id: %w", err)
 	}
+	caller := contracts.UserID(ctx)
+	if caller != "" && event.UserID != "" && event.UserID != caller {
+		return "", errors.New("event owner must match current user")
+	}
+	if event.UserID == "" {
+		event.UserID = caller
+	}
+	if event.UserID != "" && (s.users != nil || caller == "") {
+		if s.users == nil {
+			return "", errors.New("event user directory is unavailable")
+		}
+		active, err := s.users.IsUserActive(ctx, event.UserID)
+		if err != nil || !active {
+			return "", errors.New("event owner is inactive")
+		}
+	}
 	now := s.now().UTC().UnixMilli()
 	queries := dbsqlc.New(tx)
 	err = queries.InsertEvent(ctx, dbsqlc.InsertEventParams{
-		ID: id, Topic: event.Topic, SchemaVersion: int64(event.SchemaVersion),
+		ID: id, UserID: event.UserID, Topic: event.Topic, SchemaVersion: int64(event.SchemaVersion),
 		SourceModule: string(event.SourceModule), AggregateID: event.AggregateID,
 		PayloadJson: string(event.Payload), OccurredAt: now, AvailableAt: now, CreatedAt: now,
 	})

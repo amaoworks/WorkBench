@@ -110,6 +110,6 @@ func writeDevChartFile(t *testing.T, dir, name, contents string) {
 
 func requestDevChartAsset(module *Module, path string) *httptest.ResponseRecorder {
 	response := httptest.NewRecorder()
-	module.serveTerminal(response, httptest.NewRequest(http.MethodGet, path, nil))
+	module.serveTerminal(response, testRequest(http.MethodGet, path, nil))
 	return response
 }

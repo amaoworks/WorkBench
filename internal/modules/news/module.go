@@ -23,6 +23,7 @@ type Dependencies struct {
 	Notifications contracts.NotificationService
 	AI            contracts.TextGenerator
 	HTTPClient    *http.Client
+	Users         contracts.UserDirectory
 }
 
 type Module struct {
@@ -32,6 +33,7 @@ type Module struct {
 	notifications contracts.NotificationService
 	ai            contracts.TextGenerator
 	client        *http.Client
+	users         contracts.UserDirectory
 	now           func() time.Time
 	sourceMu      sync.Mutex
 	settingsMu    sync.Mutex
@@ -42,8 +44,8 @@ type Module struct {
 }
 
 func New(d Dependencies) (*Module, error) {
-	if d.DB == nil || d.Events == nil || d.Notifications == nil || d.AI == nil {
-		return nil, errors.New("news requires database, events, notifications and text generator")
+	if d.DB == nil || d.Events == nil || d.Notifications == nil || d.AI == nil || d.Users == nil {
+		return nil, errors.New("news requires database, events, notifications, text generator and users")
 	}
 	client := d.HTTPClient
 	if client == nil {
@@ -55,7 +57,7 @@ func New(d Dependencies) (*Module, error) {
 		}}
 	}
 	life, cancel := context.WithCancel(context.Background())
-	return &Module{db: d.DB, q: newssqlc.New(d.DB), events: d.Events, notifications: d.Notifications, ai: d.AI, client: client, now: time.Now, life: life, cancel: cancel}, nil
+	return &Module{db: d.DB, q: newssqlc.New(d.DB), events: d.Events, notifications: d.Notifications, ai: d.AI, client: client, users: d.Users, now: time.Now, life: life, cancel: cancel}, nil
 }
 
 func (*Module) Manifest() contracts.ModuleManifest {
@@ -105,6 +107,10 @@ func (m *Module) Register(r contracts.ModuleRegistrar) error {
 		wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx, cancel := m.operation(r.Context())
 			defer cancel()
+			if _, err := contracts.RequireUserID(ctx); err != nil {
+				writeError(w, err)
+				return
+			}
 			handler(w, r.WithContext(ctx))
 		})
 		if err := r.Handle(route.method, "/api/modules/news/"+route.path, wrapped); err != nil {
@@ -138,6 +144,10 @@ func (m *Module) Register(r contracts.ModuleRegistrar) error {
 }
 
 func (m *Module) mutate(ctx context.Context, topic, id string, fn func(*newssqlc.Queries) error) error {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return err
+	}
+
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -147,7 +157,7 @@ func (m *Module) mutate(ctx context.Context, topic, id string, fn func(*newssqlc
 		return err
 	}
 	payload, _ := json.Marshal(map[string]string{"id": id})
-	if _, err = m.events.PublishTx(ctx, tx, contracts.NewEvent{Topic: topic, SchemaVersion: 1, SourceModule: "news", AggregateID: id, Payload: payload}); err != nil {
+	if _, err = m.events.PublishTx(ctx, tx, contracts.NewEvent{UserID: contracts.UserID(ctx), Topic: topic, SchemaVersion: 1, SourceModule: "news", AggregateID: id, Payload: payload}); err != nil {
 		return err
 	}
 	return tx.Commit()

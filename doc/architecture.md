@@ -1,6 +1,6 @@
 # 架构与目录
 
-Workbench 是本地优先、单用户的个人工作台。当前采用 Go 模块化单体、React 前端和共享数据库工作空间；原生运行默认 SQLite，Docker Compose 默认 PostgreSQL。前端生产资源嵌入 Go 程序，数据库与本地运行目录见[数据设计](data-model.md)。
+Workbench 是本地优先、支持多用户的个人工作台。当前采用 Go 模块化单体、React 前端和共享数据库工作空间；个人业务数据按用户隔离，管理员管理系统与共享服务配置。原生运行默认 SQLite，Docker Compose 默认 PostgreSQL。前端生产资源嵌入 Go 程序，数据库与本地运行目录见[数据设计](data-model.md)，权限与升级见[用户与权限](multi-user.md)。
 
 ## 三层职责
 
@@ -10,7 +10,7 @@ Workbench 是本地优先、单用户的个人工作台。当前采用 Go 模块
 | 通用能力层 | `internal/capabilities/` | AI、对话、调度、通知、总览等可复用服务 |
 | 基础设施层 | `internal/foundation/` | 数据库生命周期、鉴权、可靠事件、模块注册、HTTP 与 ID 工具 |
 
-`internal/contracts` 存放跨层接口和资源描述。`internal/app` 负责装配、运行生命周期及平台配置接口；它不是业务模块目录。`internal/webui` 负责嵌入前端资源和 SPA 路由回退。
+`internal/contracts` 存放跨层接口、可信用户身份与资源描述。`internal/app` 负责装配、运行生命周期及平台配置接口；它不是业务模块目录。`internal/webui` 负责嵌入前端资源和 SPA 路由回退。
 
 ## 当前目录
 
@@ -20,7 +20,7 @@ internal/
   app/                         依赖装配、平台路由、设置、备份入口
   contracts/                   Module、外部协议类型、可选生命周期/路由、Event、Job、AI、Notification、Widget
   foundation/
-    auth/                      凭据、Session、Host/Origin/CSRF
+    auth/                      用户、角色、凭据、Session、Host/Origin/CSRF
     database/                  SQLite/PostgreSQL、迁移、SQLite 备份及平台 SQL
     events/                    事务事件存储与投递
     modules/                   内置与外部目录、启停门控、外部控制客户端与同源代理

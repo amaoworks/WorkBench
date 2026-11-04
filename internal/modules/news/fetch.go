@@ -31,18 +31,26 @@ type RefreshResult struct {
 
 func hash(s string) string { v := sha256.Sum256([]byte(s)); return hex.EncodeToString(v[:]) }
 func (m *Module) RefreshSource(ctx context.Context, id string) (FetchResult, error) {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return FetchResult{}, err
+	}
+
 	ctx, cancel := m.operation(ctx)
 	defer cancel()
 	return m.refreshSource(ctx, id, false)
 }
 
 func (m *Module) refreshSource(ctx context.Context, id string, dueOnly bool) (FetchResult, error) {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return FetchResult{}, err
+	}
+
 	release, err := m.work.acquire(ctx, "source:"+id)
 	if err != nil {
 		return FetchResult{}, err
 	}
 	defer release()
-	src, err := m.q.GetSource(ctx, id)
+	src, err := m.q.GetSource(ctx, newssqlc.GetSourceParams{UserID: contracts.UserID(ctx), ID: id})
 	if err != nil {
 		return FetchResult{}, err
 	}
@@ -58,6 +66,10 @@ func (m *Module) refreshSource(ctx context.Context, id string, dueOnly bool) (Fe
 	return m.fetch(ctx, src)
 }
 func (m *Module) Refresh(ctx context.Context, dueOnly bool) (RefreshResult, error) {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return RefreshResult{}, err
+	}
+
 	ctx, cancel := m.operation(ctx)
 	defer cancel()
 	release, err := m.work.acquire(ctx, "refresh")
@@ -65,7 +77,7 @@ func (m *Module) Refresh(ctx context.Context, dueOnly bool) (RefreshResult, erro
 		return RefreshResult{}, err
 	}
 	defer release()
-	rows, err := m.q.ListSources(ctx)
+	rows, err := m.q.ListSources(ctx, contracts.UserID(ctx))
 	if err != nil {
 		return RefreshResult{}, err
 	}
@@ -106,6 +118,10 @@ enqueue:
 	return result, ctx.Err()
 }
 func (m *Module) fetch(ctx context.Context, src newssqlc.NewsSource) (FetchResult, error) {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return FetchResult{}, err
+	}
+
 	now := m.now().UTC()
 	result := FetchResult{}
 	if err := validateURL(src.Url); err != nil {
@@ -133,7 +149,7 @@ func (m *Module) fetch(ctx context.Context, src newssqlc.NewsSource) (FetchResul
 			return result, err
 		}
 		result.NotModified = true
-		err = m.q.RecordFetch(ctx, newssqlc.RecordFetchParams{ID: src.ID, FetchedAt: now.UnixMilli(), NextFetchAt: now.Add(time.Duration(src.IntervalMinutes) * time.Minute).UnixMilli(), Etag: src.Etag, LastModified: src.LastModified, ItemCount: src.ItemCount})
+		err = m.q.RecordFetch(ctx, newssqlc.RecordFetchParams{UserID: contracts.UserID(ctx), ID: src.ID, FetchedAt: now.UnixMilli(), NextFetchAt: now.Add(time.Duration(src.IntervalMinutes) * time.Minute).UnixMilli(), Etag: src.Etag, LastModified: src.LastModified, ItemCount: src.ItemCount})
 		return result, err
 	}
 	var items []feedItem
@@ -168,7 +184,7 @@ func (m *Module) fetch(ctx context.Context, src newssqlc.NewsSource) (FetchResul
 		delay := time.Duration(src.IntervalMinutes) * time.Minute * time.Duration(1<<min(src.FailureCount+1, 5))
 		delay = min(delay, 24*time.Hour)
 		delay = max(delay, retryAfter)
-		if recordErr := m.q.RecordFetchFailure(ctx, newssqlc.RecordFetchFailureParams{ID: src.ID, NextFetchAt: now.Add(delay).UnixMilli(), LastError: err.Error()}); recordErr != nil {
+		if recordErr := m.q.RecordFetchFailure(ctx, newssqlc.RecordFetchFailureParams{UserID: contracts.UserID(ctx), ID: src.ID, NextFetchAt: now.Add(delay).UnixMilli(), LastError: err.Error()}); recordErr != nil {
 			return result, recordErr
 		}
 		return result, err
@@ -179,7 +195,7 @@ func (m *Module) fetch(ctx context.Context, src newssqlc.NewsSource) (FetchResul
 	}
 	err = m.mutate(ctx, "news.articles.ingested", src.ID, func(q *newssqlc.Queries) error {
 		// Configuration writes share this short lock; network I/O holds no such lock.
-		rulesRows, e := q.ListRules(ctx)
+		rulesRows, e := q.ListRules(ctx, contracts.UserID(ctx))
 		if e != nil {
 			return e
 		}
@@ -200,7 +216,7 @@ func (m *Module) fetch(ctx context.Context, src newssqlc.NewsSource) (FetchResul
 				key = hash(item.Title + "\n" + item.Content)
 			}
 			key = hash(key)
-			id, e := q.GetOriginArticle(ctx, newssqlc.GetOriginArticleParams{SourceID: src.ID, ItemKey: key})
+			id, e := q.GetOriginArticle(ctx, newssqlc.GetOriginArticleParams{UserID: contracts.UserID(ctx), SourceID: src.ID, ItemKey: key})
 			known := e == nil
 			if e != nil && !errors.Is(e, sql.ErrNoRows) {
 				return e
@@ -208,7 +224,7 @@ func (m *Module) fetch(ctx context.Context, src newssqlc.NewsSource) (FetchResul
 			if !known {
 				if item.URL != "" {
 					id = hash(item.URL)
-					other, e := q.GetArticleByURL(ctx, item.URL)
+					other, e := q.GetArticleByURL(ctx, newssqlc.GetArticleByURLParams{UserID: contracts.UserID(ctx), Url: item.URL})
 					if e == nil {
 						id = other.ID
 					} else if !errors.Is(e, sql.ErrNoRows) {
@@ -219,22 +235,22 @@ func (m *Module) fetch(ctx context.Context, src newssqlc.NewsSource) (FetchResul
 				}
 			}
 			if known && item.URL != "" {
-				other, e := q.GetArticleByURL(ctx, item.URL)
+				other, e := q.GetArticleByURL(ctx, newssqlc.GetArticleByURLParams{UserID: contracts.UserID(ctx), Url: item.URL})
 				if e != nil && !errors.Is(e, sql.ErrNoRows) {
 					return e
 				}
 				if e == nil && other.ID != id {
-					previous, e := q.GetArticle(ctx, id)
+					previous, e := q.GetArticle(ctx, newssqlc.GetArticleParams{UserID: contracts.UserID(ctx), ID: id})
 					if e != nil {
 						return e
 					}
-					if e = q.MergeArticleState(ctx, newssqlc.MergeArticleStateParams{ID: other.ID, IsRead: previous.IsRead, Starred: previous.Starred}); e != nil {
+					if e = q.MergeArticleState(ctx, newssqlc.MergeArticleStateParams{UserID: contracts.UserID(ctx), ID: other.ID, IsRead: previous.IsRead, Starred: previous.Starred}); e != nil {
 						return e
 					}
-					if e = q.MoveOrigins(ctx, newssqlc.MoveOriginsParams{Target: other.ID, Previous: id}); e != nil {
+					if e = q.MoveOrigins(ctx, newssqlc.MoveOriginsParams{UserID: contracts.UserID(ctx), Target: other.ID, Previous: id}); e != nil {
 						return e
 					}
-					if e = q.DeleteArticle(ctx, id); e != nil {
+					if e = q.DeleteArticle(ctx, newssqlc.DeleteArticleParams{UserID: contracts.UserID(ctx), ID: id}); e != nil {
 						return e
 					}
 					id = other.ID
@@ -246,30 +262,30 @@ func (m *Module) fetch(ctx context.Context, src newssqlc.NewsSource) (FetchResul
 				publisher = src.Name
 			}
 			matched, topic := matchArticle(item.Title, item.Content, []string{src.ID}, src.Topic, rules)
-			n, e := q.InsertArticle(ctx, newssqlc.InsertArticleParams{ID: id, Title: item.Title, Url: item.URL, SourceName: publisher, Content: item.Content, Language: item.Language, Topic: topic, Matched: bit(matched), PublishedAt: item.PublishedAt.UnixMilli(), CreatedAt: now.UnixMilli()})
+			n, e := q.InsertArticle(ctx, newssqlc.InsertArticleParams{UserID: contracts.UserID(ctx), ID: id, Title: item.Title, Url: item.URL, SourceName: publisher, Content: item.Content, Language: item.Language, Topic: topic, Matched: bit(matched), PublishedAt: item.PublishedAt.UnixMilli(), CreatedAt: now.UnixMilli()})
 			if e != nil {
 				return e
 			}
 			result.Added += int(n)
 			if known {
-				old, e := q.GetArticle(ctx, id)
+				old, e := q.GetArticle(ctx, newssqlc.GetArticleParams{UserID: contracts.UserID(ctx), ID: id})
 				if e != nil {
 					return e
 				}
 				if old.Title != item.Title || old.Content != item.Content || old.Url != item.URL {
-					if e = q.UpdateArticleText(ctx, newssqlc.UpdateArticleTextParams{ID: id, Title: item.Title, Content: item.Content, Language: item.Language, Url: item.URL}); e != nil {
+					if e = q.UpdateArticleText(ctx, newssqlc.UpdateArticleTextParams{UserID: contracts.UserID(ctx), ID: id, Title: item.Title, Content: item.Content, Language: item.Language, Url: item.URL}); e != nil {
 						return e
 					}
 				}
 			}
-			if e = q.SaveOrigin(ctx, newssqlc.SaveOriginParams{SourceID: src.ID, ItemKey: key, ArticleID: id, SourceName: src.Name, Url: item.URL}); e != nil {
+			if e = q.SaveOrigin(ctx, newssqlc.SaveOriginParams{UserID: contracts.UserID(ctx), SourceID: src.ID, ItemKey: key, ArticleID: id, SourceName: src.Name, Url: item.URL}); e != nil {
 				return e
 			}
-			article, e := q.GetArticle(ctx, id)
+			article, e := q.GetArticle(ctx, newssqlc.GetArticleParams{UserID: contracts.UserID(ctx), ID: id})
 			if e != nil {
 				return e
 			}
-			origins, e := q.ListOrigins(ctx, id)
+			origins, e := q.ListOrigins(ctx, newssqlc.ListOriginsParams{UserID: contracts.UserID(ctx), ArticleID: id})
 			if e != nil {
 				return e
 			}
@@ -278,17 +294,21 @@ func (m *Module) fetch(ctx context.Context, src newssqlc.NewsSource) (FetchResul
 				ids = append(ids, o.SourceID)
 			}
 			matched, topic = matchArticle(article.Title, article.Content, ids, article.Topic, rules)
-			if e = q.SetArticleMatch(ctx, newssqlc.SetArticleMatchParams{ID: id, Matched: bit(matched), Topic: topic}); e != nil {
+			if e = q.SetArticleMatch(ctx, newssqlc.SetArticleMatchParams{UserID: contracts.UserID(ctx), ID: id, Matched: bit(matched), Topic: topic}); e != nil {
 				return e
 			}
 		}
-		return q.RecordFetch(ctx, newssqlc.RecordFetchParams{ID: src.ID, FetchedAt: now.UnixMilli(), NextFetchAt: now.Add(time.Duration(src.IntervalMinutes) * time.Minute).UnixMilli(), Etag: response.Header.Get("ETag"), LastModified: response.Header.Get("Last-Modified"), ItemCount: int64(len(items))})
+		return q.RecordFetch(ctx, newssqlc.RecordFetchParams{UserID: contracts.UserID(ctx), ID: src.ID, FetchedAt: now.UnixMilli(), NextFetchAt: now.Add(time.Duration(src.IntervalMinutes) * time.Minute).UnixMilli(), Etag: response.Header.Get("ETag"), LastModified: response.Header.Get("Last-Modified"), ItemCount: int64(len(items))})
 	})
 	return result, err
 }
 
 func (m *Module) checkSource(ctx context.Context, snapshot newssqlc.NewsSource) error {
-	current, err := m.q.GetSource(ctx, snapshot.ID)
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return err
+	}
+
+	current, err := m.q.GetSource(ctx, newssqlc.GetSourceParams{UserID: contracts.UserID(ctx), ID: snapshot.ID})
 	if err != nil {
 		return err
 	}
@@ -298,8 +318,10 @@ func (m *Module) checkSource(ctx context.Context, snapshot newssqlc.NewsSource) 
 	return nil
 }
 func (m *Module) fetchJob(ctx context.Context, _ contracts.JobRun) error {
-	_, err := m.Refresh(ctx, true)
-	return err
+	return m.forActiveUsers(ctx, func(userCtx context.Context) error {
+		_, err := m.Refresh(userCtx, true)
+		return err
+	})
 }
 
 func escapedPattern(s string) string {

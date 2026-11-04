@@ -11,6 +11,7 @@ Workbench 技术文档索引：
 | [部署与发布](deployment.md) | 二进制、Compose、systemd、反向代理、升级与 GitHub Actions |
 | [配置与运行](configuration.md) | 构建、启动参数、设置、开发服务、备份恢复 |
 | [安全边界](security.md) | 鉴权模式、请求保护、凭据与外部服务处理 |
+| [用户与权限](multi-user.md) | 管理员、个人数据隔离、券商连接和单用户升级 |
 | [文案与文档规范](copywriting-guidelines.md) | 界面文案与技术文档编写规范 |
 | [前端界面规范](frontend-guidelines.md) | 顶部导航、通用组件、页面状态、控件、主题、可达性与响应式约定 |
 | [Todo](modules/todo.md) | 待办、分页、提醒、AI Tool 和代码入口 |

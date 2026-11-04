@@ -42,7 +42,7 @@ func TestMonitorUsesProviderAndRejectsInvalidatedBatch(t *testing.T) {
 				},
 			}
 			// No Schwab credentials are configured; only the injected provider is used.
-			err := m.scanPrices(context.Background())
+			err := m.scanPrices(testContext(context.Background()))
 			if current {
 				if err != nil {
 					t.Fatal(err)

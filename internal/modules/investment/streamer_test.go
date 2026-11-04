@@ -71,7 +71,7 @@ func newStreamFixture(t *testing.T, beforeAck func(testStreamRequest) int) *stre
 	t.Cleanup(upstream.Close)
 	info, _ := json.Marshal(streamerInfo{StreamerSocketURL: "ws" + strings.TrimPrefix(upstream.URL, "http"), SchwabClientCustomerID: "customer-A", SchwabClientCorrelID: "correlation"})
 	seedSchwab(t, f.module, schwabRecord{AppKey: "key-A", AppSecret: "secret-A", CallbackURL: "https://127.0.0.1/oauth/schwab", AccessToken: "token-A", RefreshToken: "refresh-A", TokenExpiresAt: time.Now().Add(time.Hour), StreamerInfo: string(info)})
-	browserServer := httptest.NewServer(http.HandlerFunc(f.module.serveStreamer))
+	browserServer := httptest.NewServer(testAuthenticated(f.module.serveStreamer))
 	t.Cleanup(browserServer.Close)
 	f.browserURL = "ws" + strings.TrimPrefix(browserServer.URL, "http")
 	return f
@@ -141,7 +141,7 @@ func TestStreamerCredentialsChangeClosesAuthenticatedConnection(t *testing.T) {
 			client := f.dial(t)
 			readReady(t, client)
 			got := httptest.NewRecorder()
-			f.module.saveSchwab(got, httptest.NewRequest("PUT", "/", strings.NewReader(input)))
+			f.module.saveSchwab(got, testRequest("PUT", "/", strings.NewReader(input)))
 			if got.Code != 200 {
 				t.Fatal(got.Body.String())
 			}
@@ -171,7 +171,7 @@ func TestStreamerDoesNotInstallOldLoginAfterCredentialsChange(t *testing.T) {
 		t.Fatal("missing LOGIN")
 	}
 	got := httptest.NewRecorder()
-	f.module.saveSchwab(got, httptest.NewRequest("PUT", "/", strings.NewReader(`{"appKey":"key-B","appSecret":"secret-B","callbackUrl":"https://127.0.0.1/oauth/schwab"}`)))
+	f.module.saveSchwab(got, testRequest("PUT", "/", strings.NewReader(`{"appKey":"key-B","appSecret":"secret-B","callbackUrl":"https://127.0.0.1/oauth/schwab"}`)))
 	close(releaseLogin)
 	if got.Code != 200 {
 		t.Fatal(got.Body.String())
@@ -209,7 +209,7 @@ func TestStreamerWaitsForSubscriptionAckAndUsesSubsThenAdd(t *testing.T) {
 	done := make(chan int, 1)
 	send := func() int {
 		got := httptest.NewRecorder()
-		f.module.streamerCommand(got, httptest.NewRequest("POST", "/", strings.NewReader(`{"service":"LEVELONE_EQUITIES","command":"ADD","keys":"AAPL","fields":"0,1,3"}`)))
+		f.module.streamerCommand(got, testRequest("POST", "/", strings.NewReader(`{"service":"LEVELONE_EQUITIES","command":"ADD","keys":"AAPL","fields":"0,1,3"}`)))
 		return got.Code
 	}
 	go func() { done <- send() }()
@@ -252,7 +252,7 @@ func TestStreamerCommandRejectionIsNotSuccess(t *testing.T) {
 	client := f.dial(t)
 	readReady(t, client)
 	got := httptest.NewRecorder()
-	f.module.streamerCommand(got, httptest.NewRequest("POST", "/", strings.NewReader(`{"service":"LEVELONE_EQUITIES","command":"ADD","keys":"AAPL"}`)))
+	f.module.streamerCommand(got, testRequest("POST", "/", strings.NewReader(`{"service":"LEVELONE_EQUITIES","command":"ADD","keys":"AAPL"}`)))
 	if got.Code != 503 {
 		t.Fatalf("upstream rejection returned %d", got.Code)
 	}
@@ -280,18 +280,18 @@ func TestOAuthReplacementClosesPreviousAccountStream(t *testing.T) {
 	defer upstream.Close()
 	f.module.schwabAPI = upstream.URL
 	f.module.tokenMu.Lock()
-	rec, err := f.module.loadSchwab(context.Background())
+	rec, err := f.module.loadSchwab(testContext(context.Background()))
 	if err == nil {
 		rec.OAuthState = "state"
 		rec.OAuthStateExpiresAt = time.Now().Add(time.Minute)
-		err = f.module.storeSchwab(context.Background(), rec)
+		err = f.module.storeSchwab(testContext(context.Background()), rec)
 	}
 	f.module.tokenMu.Unlock()
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := httptest.NewRecorder()
-	f.module.oauthCallback(got, httptest.NewRequest("GET", "/oauth/schwab?code=code&state=state", nil))
+	f.module.oauthCallback(got, testRequest("GET", "/oauth/schwab?code=code&state=state", nil))
 	if got.Code != 200 {
 		t.Fatal(got.Body.String())
 	}

@@ -17,7 +17,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
       const { token } = await (await fetch("/api/auth/csrf")).json();
       const response = await fetch("/api/auth/login", {
         method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
-        body: JSON.stringify({ password: "Browser-Test-123" })
+        body: JSON.stringify({ username: "admin", password: "Browser-Test-123" })
       });
       if (!response.ok) throw new Error("test workbench login failed");
     });

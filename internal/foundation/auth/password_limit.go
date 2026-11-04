@@ -20,11 +20,12 @@ var (
 )
 
 type passwordLimit struct {
-	mu       sync.Mutex
-	active   int
-	tokens   int
-	refillAt time.Time
-	now      func() time.Time
+	mu        sync.Mutex
+	active    int
+	loginKeys map[string]loginBucket
+	tokens    int
+	refillAt  time.Time
+	now       func() time.Time
 }
 
 func newPasswordLimit() *passwordLimit {

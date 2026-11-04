@@ -30,6 +30,7 @@ const (
 
 type Dependencies struct {
 	DB                *sql.DB
+	Users             contracts.UserDirectory
 	Notifications     contracts.NotificationService
 	Logger            *slog.Logger
 	FutuConfigDir     string
@@ -48,6 +49,11 @@ type HTTPRoute struct {
 
 type Module struct {
 	deps           Dependencies
+	root           *Module
+	userID         string
+	usersMu        sync.Mutex
+	users          map[string]*Module
+	appMu          sync.Mutex
 	terminalAssets fs.FS
 	queries        *investmentsqlc.Queries
 	now            func() time.Time
@@ -74,8 +80,8 @@ type Module struct {
 }
 
 func New(deps Dependencies) (*Module, error) {
-	if deps.DB == nil || deps.Notifications == nil {
-		return nil, errors.New("investment database and notifications are required")
+	if deps.DB == nil || deps.Notifications == nil || deps.Users == nil {
+		return nil, errors.New("investment database, notifications and user directory are required")
 	}
 	terminalAssets, err := terminalChartAssets()
 	if err != nil {
@@ -86,6 +92,7 @@ func New(deps Dependencies) (*Module, error) {
 	}
 	module := &Module{
 		deps:           deps,
+		users:          make(map[string]*Module),
 		terminalAssets: terminalAssets,
 		logger:         deps.Logger,
 		queries:        investmentsqlc.New(deps.DB),
@@ -146,57 +153,57 @@ func (m *Module) Migrations() contracts.MigrationSet {
 func (m *Module) Register(r contracts.ModuleRegistrar) error {
 	proxyMethods := []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch}
 	regs := []error{
-		r.Handle("GET", "/api/modules/investment/positions", http.HandlerFunc(m.getPositions)),
-		r.Handle("GET", "/api/modules/investment/orders", http.HandlerFunc(m.getOrders)),
-		r.Handle("GET", "/api/modules/investment/networth", http.HandlerFunc(m.getNetWorth)),
+		r.Handle("GET", "/api/modules/investment/positions", m.personalHTTP((*Module).getPositions)),
+		r.Handle("GET", "/api/modules/investment/orders", m.personalHTTP((*Module).getOrders)),
+		r.Handle("GET", "/api/modules/investment/networth", m.personalHTTP((*Module).getNetWorth)),
 		r.Job(m.netWorthJob()),
-		r.Handle("GET", "/api/modules/investment/preferences", http.HandlerFunc(m.getPreferences)),
-		r.Handle("PUT", "/api/modules/investment/preferences", http.HandlerFunc(m.savePreference)),
-		r.Handle("GET", "/api/modules/investment/watchlists", http.HandlerFunc(m.getWatchlists)),
-		r.Handle("PUT", "/api/modules/investment/watchlists", http.HandlerFunc(m.saveWatchlists)),
-		r.Handle("GET", "/api/modules/investment/monitor", http.HandlerFunc(m.getPriceMonitor)),
-		r.Handle("POST", "/api/modules/investment/monitor/rules", http.HandlerFunc(m.savePriceRule)),
-		r.Handle("PUT", "/api/modules/investment/monitor/rules/{id}", http.HandlerFunc(m.savePriceRule)),
-		r.Handle("DELETE", "/api/modules/investment/monitor/rules/{id}", http.HandlerFunc(m.deletePriceRule)),
-		r.Handle("GET", "/api/modules/investment/monitor/history", http.HandlerFunc(m.getPriceHistory)),
+		r.Handle("GET", "/api/modules/investment/preferences", m.personalHTTP((*Module).getPreferences)),
+		r.Handle("PUT", "/api/modules/investment/preferences", m.personalHTTP((*Module).savePreference)),
+		r.Handle("GET", "/api/modules/investment/watchlists", m.personalHTTP((*Module).getWatchlists)),
+		r.Handle("PUT", "/api/modules/investment/watchlists", m.personalHTTP((*Module).saveWatchlists)),
+		r.Handle("GET", "/api/modules/investment/monitor", m.personalHTTP((*Module).getPriceMonitor)),
+		r.Handle("POST", "/api/modules/investment/monitor/rules", m.personalHTTP((*Module).savePriceRule)),
+		r.Handle("PUT", "/api/modules/investment/monitor/rules/{id}", m.personalHTTP((*Module).savePriceRule)),
+		r.Handle("DELETE", "/api/modules/investment/monitor/rules/{id}", m.personalHTTP((*Module).deletePriceRule)),
+		r.Handle("GET", "/api/modules/investment/monitor/history", m.personalHTTP((*Module).getPriceHistory)),
 		r.Job(m.monitorJob()),
 		r.Tool(contracts.AITool{Name: "investment.positions", Module: "investment", SchemaVersion: 1,
 			Description:      "查询已连接 Schwab 账户的持仓和已存行情时间",
 			ParametersSchema: json.RawMessage(`{"type":"object","properties":{"accountHash":{"type":["string","null"],"minLength":1,"maxLength":200}},"required":["accountHash"],"additionalProperties":false}`),
-			Risk:             contracts.ToolRiskReadOnly, Handler: m.positionsTool}),
+			Risk:             contracts.ToolRiskReadOnly, Handler: m.personalTool((*Module).positionsTool)}),
 		r.Tool(contracts.AITool{Name: "investment.orders", Module: "investment", SchemaVersion: 1,
 			Description:      "按时间范围、状态和账户查询 Schwab 订单",
 			ParametersSchema: json.RawMessage(`{"type":"object","properties":{"days":{"type":"integer","enum":[1,7,30,90]},"status":{"type":"string","enum":["all","working","filled","canceled"]},"timeZone":{"type":"string","minLength":1,"maxLength":100},"accountHash":{"type":["string","null"],"minLength":1,"maxLength":200}},"required":["days","status","timeZone","accountHash"],"additionalProperties":false}`),
-			Risk:             contracts.ToolRiskReadOnly, Handler: m.ordersTool}),
+			Risk:             contracts.ToolRiskReadOnly, Handler: m.personalTool((*Module).ordersTool)}),
 		r.Tool(contracts.AITool{Name: "investment.list_monitors", Module: "investment", SchemaVersion: 1,
 			Description:      "查询价格监控规则及最近检查状态",
 			ParametersSchema: json.RawMessage(`{"type":"object","properties":{},"required":[],"additionalProperties":false}`),
-			Risk:             contracts.ToolRiskReadOnly, Handler: m.listMonitorsTool}),
+			Risk:             contracts.ToolRiskReadOnly, Handler: m.personalTool((*Module).listMonitorsTool)}),
 		r.Tool(contracts.AITool{Name: "investment.create_monitor", Module: "investment", SchemaVersion: 1,
 			Description:      "创建一条美股或 ETF 价格涨跌幅监控规则",
 			ParametersSchema: json.RawMessage(`{"type":"object","properties":{"symbol":{"type":"string","pattern":"^[A-Za-z][A-Za-z0-9.\\-]{0,14}$"},"direction":{"type":"string","enum":["up","down"]},"thresholdPercent":{"type":"number","exclusiveMinimum":0,"maximum":1000},"enabled":{"type":"boolean"}},"required":["symbol","direction","thresholdPercent","enabled"],"additionalProperties":false}`),
-			Risk:             contracts.ToolRiskLowWrite, Handler: m.createMonitorTool}),
-		r.Handle("GET", "/api/modules/investment/schwab", http.HandlerFunc(m.getSchwab)),
-		r.Handle("PUT", "/api/modules/investment/schwab", http.HandlerFunc(m.saveSchwab)),
-		r.Handle("POST", "/api/modules/investment/schwab/disconnect", http.HandlerFunc(m.disconnectSchwab)),
-		r.Handle("GET", "/api/modules/investment/schwab/oauth/login", http.HandlerFunc(m.oauthLogin)),
-		r.Handle("POST", "/api/modules/investment/schwab/oauth/start", http.HandlerFunc(m.oauthStart)),
-		r.Handle("GET", "/api/modules/investment/schwab/oauth/status/{id}", http.HandlerFunc(m.oauthStatus)),
-		r.Handle("POST", "/api/modules/investment/schwab/oauth/refresh", http.HandlerFunc(m.oauthRefreshHTTP)),
-		r.Handle("GET", "/api/modules/investment/schwab/trader/ws", http.HandlerFunc(m.serveStreamer)),
-		r.Handle("GET", "/api/modules/investment/schwab/marketdata/ws", http.HandlerFunc(m.serveStreamer)),
-		r.Handle("POST", "/api/modules/investment/schwab/marketdata/ws/command", http.HandlerFunc(m.streamerCommand)),
-		r.Handle("GET", "/api/modules/investment/futu", http.HandlerFunc(m.getFutu)),
-		r.Handle("PUT", "/api/modules/investment/futu", http.HandlerFunc(m.saveFutu)),
-		r.Handle("POST", "/api/modules/investment/futu/disconnect", http.HandlerFunc(m.disconnectFutu)),
-		r.Handle("GET", "/api/modules/investment/overnight", http.HandlerFunc(m.getOvernight)),
-		r.Handle("PUT", "/api/modules/investment/overnight", http.HandlerFunc(m.saveOvernight)),
-		r.Handle("GET", "/api/modules/investment/futu/kline", http.HandlerFunc(m.getFutuKline)),
-		r.Handle("GET", "/api/modules/investment/futu/quote/ws", http.HandlerFunc(m.serveFutuStream)),
-		r.Handle("POST", "/api/modules/investment/futu/quote/ws/command", http.HandlerFunc(m.futuCommand)),
-		r.Handle("GET", "/api/modules/investment/overview/snapshot", http.HandlerFunc(m.getOverviewSnapshot)),
-		r.Handle("GET", "/api/modules/investment/overview/quotes", http.HandlerFunc(m.getOverviewQuotes)),
-		r.Handle("GET", "/api/modules/investment/overview/alerts", http.HandlerFunc(m.getOverviewAlerts)),
+			Risk:             contracts.ToolRiskLowWrite, Handler: m.personalTool((*Module).createMonitorTool)}),
+		r.Handle("GET", "/api/modules/investment/schwab", m.personalHTTP((*Module).getSchwab)),
+		r.Handle("PUT", "/api/modules/investment/schwab", m.personalHTTP((*Module).saveSchwab)),
+		r.Handle("POST", "/api/modules/investment/schwab/disconnect", m.personalHTTP((*Module).disconnectSchwab)),
+		r.Handle("GET", "/api/modules/investment/schwab/oauth/login", m.personalHTTP((*Module).oauthLogin)),
+		r.Handle("POST", "/api/modules/investment/schwab/oauth/start", m.personalHTTP((*Module).oauthStart)),
+		r.Handle("GET", "/api/modules/investment/schwab/oauth/status/{id}", m.personalHTTP((*Module).oauthStatus)),
+		r.Handle("POST", "/api/modules/investment/schwab/oauth/refresh", m.personalHTTP((*Module).oauthRefreshHTTP)),
+		r.Handle("GET", "/api/modules/investment/schwab/trader/ws", m.personalHTTP((*Module).serveStreamer)),
+		r.Handle("GET", "/api/modules/investment/schwab/marketdata/ws", m.personalHTTP((*Module).serveStreamer)),
+		r.Handle("POST", "/api/modules/investment/schwab/marketdata/ws/command", m.personalHTTP((*Module).streamerCommand)),
+		r.Handle("GET", "/api/modules/investment/futu", m.personalHTTP((*Module).getFutu)),
+		r.Handle("PUT", "/api/modules/investment/futu", m.personalHTTP((*Module).saveFutu)),
+		r.Handle("POST", "/api/modules/investment/futu/disconnect", m.personalHTTP((*Module).disconnectFutu)),
+		r.Handle("GET", "/api/modules/investment/overnight", m.personalHTTP((*Module).getOvernight)),
+		r.Handle("PUT", "/api/modules/investment/overnight", m.personalHTTP((*Module).saveOvernight)),
+		r.Handle("GET", "/api/modules/investment/futu/kline", m.personalHTTP((*Module).getFutuKline)),
+		r.Handle("GET", "/api/modules/investment/futu/quote/ws", m.personalHTTP((*Module).serveFutuStream)),
+		r.Handle("POST", "/api/modules/investment/futu/quote/ws/command", m.personalHTTP((*Module).futuCommand)),
+		r.Handle("GET", "/api/modules/investment/overview/snapshot", m.personalHTTP((*Module).getOverviewSnapshot)),
+		r.Handle("GET", "/api/modules/investment/overview/quotes", m.personalHTTP((*Module).getOverviewQuotes)),
+		r.Handle("GET", "/api/modules/investment/overview/alerts", m.personalHTTP((*Module).getOverviewAlerts)),
 		r.Widget(contracts.WidgetDefinition{ID: "investment.snapshot", Module: "investment", SchemaVersion: 1,
 			Title: "资产快照", WidgetKind: "investment.snapshot", DataRoute: "/api/modules/investment/overview/snapshot", Size: contracts.WidgetLarge, Order: 10}),
 		r.Widget(contracts.WidgetDefinition{ID: "investment.quotes", Module: "investment", SchemaVersion: 1,
@@ -206,17 +213,23 @@ func (m *Module) Register(r contracts.ModuleRegistrar) error {
 		r.Job(contracts.JobDefinition{ID: "investment.schwab_refresh", Module: "investment", Schedule: contracts.ScheduleSpec{Kind: contracts.ScheduleInterval, Interval: 20 * time.Minute},
 			TimeZone: "UTC", Timeout: 30 * time.Second, OverlapPolicy: contracts.OverlapSkip, MisfirePolicy: contracts.MisfireRunOnce,
 			Retry: contracts.RetryPolicy{MaxAttempts: 3, InitialWait: time.Second, MaxWait: time.Minute}, Handler: func(ctx context.Context, _ contracts.JobRun) error {
-				err := m.refreshAccessToken(ctx)
-				if errors.Is(err, errSchwabReauthorizationRequired) {
-					return nil // Await interactive authorization; retries cannot repair this state.
-				}
-				return err
+				return m.forEachUser(ctx, func(child *Module, ctx context.Context) error {
+					err := child.refreshAccessToken(ctx)
+					if errors.Is(err, errSchwabReauthorizationRequired) {
+						return nil
+					}
+					return err
+				})
 			}}),
 	}
 	for _, method := range proxyMethods {
 		regs = append(regs,
-			r.Handle(method, "/api/modules/investment/schwab/trader/v1/*", m.proxySchwab("/trader/v1")),
-			r.Handle(method, "/api/modules/investment/schwab/marketdata/v1/*", m.proxySchwab("/marketdata/v1")),
+			r.Handle(method, "/api/modules/investment/schwab/trader/v1/*", m.personalHTTP(func(child *Module, w http.ResponseWriter, r *http.Request) {
+				child.proxySchwab("/trader/v1").ServeHTTP(w, r)
+			})),
+			r.Handle(method, "/api/modules/investment/schwab/marketdata/v1/*", m.personalHTTP(func(child *Module, w http.ResponseWriter, r *http.Request) {
+				child.proxySchwab("/marketdata/v1").ServeHTTP(w, r)
+			})),
 		)
 	}
 	return errors.Join(regs...)
@@ -229,10 +242,10 @@ func (m *Module) PublicRoutes() []HTTPRoute {
 
 // AssetRoutes are same-origin chart pages and the TradingView library reverse proxy.
 func (m *Module) AssetRoutes() []HTTPRoute {
-	library := http.HandlerFunc(m.proxyChartingLibrary)
+	library := m.personalHTTP((*Module).proxyChartingLibrary)
 	return []HTTPRoute{
-		{Method: http.MethodGet, Pattern: "/investment/terminal", Handler: http.HandlerFunc(m.serveTerminal)},
-		{Method: http.MethodGet, Pattern: "/investment/terminal/*", Handler: http.HandlerFunc(m.serveTerminal)},
+		{Method: http.MethodGet, Pattern: "/investment/terminal", Handler: m.personalHTTP((*Module).serveTerminal)},
+		{Method: http.MethodGet, Pattern: "/investment/terminal/*", Handler: m.personalHTTP((*Module).serveTerminal)},
 		{Method: http.MethodGet, Pattern: "/charting_library/*", Handler: library},
 		{Method: http.MethodHead, Pattern: "/charting_library/*", Handler: library},
 	}
@@ -257,6 +270,17 @@ func (m *Module) OnEnabledChanged(ctx context.Context, enabled bool) error {
 		m.netWorthCancel = nil
 	}
 	m.monitorMu.Unlock()
+	m.usersMu.Lock()
+	for _, child := range m.users {
+		child.monitorMu.Lock()
+		child.monitorEnabled = enabled
+		if !enabled && child.netWorthCancel != nil {
+			child.netWorthCancel()
+			child.netWorthCancel = nil
+		}
+		child.monitorMu.Unlock()
+	}
+	m.usersMu.Unlock()
 	m.futu.connectMu.Lock()
 	defer m.futu.connectMu.Unlock()
 	m.futu.enabled = enabled
@@ -274,13 +298,17 @@ func (m *Module) OnEnabledChanged(ctx context.Context, enabled bool) error {
 		return err
 	}
 	m.syncOpenD(rec)
-	m.startNetWorthSnapshot(ctx)
-	return nil
+	return m.forEachUser(ctx, func(child *Module, ctx context.Context) error { child.startNetWorthSnapshot(ctx); return nil })
 }
 
 // ResetStream invalidates existing streams when the module is disabled.
 func (m *Module) ResetStream() {
 	m.streamer.reset()
+	m.usersMu.Lock()
+	for _, child := range m.users {
+		child.streamer.reset()
+	}
+	m.usersMu.Unlock()
 	m.futu.reset()
 }
 
@@ -300,5 +328,22 @@ func (m *Module) Close() {
 	}
 	m.futu.connectMu.Unlock()
 	m.streamer.close()
+	m.usersMu.Lock()
+	children := make([]*Module, 0, len(m.users))
+	for _, child := range m.users {
+		children = append(children, child)
+	}
+	clear(m.users)
+	m.usersMu.Unlock()
+	for _, child := range children {
+		child.monitorMu.Lock()
+		child.monitorEnabled = false
+		if child.netWorthCancel != nil {
+			child.netWorthCancel()
+		}
+		child.monitorMu.Unlock()
+		child.netWorthWG.Wait()
+		child.streamer.close()
+	}
 	m.futu.close()
 }

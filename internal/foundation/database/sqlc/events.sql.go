@@ -39,7 +39,7 @@ func (q *Queries) DeleteEventConsumerTopics(ctx context.Context, consumerID stri
 }
 
 const getClaimableDelivery = `-- name: GetClaimableDelivery :one
-SELECT e.id AS event_id, e.topic, e.schema_version, e.source_module,
+SELECT e.id AS event_id, e.user_id, e.topic, e.schema_version, e.source_module,
        COALESCE(e.aggregate_id, '') AS aggregate_id, e.occurred_at,
        e.payload_json, d.attempts
 FROM event_deliveries d
@@ -61,6 +61,7 @@ type GetClaimableDeliveryParams struct {
 
 type GetClaimableDeliveryRow struct {
 	EventID       string `json:"event_id"`
+	UserID        string `json:"user_id"`
 	Topic         string `json:"topic"`
 	SchemaVersion int64  `json:"schema_version"`
 	SourceModule  string `json:"source_module"`
@@ -75,6 +76,7 @@ func (q *Queries) GetClaimableDelivery(ctx context.Context, arg GetClaimableDeli
 	var i GetClaimableDeliveryRow
 	err := row.Scan(
 		&i.EventID,
+		&i.UserID,
 		&i.Topic,
 		&i.SchemaVersion,
 		&i.SourceModule,
@@ -112,17 +114,18 @@ func (q *Queries) HasClaimableDelivery(ctx context.Context, arg HasClaimableDeli
 
 const insertEvent = `-- name: InsertEvent :exec
 INSERT INTO events_log(
-    id, topic, schema_version, source_module, aggregate_id,
+    id, user_id, topic, schema_version, source_module, aggregate_id,
     payload_json, occurred_at, available_at, created_at
 ) VALUES (
-    ?1, ?2, ?3, ?4,
-    NULLIF(?5, ''), ?6, ?7,
-    ?8, ?9
+    ?1, ?2, ?3, ?4, ?5,
+    NULLIF(?6, ''), ?7, ?8,
+    ?9, ?10
 )
 `
 
 type InsertEventParams struct {
 	ID            string      `json:"id"`
+	UserID        string      `json:"user_id"`
 	Topic         string      `json:"topic"`
 	SchemaVersion int64       `json:"schema_version"`
 	SourceModule  string      `json:"source_module"`
@@ -136,6 +139,7 @@ type InsertEventParams struct {
 func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) error {
 	_, err := q.db.ExecContext(ctx, insertEvent,
 		arg.ID,
+		arg.UserID,
 		arg.Topic,
 		arg.SchemaVersion,
 		arg.SourceModule,

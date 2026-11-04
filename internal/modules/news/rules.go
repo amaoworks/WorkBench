@@ -8,12 +8,17 @@ import (
 	"slices"
 	"strings"
 
+	"workbench/internal/contracts"
 	"workbench/internal/foundation/identity"
 	"workbench/internal/modules/news/sqlc"
 )
 
 func (m *Module) Rules(ctx context.Context) ([]Rule, error) {
-	rows, err := m.q.ListRules(ctx)
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return nil, err
+	}
+
+	rows, err := m.q.ListRules(ctx, contracts.UserID(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -36,6 +41,10 @@ func cleanList(items []string, max int) ([]string, error) {
 	return out, nil
 }
 func (m *Module) SaveRule(ctx context.Context, id string, in RuleInput) (Rule, error) {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return Rule{}, err
+	}
+
 	in.Name = strings.TrimSpace(in.Name)
 	in.Topic = strings.TrimSpace(in.Topic)
 	if in.Name == "" || len(in.Name) > 200 || len(in.Topic) > 120 {
@@ -59,7 +68,7 @@ func (m *Module) SaveRule(ctx context.Context, id string, in RuleInput) (Rule, e
 		if err != nil {
 			return Rule{}, err
 		}
-	} else if _, err = m.q.GetRule(ctx, id); err != nil {
+	} else if _, err = m.q.GetRule(ctx, newssqlc.GetRuleParams{UserID: contracts.UserID(ctx), ID: id}); err != nil {
 		return Rule{}, err
 	}
 	a, _ := json.Marshal(in.IncludeKeywords)
@@ -67,20 +76,20 @@ func (m *Module) SaveRule(ctx context.Context, id string, in RuleInput) (Rule, e
 	c, _ := json.Marshal(in.SourceIDs)
 	err = m.mutate(ctx, "news.rule.changed", id, func(q *newssqlc.Queries) error {
 		for _, src := range in.SourceIDs {
-			if _, e := q.GetSource(ctx, src); e != nil {
+			if _, e := q.GetSource(ctx, newssqlc.GetSourceParams{UserID: contracts.UserID(ctx), ID: src}); e != nil {
 				return errors.New("规则包含不存在的来源")
 			}
 		}
-		rows, e := q.ListRules(ctx)
+		rows, e := q.ListRules(ctx, contracts.UserID(ctx))
 		if e != nil {
 			return e
 		}
 		if len(rows) >= 100 {
-			if _, e = q.GetRule(ctx, id); errors.Is(e, sql.ErrNoRows) {
+			if _, e = q.GetRule(ctx, newssqlc.GetRuleParams{UserID: contracts.UserID(ctx), ID: id}); errors.Is(e, sql.ErrNoRows) {
 				return errors.New("最多添加 100 条关注规则")
 			}
 		}
-		if e = q.SaveRule(ctx, newssqlc.SaveRuleParams{ID: id, Name: in.Name, IncludeJson: string(a), ExcludeJson: string(b), SourcesJson: string(c), Topic: in.Topic, Enabled: bit(in.Enabled)}); e != nil {
+		if e = q.SaveRule(ctx, newssqlc.SaveRuleParams{UserID: contracts.UserID(ctx), ID: id, Name: in.Name, IncludeJson: string(a), ExcludeJson: string(b), SourcesJson: string(c), Topic: in.Topic, Enabled: bit(in.Enabled)}); e != nil {
 			return e
 		}
 		return m.rematch(ctx, q)
@@ -88,8 +97,12 @@ func (m *Module) SaveRule(ctx context.Context, id string, in RuleInput) (Rule, e
 	return Rule{ID: id, RuleInput: in}, err
 }
 func (m *Module) DeleteRule(ctx context.Context, id string) error {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return err
+	}
+
 	return m.mutate(ctx, "news.rule.deleted", id, func(q *newssqlc.Queries) error {
-		n, err := q.DeleteRule(ctx, id)
+		n, err := q.DeleteRule(ctx, newssqlc.DeleteRuleParams{UserID: contracts.UserID(ctx), ID: id})
 		if err != nil {
 			return err
 		}
@@ -125,7 +138,11 @@ func matchArticle(title, content string, sourceIDs []string, baseTopic string, r
 	return active == 0, baseTopic
 }
 func (m *Module) rematch(ctx context.Context, q *newssqlc.Queries) error {
-	rows, err := q.ListRules(ctx)
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return err
+	}
+
+	rows, err := q.ListRules(ctx, contracts.UserID(ctx))
 	if err != nil {
 		return err
 	}
@@ -133,7 +150,7 @@ func (m *Module) rematch(ctx context.Context, q *newssqlc.Queries) error {
 	if err != nil {
 		return err
 	}
-	sources, err := q.ListSources(ctx)
+	sources, err := q.ListSources(ctx, contracts.UserID(ctx))
 	if err != nil {
 		return err
 	}
@@ -141,12 +158,12 @@ func (m *Module) rematch(ctx context.Context, q *newssqlc.Queries) error {
 	for _, s := range sources {
 		topics[s.ID] = s.Topic
 	}
-	articles, err := q.ListAllArticles(ctx)
+	articles, err := q.ListAllArticles(ctx, contracts.UserID(ctx))
 	if err != nil {
 		return err
 	}
 	for _, a := range articles {
-		origins, err := q.ListOrigins(ctx, a.ID)
+		origins, err := q.ListOrigins(ctx, newssqlc.ListOriginsParams{UserID: contracts.UserID(ctx), ArticleID: a.ID})
 		if err != nil {
 			return err
 		}
@@ -159,7 +176,7 @@ func (m *Module) rematch(ctx context.Context, q *newssqlc.Queries) error {
 			}
 		}
 		matched, topic := matchArticle(a.Title, a.Content, ids, topic, rules)
-		if err = q.SetArticleMatch(ctx, newssqlc.SetArticleMatchParams{ID: a.ID, Topic: topic, Matched: bit(matched)}); err != nil {
+		if err = q.SetArticleMatch(ctx, newssqlc.SetArticleMatchParams{UserID: contracts.UserID(ctx), ID: a.ID, Topic: topic, Matched: bit(matched)}); err != nil {
 			return err
 		}
 	}

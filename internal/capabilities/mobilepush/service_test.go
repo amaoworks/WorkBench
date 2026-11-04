@@ -16,6 +16,22 @@ import (
 	"workbench/internal/foundation/events"
 )
 
+func pushContext() context.Context {
+	return contracts.WithPrincipal(context.Background(), contracts.Principal{UserID: contracts.LegacyUserID, Role: contracts.RoleUser})
+}
+func pushRequest(method, url string, body io.Reader) *http.Request {
+	return httptest.NewRequest(method, url, body).WithContext(pushContext())
+}
+
+type activePushUsers struct{}
+
+func (activePushUsers) ActiveUserIDs(context.Context) ([]string, error) {
+	return []string{"owner", "alice", "bob"}, nil
+}
+func (activePushUsers) IsUserActive(_ context.Context, id string) (bool, error) {
+	return id == "owner" || id == "alice" || id == "bob", nil
+}
+
 type stubProvider struct {
 	invalid bool
 	err     error
@@ -38,6 +54,9 @@ func testService(t *testing.T, sessionID string) (*Service, *database.Database) 
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
+	if _, err := db.SQL().Exec(`INSERT INTO auth_users(id,username,display_name,password_hash,role,status,credential_version,must_change_password,created_at,updated_at) VALUES('owner','admin','Admin','test','admin','active',1,0,?,?)`, now.UnixMilli(), now.UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
 	for _, id := range []string{"device-a", "device-b", "revoked"} {
 		var revoked any
 		if id == "revoked" {
@@ -56,7 +75,7 @@ func testService(t *testing.T, sessionID string) (*Service, *database.Database) 
 
 func TestRegisterTokenBindsResolverSessionAndTransfersToken(t *testing.T) {
 	s, db := testService(t, "device-a")
-	request := httptest.NewRequest(http.MethodPost, "/api/mobile/push-token", strings.NewReader(`{"platform":"ios","pushToken":"push-secret"}`))
+	request := pushRequest(http.MethodPost, "/api/mobile/push-token", strings.NewReader(`{"platform":"ios","pushToken":"push-secret"}`))
 	recorder := httptest.NewRecorder()
 	s.RegisterToken(recorder, request)
 	if recorder.Code != http.StatusNoContent {
@@ -69,7 +88,7 @@ func TestRegisterTokenBindsResolverSessionAndTransfersToken(t *testing.T) {
 
 	s.deviceSessionID = func(*http.Request) string { return "device-b" }
 	recorder = httptest.NewRecorder()
-	s.RegisterToken(recorder, httptest.NewRequest(http.MethodPut, "/api/mobile/push-token", strings.NewReader(`{"platform":"ios","pushToken":"push-secret"}`)))
+	s.RegisterToken(recorder, pushRequest(http.MethodPut, "/api/mobile/push-token", strings.NewReader(`{"platform":"ios","pushToken":"push-secret"}`)))
 	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("transfer status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -79,7 +98,7 @@ func TestRegisterTokenBindsResolverSessionAndTransfersToken(t *testing.T) {
 
 	s.deviceSessionID = func(*http.Request) string { return "revoked" }
 	recorder = httptest.NewRecorder()
-	s.RegisterToken(recorder, httptest.NewRequest(http.MethodPost, "/api/mobile/push-token", strings.NewReader(`{"platform":"ios","pushToken":"other"}`)))
+	s.RegisterToken(recorder, pushRequest(http.MethodPost, "/api/mobile/push-token", strings.NewReader(`{"platform":"ios","pushToken":"other"}`)))
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("revoked status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -88,7 +107,7 @@ func TestRegisterTokenBindsResolverSessionAndTransfersToken(t *testing.T) {
 func TestRegisterTokenRejectsInputDeviceSessionID(t *testing.T) {
 	s, db := testService(t, "device-a")
 	recorder := httptest.NewRecorder()
-	s.RegisterToken(recorder, httptest.NewRequest(http.MethodPost, "/api/mobile/push-token", strings.NewReader(`{"platform":"ios","pushToken":"push-secret","deviceSessionId":"device-b"}`)))
+	s.RegisterToken(recorder, pushRequest(http.MethodPost, "/api/mobile/push-token", strings.NewReader(`{"platform":"ios","pushToken":"push-secret","deviceSessionId":"device-b"}`)))
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -106,7 +125,7 @@ func TestDeleteTokenOnlyDeletesCurrentDeviceBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	recorder := httptest.NewRecorder()
-	s.DeleteToken(recorder, httptest.NewRequest(http.MethodDelete, "/api/mobile/push-token", strings.NewReader(`{"platform":"ios","pushToken":"other-device-token"}`)))
+	s.DeleteToken(recorder, pushRequest(http.MethodDelete, "/api/mobile/push-token", strings.NewReader(`{"platform":"ios","pushToken":"other-device-token"}`)))
 	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("delete status = %d", recorder.Code)
 	}
@@ -127,7 +146,7 @@ func TestDeliverFiltersRevokedSessionsAndDeletesInvalidTokens(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	err := s.Deliver(context.Background(), contracts.Notification{ID: "note", External: true, Title: "Title", Content: "Body", CreatedAt: now})
+	err := s.Deliver(context.Background(), contracts.Notification{RecipientID: contracts.LegacyUserID, ID: "note", External: true, Title: "Title", Content: "Body", CreatedAt: now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +169,7 @@ func TestDeliverSkipsDisabledSourceModule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Deliver(context.Background(), contracts.Notification{ID: "note", SourceModule: "todo", External: true, Title: "Title", Content: "Body", CreatedAt: now}); err != nil {
+	if err := s.Deliver(context.Background(), contracts.Notification{RecipientID: contracts.LegacyUserID, ID: "note", SourceModule: "todo", External: true, Title: "Title", Content: "Body", CreatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	if len(p.tokens) != 0 {
@@ -174,7 +193,7 @@ func TestConsumerUsesDurableEventDelivery(t *testing.T) {
 	}
 	store := events.NewStore(db.SQL())
 	payload, _ := json.Marshal(map[string]string{"notificationId": "note-id"})
-	eventID, err := store.Publish(context.Background(), contracts.NewEvent{Topic: "core.notification.created", SchemaVersion: 1, SourceModule: "core", Payload: payload})
+	eventID, err := store.Publish(pushContext(), contracts.NewEvent{Topic: "core.notification.created", SchemaVersion: 1, SourceModule: "core", Payload: payload})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,6 +201,7 @@ func TestConsumerUsesDurableEventDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dispatcher.SetUserDirectory(activePushUsers{})
 	if err := dispatcher.DispatchOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}

@@ -12,7 +12,7 @@ import { Notice } from "../../components/ui/Notice";
 import { Skeleton } from "../../components/ui/States";
 import { Switch } from "../../components/ui/Switch";
 import { useConfirmDelete } from "../../components/ui/useConfirmDelete";
-import { useTelegramSettings } from "../../features/settings/queries";
+import { useTelegramRecipient } from "../../features/settings/queries";
 import { deletePriceRule, savePriceRule, usePriceHistory, usePriceMonitor } from "./queries";
 import type { PriceRule, PriceRuleInput } from "./schema";
 import { formatDateTime } from "../../shared/format";
@@ -34,7 +34,7 @@ const price = (value: number | null) =>
 export function InvestmentMonitor() {
   const monitor = usePriceMonitor();
   const history = usePriceHistory();
-  const telegram = useTelegramSettings();
+  const telegram = useTelegramRecipient();
   const client = useQueryClient();
   const [editing, setEditing] = useState<PriceRule | "new" | null>(null);
   const addButton = useRef<HTMLButtonElement>(null);

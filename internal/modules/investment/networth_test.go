@@ -17,7 +17,7 @@ func snapshotAccount(hash string, netWorth, cash, invested, dayPnl *float64) por
 
 func TestStoreNetWorthSnapshotUpsertsAndCommitsCompleteAccounts(t *testing.T) {
 	m := openInvestmentModule(t)
-	ctx := context.Background()
+	ctx := testContext(context.Background())
 	now := time.Date(2026, 3, 8, 16, 0, 0, 0, time.UTC)
 	m.now = func() time.Time { return now }
 	auth := now.Add(-time.Hour).UnixMilli()
@@ -57,7 +57,7 @@ func TestStoreNetWorthSnapshotUpsertsAndCommitsCompleteAccounts(t *testing.T) {
 
 func TestNetWorthHistoryAggregatesWithoutInventingMissingAccounts(t *testing.T) {
 	m := openInvestmentModule(t)
-	ctx := context.Background()
+	ctx := testContext(context.Background())
 	loc := m.marketLocation
 	authorizedAt := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 	seedSchwab(t, m, schwabRecord{
@@ -113,7 +113,7 @@ func TestNetWorthHistoryAggregatesWithoutInventingMissingAccounts(t *testing.T) 
 
 func TestNetWorthHistoryScopesCurrentAuthorization(t *testing.T) {
 	m := openInvestmentModule(t)
-	ctx := context.Background()
+	ctx := testContext(context.Background())
 	now := time.Date(2026, 4, 1, 16, 15, 0, 0, m.marketLocation)
 	m.now = func() time.Time { return now }
 	oldAuth := now.Add(-48 * time.Hour)
@@ -159,13 +159,13 @@ func TestCaptureNetWorthDoesNotWriteWhenDisabledOrUnauthorized(t *testing.T) {
 	m.monitorMu.Lock()
 	m.monitorEnabled = false
 	m.monitorMu.Unlock()
-	if err := m.captureNetWorth(context.Background()); err != nil {
+	if err := m.captureNetWorth(testContext(context.Background())); err != nil {
 		t.Fatal(err)
 	}
 	m.monitorMu.Lock()
 	m.monitorEnabled = true
 	m.monitorMu.Unlock()
-	if err := m.captureNetWorth(context.Background()); err != nil {
+	if err := m.captureNetWorth(testContext(context.Background())); err != nil {
 		t.Fatalf("unconfigured capture should be idle: %v", err)
 	}
 	var count int
@@ -194,7 +194,7 @@ func TestNetWorthStartupCapturesWithoutWaitingForMarketClose(t *testing.T) {
 			w.WriteHeader(404)
 		}
 	})
-	if err := m.OnEnabledChanged(context.Background(), true); err != nil {
+	if err := m.OnEnabledChanged(testContext(context.Background()), true); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
@@ -220,7 +220,7 @@ func TestNetWorthDisableCancelsAnInflightStartupCapture(t *testing.T) {
 		<-r.Context().Done()
 		close(stopped)
 	})
-	if err := m.OnEnabledChanged(context.Background(), true); err != nil {
+	if err := m.OnEnabledChanged(testContext(context.Background()), true); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -228,7 +228,7 @@ func TestNetWorthDisableCancelsAnInflightStartupCapture(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("startup capture did not start")
 	}
-	if err := m.OnEnabledChanged(context.Background(), false); err != nil {
+	if err := m.OnEnabledChanged(testContext(context.Background()), false); err != nil {
 		t.Fatal(err)
 	}
 	select {

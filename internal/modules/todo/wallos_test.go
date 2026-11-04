@@ -1,7 +1,6 @@
 package todo
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	"workbench/internal/contracts"
+	todosqlc "workbench/internal/modules/todo/sqlc"
 )
 
 func wallosTestConfig() wallosConfig {
@@ -18,7 +18,7 @@ func wallosTestConfig() wallosConfig {
 
 func TestWallosOccurrenceLifecycle(t *testing.T) {
 	m, db := openTodoModule(t)
-	ctx := context.Background()
+	ctx := todoContext()
 	now := time.Date(2026, 9, 7, 1, 0, 0, 0, time.UTC)
 	m.now = func() time.Time { return now }
 	c := wallosTestConfig()
@@ -57,11 +57,11 @@ func TestWallosOccurrenceLifecycle(t *testing.T) {
 	if n, err := m.importWallos(ctx, c, subs); err != nil || n != 0 {
 		t.Fatalf("completed: %d %v", n, err)
 	}
-	if _, err := m.queries.DeleteTask(ctx, id); err != nil {
+	if _, err := m.queries.DeleteTask(ctx, todosqlc.DeleteTaskParams{ID: id, UserID: contracts.UserID(ctx)}); err != nil {
 		t.Fatal(err)
 	}
 	// A new module instance models an application restart; deduplication is durable.
-	restarted, err := New(db.SQL(), m.events, m.notifications)
+	restarted, err := New(db.SQL(), m.events, m.notifications, m.users)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestWallosTransactionRollback(t *testing.T) {
 			} else {
 				subs = append(subs, wallosSubscription{ID: "2", Name: "Invalid", NextPayment: "invalid"})
 			}
-			if _, err := m.importWallos(context.Background(), wallosTestConfig(), subs); err == nil {
+			if _, err := m.importWallos(todoContext(), wallosTestConfig(), subs); err == nil {
 				t.Fatal("expected failure")
 			}
 			for _, table := range []string{"todo_tasks", "todo_wallos_occurrences", "events_log"} {
@@ -125,7 +125,7 @@ func TestWallosRejectsLongNamesBeforeMonthFiltering(t *testing.T) {
 				{ID: "1", Name: "有效订阅", NextPayment: "2026-09-10"},
 				{ID: "2", Name: strings.Repeat("长名称", 40), NextPayment: date},
 			}
-			if _, err := m.importWallos(context.Background(), wallosTestConfig(), subs); err == nil {
+			if _, err := m.importWallos(todoContext(), wallosTestConfig(), subs); err == nil {
 				t.Fatal("oversized name was accepted")
 			}
 			for _, table := range []string{"todo_tasks", "todo_wallos_occurrences", "events_log"} {
@@ -165,7 +165,7 @@ func TestWallosMonthlyListAndReminderBoundaries(t *testing.T) {
 			m.now = func() time.Time { return now }
 			c := wallosTestConfig()
 			c.DaysBefore = tc.daysBefore
-			ctx := context.Background()
+			ctx := todoContext()
 			n, err := m.importWallos(ctx, c, []wallosSubscription{{ID: "1", Name: "订阅", NextPayment: tc.payment}})
 			if err != nil || (n == 1) != tc.wantTask {
 				t.Fatalf("created=%d err=%v, want task=%v", n, err, tc.wantTask)
@@ -192,7 +192,7 @@ func TestWallosDSTReminderHour(t *testing.T) {
 	c.TimeZone = "America/New_York"
 	c.DaysBefore = 0
 	m.now = func() time.Time { return time.Date(2026, 3, 8, 13, 0, 0, 0, time.UTC) }
-	if n, err := m.importWallos(context.Background(), c, []wallosSubscription{{ID: "1", Name: "DST", NextPayment: "2026-03-08"}}); err != nil || n != 1 {
+	if n, err := m.importWallos(todoContext(), c, []wallosSubscription{{ID: "1", Name: "DST", NextPayment: "2026-03-08"}}); err != nil || n != 1 {
 		t.Fatalf("DST: %d %v", n, err)
 	}
 	var due int64
@@ -233,7 +233,7 @@ func TestWallosHTTPContractAndFailure(t *testing.T) {
 			defer s.Close()
 			c := wallosTestConfig()
 			c.BaseURL = s.URL + "/wallos"
-			subs, err := fetchWallos(context.Background(), c)
+			subs, err := fetchWallos(todoContext(), c)
 			if scenario == "success" {
 				if err != nil || len(subs) != 1 {
 					t.Fatalf("%v %v", subs, err)
@@ -254,14 +254,14 @@ func TestWallosSettingsAndSyncStatus(t *testing.T) {
 	save := func(c wallosConfig) *httptest.ResponseRecorder {
 		data, _ := json.Marshal(c)
 		w := httptest.NewRecorder()
-		m.saveWallos(w, httptest.NewRequest("PUT", "/", strings.NewReader(string(data))))
+		m.saveWallos(w, todoRequest("PUT", "/", strings.NewReader(string(data))))
 		return w
 	}
 	if w := save(c); w.Code != 200 {
 		t.Fatal(w.Body.String())
 	}
 	w := httptest.NewRecorder()
-	m.getWallos(w, httptest.NewRequest("GET", "/", nil))
+	m.getWallos(w, todoRequest("GET", "/", nil))
 	if strings.Contains(w.Body.String(), "secret") || !strings.Contains(w.Body.String(), `"hasApiKey":true`) {
 		t.Fatal(w.Body.String())
 	}
@@ -270,7 +270,7 @@ func TestWallosSettingsAndSyncStatus(t *testing.T) {
 	if w := save(c); w.Code != 200 {
 		t.Fatal(w.Body.String())
 	}
-	stored, err := m.loadWallos(context.Background())
+	stored, err := m.loadWallos(todoContext())
 	if err != nil || stored.APIKey != "secret" {
 		t.Fatalf("key not retained: %v", err)
 	}
@@ -297,18 +297,18 @@ func TestWallosSettingsAndSyncStatus(t *testing.T) {
 	if w := save(c); w.Code != 200 {
 		t.Fatal(w.Body.String())
 	}
-	if _, err := m.syncWallos(context.Background()); err != nil {
+	if _, err := m.syncWallos(todoContext()); err != nil {
 		t.Fatal(err)
 	}
-	stored, err = m.loadWallos(context.Background())
+	stored, err = m.loadWallos(todoContext())
 	if err != nil || stored.LastSync == nil || stored.LastError != "" {
 		t.Fatalf("success status missing: %v", err)
 	}
 	fail = true
-	if _, err := m.syncWallos(context.Background()); err == nil {
+	if _, err := m.syncWallos(todoContext()); err == nil {
 		t.Fatal("expected sync failure")
 	}
-	stored, err = m.loadWallos(context.Background())
+	stored, err = m.loadWallos(todoContext())
 	if err != nil || stored.LastSync == nil || stored.LastError == "" {
 		t.Fatalf("failure status missing: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestWallosSettingsAndSyncStatus(t *testing.T) {
 	if w := save(c); w.Code != 200 {
 		t.Fatal(w.Body.String())
 	}
-	if n, err := m.syncWallos(context.Background()); err != nil || n != 0 {
+	if n, err := m.syncWallos(todoContext()); err != nil || n != 0 {
 		t.Fatalf("disabled sync: %d %v", n, err)
 	}
 }

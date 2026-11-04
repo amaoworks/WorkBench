@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"workbench/internal/contracts"
 
 	"workbench/internal/foundation/httpapi"
 	investmentsqlc "workbench/internal/modules/investment/sqlc"
@@ -43,6 +44,7 @@ type overviewState struct {
 	quotesMu   sync.Mutex // serializes quote refreshes
 	mu         sync.Mutex
 	snapshot   *overviewSnapshot
+	connection string
 	quotes     map[string]overviewQuotesEntry
 	sparks     map[string]overviewSparkEntry
 	futu       *overviewFutuEntry
@@ -228,6 +230,13 @@ func (m *Module) overviewSnapshot(ctx context.Context) overviewSnapshot {
 	defer state.snapshotMu.Unlock()
 	now := m.now()
 	state.mu.Lock()
+	key := fmt.Sprintf("%d:%d", rec.AppVersion, rec.AuthorizedAt.UnixMilli())
+	if state.connection != key {
+		state.connection = key
+		state.snapshot = nil
+		state.quotes = nil
+		state.sparks = nil
+	}
 	cached := state.snapshot
 	state.mu.Unlock()
 	if cached != nil && cached.UpdatedAt != nil && now.Sub(*cached.UpdatedAt) < overviewSnapshotTTL {
@@ -243,6 +252,10 @@ func (m *Module) overviewSnapshot(ctx context.Context) overviewSnapshot {
 			return stale
 		}
 		return overviewSnapshot{Status: "error", Message: err.Error(), Movers: []overviewMover{}, Symbols: []string{}}
+	}
+	current, loadErr := m.loadSchwab(ctx)
+	if loadErr != nil || current.AppVersion != rec.AppVersion || !current.AuthorizedAt.Equal(rec.AuthorizedAt) || current.RefreshToken == "" {
+		return overviewSnapshot{Status: "disconnected", Movers: []overviewMover{}, Symbols: []string{}}
 	}
 	state.mu.Lock()
 	state.snapshot = &fresh
@@ -367,7 +380,7 @@ func normalizeOverviewSymbol(raw string) string {
 }
 
 func (m *Module) watchlistSymbols(ctx context.Context) []string {
-	rec, err := m.queries.GetWatchlists(ctx)
+	rec, err := m.queries.GetWatchlists(ctx, contracts.UserID(ctx))
 	if err != nil {
 		return nil
 	}
@@ -678,7 +691,10 @@ func (m *Module) overviewAlerts(ctx context.Context) (overviewAlerts, error) {
 		}
 	}
 	out.Futu = m.overviewFutu(ctx)
-	rows, err := m.queries.ListPriceTriggers(ctx, investmentsqlc.ListPriceTriggersParams{BeforeTime: math.MaxInt64, BeforeID: "\uffff", PageLimit: 5})
+	if !contracts.IsAdmin(ctx) {
+		out.Futu.LastError = ""
+	}
+	rows, err := m.queries.ListPriceTriggers(ctx, investmentsqlc.ListPriceTriggersParams{UserID: contracts.UserID(ctx), BeforeTime: math.MaxInt64, BeforeID: "\uffff", PageLimit: 5})
 	if err != nil {
 		return overviewAlerts{}, err
 	}

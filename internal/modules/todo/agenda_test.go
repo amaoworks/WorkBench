@@ -1,7 +1,6 @@
 package todo
 
 import (
-	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -9,7 +8,7 @@ import (
 
 func TestAgendaListsOverdueAndTodayOnly(t *testing.T) {
 	module, database := openTodoModule(t)
-	ctx := context.Background()
+	ctx := todoContext()
 	shanghai, err := time.LoadLocation("Asia/Shanghai")
 	if err != nil {
 		t.Skip("no tzdata")
@@ -46,14 +45,14 @@ func TestAgendaListsOverdueAndTodayOnly(t *testing.T) {
 		t.Fatalf("renewals must be hidden without Wallos: %+v", agenda)
 	}
 	// Enable Wallos and record one upcoming renewal occurrence.
-	if _, err := database.SQL().Exec(`INSERT INTO todo_wallos_settings(id, config) VALUES (1, '{"enabled":true,"baseUrl":"https://wallos.example","timeZone":"Asia/Shanghai"}')`); err != nil {
+	if _, err := database.SQL().Exec(`INSERT INTO todo_wallos_settings(user_id, config) VALUES ('owner', '{"enabled":true,"baseUrl":"https://wallos.example","timeZone":"Asia/Shanghai"}')`); err != nil {
 		t.Fatal(err)
 	}
 	renewal, err := module.Create(ctx, CreateTask{Title: wallosTitlePrefix + "Netflix", Description: "分类: 娱乐\n金额: ¥68.00\n请及时付款！", DueAt: at(48 * time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.SQL().Exec(`INSERT INTO todo_wallos_occurrences(source, subscription_id, payment_date, task_id) VALUES ('wallos', '7', '2026-10-29', ?)`, renewal.ID); err != nil {
+	if _, err := database.SQL().Exec(`INSERT INTO todo_wallos_occurrences(user_id, source, subscription_id, payment_date, task_id) VALUES ('owner', 'wallos', '7', '2026-10-29', ?)`, renewal.ID); err != nil {
 		t.Fatal(err)
 	}
 	agenda, err = module.agenda(ctx, "")
@@ -67,7 +66,7 @@ func TestAgendaListsOverdueAndTodayOnly(t *testing.T) {
 
 func TestAgendaLimitsItemsAndKeepsTotal(t *testing.T) {
 	module, _ := openTodoModule(t)
-	ctx := context.Background()
+	ctx := todoContext()
 	now := time.Date(2026, 10, 26, 8, 0, 0, 0, time.UTC)
 	module.now = func() time.Time { return now }
 

@@ -1,7 +1,6 @@
 package todo
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -13,7 +12,7 @@ import (
 
 func TestCreateTaskIdempotencyPersistsOriginalResponseAndOneEvent(t *testing.T) {
 	module, database := openTodoModule(t)
-	ctx := context.Background()
+	ctx := todoContext()
 	input := CreateTask{Title: "Original", Description: "first", IdempotencyKey: "create-request-1"}
 	created, err := module.Create(ctx, input)
 	if err != nil {
@@ -52,7 +51,7 @@ func TestCreateTaskIdempotencyPersistsOriginalResponseAndOneEvent(t *testing.T) 
 
 func TestCreateTaskIdempotencyRejectsDifferentRequest(t *testing.T) {
 	module, database := openTodoModule(t)
-	ctx := context.Background()
+	ctx := todoContext()
 	if _, err := module.Create(ctx, CreateTask{Title: "First", IdempotencyKey: "shared-key"}); err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +80,7 @@ func TestConcurrentDuplicateCreateCommitsOnce(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			task, err := module.Create(context.Background(), input)
+			task, err := module.Create(todoContext(), input)
 			if err != nil {
 				errorsFound <- err
 				return
@@ -118,7 +117,7 @@ func TestConcurrentDuplicateCreateCommitsOnce(t *testing.T) {
 func TestTaskHTTPReturnsIdempotencyAndRevisionConflicts(t *testing.T) {
 	module, database := openTodoModule(t)
 	create := func(title, key string) *httptest.ResponseRecorder {
-		request := httptest.NewRequest(http.MethodPost, "/api/modules/todo/tasks", strings.NewReader(`{"title":"`+title+`"}`))
+		request := todoRequest(http.MethodPost, "/api/modules/todo/tasks", strings.NewReader(`{"title":"`+title+`"}`))
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("Idempotency-Key", key)
 		recorder := httptest.NewRecorder()
@@ -133,7 +132,7 @@ func TestTaskHTTPReturnsIdempotencyAndRevisionConflicts(t *testing.T) {
 	if conflict.Code != http.StatusConflict || !strings.Contains(conflict.Body.String(), `"code":"idempotency_conflict"`) {
 		t.Fatalf("idempotency conflict = %d %s", conflict.Code, conflict.Body.String())
 	}
-	invalid := httptest.NewRequest(http.MethodPost, "/api/modules/todo/tasks", strings.NewReader(`{"title":"Invalid key"}`))
+	invalid := todoRequest(http.MethodPost, "/api/modules/todo/tasks", strings.NewReader(`{"title":"Invalid key"}`))
 	invalid.Header.Set("Content-Type", "application/json")
 	invalid.Header.Add("Idempotency-Key", "one")
 	invalid.Header.Add("Idempotency-Key", "two")
@@ -148,11 +147,11 @@ func TestTaskHTTPReturnsIdempotencyAndRevisionConflicts(t *testing.T) {
 		t.Fatal(err)
 	}
 	newTitle := "Current"
-	current, err := module.update(context.Background(), task.ID, UpdateTask{Title: &newTitle, Revision: &task.Revision})
+	current, err := module.update(todoContext(), task.ID, UpdateTask{Title: &newTitle, Revision: &task.Revision})
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPatch, "/api/modules/todo/tasks/"+task.ID, strings.NewReader(`{"title":"Stale","revision":1}`))
+	request := todoRequest(http.MethodPatch, "/api/modules/todo/tasks/"+task.ID, strings.NewReader(`{"title":"Stale","revision":1}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.SetPathValue("id", task.ID)
 	recorder := httptest.NewRecorder()

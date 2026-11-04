@@ -33,11 +33,13 @@ type InvestmentFutuBar struct {
 }
 
 type InvestmentNetworthAccountScope struct {
+	UserID       string `json:"user_id"`
 	AuthorizedAt int64  `json:"authorized_at"`
 	AccountHash  string `json:"account_hash"`
 }
 
 type InvestmentNetworthSnapshot struct {
+	UserID      string  `json:"user_id"`
 	AccountHash string  `json:"account_hash"`
 	Day         string  `json:"day"`
 	NetWorth    float64 `json:"net_worth"`
@@ -48,6 +50,7 @@ type InvestmentNetworthSnapshot struct {
 }
 
 type InvestmentPreference struct {
+	UserID       string `json:"user_id"`
 	Name         string `json:"name"`
 	Content      string `json:"content"`
 	Revision     int64  `json:"revision"`
@@ -57,7 +60,7 @@ type InvestmentPreference struct {
 }
 
 type InvestmentPriceMonitor struct {
-	ID        int64         `json:"id"`
+	UserID    string        `json:"user_id"`
 	Status    string        `json:"status"`
 	CheckedAt sql.NullInt64 `json:"checked_at"`
 	LastError string        `json:"last_error"`
@@ -78,6 +81,7 @@ type InvestmentPriceRule struct {
 	QuoteAt       sql.NullInt64   `json:"quote_at"`
 	CheckedAt     sql.NullInt64   `json:"checked_at"`
 	LastError     string          `json:"last_error"`
+	UserID        string          `json:"user_id"`
 }
 
 type InvestmentPriceTrigger struct {
@@ -93,13 +97,19 @@ type InvestmentPriceTrigger struct {
 	QuoteAt        int64   `json:"quote_at"`
 	TriggeredAt    int64   `json:"triggered_at"`
 	NotificationID string  `json:"notification_id"`
+	UserID         string  `json:"user_id"`
 }
 
-type InvestmentSchwab struct {
-	ID                      int64  `json:"id"`
-	AppKey                  string `json:"app_key"`
-	AppSecret               string `json:"app_secret"`
-	CallbackUrl             string `json:"callback_url"`
+type InvestmentSchwabApp struct {
+	ID          int64  `json:"id"`
+	AppKey      string `json:"app_key"`
+	AppSecret   string `json:"app_secret"`
+	CallbackUrl string `json:"callback_url"`
+	Version     int64  `json:"version"`
+}
+
+type InvestmentSchwabConnection struct {
+	UserID                  string `json:"user_id"`
 	AccessToken             string `json:"access_token"`
 	RefreshToken            string `json:"refresh_token"`
 	TokenExpiresAt          int64  `json:"token_expires_at"`
@@ -110,10 +120,24 @@ type InvestmentSchwab struct {
 	UpdatedAt               int64  `json:"updated_at"`
 	ReauthorizationRequired int64  `json:"reauthorization_required"`
 	AuthorizedAt            int64  `json:"authorized_at"`
+	AppVersion              int64  `json:"app_version"`
+	ConnectionVersion       int64  `json:"connection_version"`
+}
+
+type InvestmentTradeAudit struct {
+	ID          string `json:"id"`
+	UserID      string `json:"user_id"`
+	AccountHash string `json:"account_hash"`
+	Method      string `json:"method"`
+	Path        string `json:"path"`
+	Outcome     string `json:"outcome"`
+	HttpStatus  int64  `json:"http_status"`
+	CreatedAt   int64  `json:"created_at"`
+	UpdatedAt   int64  `json:"updated_at"`
 }
 
 type InvestmentWatchlist struct {
-	ID           int64  `json:"id"`
+	UserID       string `json:"user_id"`
 	Revision     int64  `json:"revision"`
 	Writer       string `json:"writer"`
 	BaseRevision int64  `json:"base_revision"`

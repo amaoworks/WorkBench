@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"workbench/internal/contracts"
 	"workbench/internal/foundation/auth"
 )
 
@@ -70,8 +71,9 @@ func TestSettingsPersistAndSwitchAIWithoutRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer restarted.Close()
-	if restarted.aiSettings.APIKey != "test-secret" || restarted.aiSettings.Model != "test-model" || restarted.appearance.Theme != "dark" || restarted.appearance.Motion != "reduced" {
-		t.Fatal("settings were not restored or environment overrode saved settings")
+	appearanceValue, err := restarted.userAppearance(contracts.WithPrincipal(context.Background(), contracts.Principal{UserID: contracts.LegacyUserID, Role: contracts.RoleAdmin}))
+	if err != nil || restarted.aiSettings.APIKey != "test-secret" || restarted.aiSettings.Model != "test-model" || appearanceValue.Theme != "dark" || appearanceValue.Motion != "reduced" {
+		t.Fatalf("settings were not restored or environment overrode saved settings: %v", err)
 	}
 	token, cookies = csrf(t, restarted.Handler())
 	retained, _ := json.Marshal(map[string]any{"enabled": true, "baseUrl": upstream.URL + "/v1", "model": "test-model", "apiKey": ""})
@@ -147,7 +149,7 @@ func assertPasswordChangeInvalidatesSessionsAndPersists(t *testing.T, cfg Config
 	if unauthenticated.Code != 401 {
 		t.Fatal("settings accessible without login")
 	}
-	login := request(t, application.Handler(), "POST", "/api/auth/login", []byte(`{"password":"Oldpass1"}`), token, cookies)
+	login := request(t, application.Handler(), "POST", "/api/auth/login", []byte(`{"username":"admin","password":"Oldpass1"}`), token, cookies)
 	if login.Code != 200 {
 		t.Fatalf("login: %s", login.Body.String())
 	}

@@ -14,6 +14,10 @@ import (
 	workbenchdb "workbench/internal/foundation/database"
 )
 
+func aiUserContext(id string) context.Context {
+	return contracts.WithPrincipal(context.Background(), contracts.Principal{UserID: id, Role: contracts.RoleUser})
+}
+
 func openAIDatabase(t *testing.T) *workbenchdb.Database {
 	t.Helper()
 	database, err := workbenchdb.Open(context.Background(), workbenchdb.Config{Path: filepath.Join(t.TempDir(), "data.db")})
@@ -45,11 +49,11 @@ func TestToolRuntimeValidatesAndDeduplicatesWrites(t *testing.T) {
 	call := contracts.ToolCall{
 		ID: "call_1", Name: tool.Name, Arguments: json.RawMessage(`{"title":"Test"}`), IdempotencyKey: "response:call_1",
 	}
-	first, err := runtime.Execute(context.Background(), call)
+	first, err := runtime.Execute(aiUserContext("user"), call)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := runtime.Execute(context.Background(), call)
+	second, err := runtime.Execute(aiUserContext("user"), call)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +62,7 @@ func TestToolRuntimeValidatesAndDeduplicatesWrites(t *testing.T) {
 	}
 	call.IdempotencyKey = "response:call_2"
 	call.Arguments = json.RawMessage(`{"unexpected":true}`)
-	if _, err := runtime.Execute(context.Background(), call); err == nil {
+	if _, err := runtime.Execute(aiUserContext("user"), call); err == nil {
 		t.Fatal("runtime accepted arguments outside strict schema")
 	}
 }
@@ -78,15 +82,15 @@ func TestToolRuntimeHonorsModuleGateAndConfirmation(t *testing.T) {
 		t.Fatal(err)
 	}
 	call := contracts.ToolCall{Name: tool.Name, Arguments: json.RawMessage(`{}`), IdempotencyKey: "one"}
-	if _, err := runtime.Execute(context.Background(), call); err == nil {
+	if _, err := runtime.Execute(aiUserContext("user"), call); err == nil {
 		t.Fatal("disabled module tool executed")
 	}
 	enabled = true
-	if _, err := runtime.Execute(context.Background(), call); err == nil {
+	if _, err := runtime.Execute(aiUserContext("user"), call); err == nil {
 		t.Fatal("high-risk tool executed without confirmation")
 	}
 	call.ConfirmedBy = "user"
-	if _, err := runtime.Execute(context.Background(), call); err != nil {
+	if _, err := runtime.Execute(aiUserContext("user"), call); err != nil {
 		t.Fatalf("confirmed tool failed: %v", err)
 	}
 }
@@ -162,7 +166,7 @@ func TestGatewayExecutesToolLoop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := gateway.Generate(context.Background(), contracts.GenerateRequest{
+	result, err := gateway.Generate(aiUserContext("user"), contracts.GenerateRequest{
 		Profile: "default", Messages: []contracts.AIMessage{TextMessage("user", "create a task")},
 	})
 	if err != nil {
@@ -229,7 +233,7 @@ func TestGatewayStreamsAcrossToolCallRounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stream, err := gateway.Stream(context.Background(), contracts.GenerateRequest{Profile: "default"})
+	stream, err := gateway.Stream(aiUserContext("user"), contracts.GenerateRequest{Profile: "default"})
 	if err != nil {
 		t.Fatal(err)
 	}

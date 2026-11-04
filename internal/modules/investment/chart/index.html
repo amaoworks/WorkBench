@@ -39,6 +39,7 @@
   <link rel="modulepreload" href="/investment/terminal/watchlists.js">
   <link rel="modulepreload" href="/investment/terminal/chart-state.js">
   <link rel="modulepreload" href="/investment/terminal/preferences.js">
+  <script src="/investment/terminal/identity.js"></script>
   <script>
     window.terminalPrefetch = Object.fromEntries(["/api/modules/investment/preferences", "/api/auth/csrf"].map(url => {
       const response = fetch(url, { credentials: "same-origin", signal: AbortSignal.timeout(10000) });
@@ -73,6 +74,7 @@
     import { loadPreferences } from "/investment/terminal/preferences.js";
 
     async function startTerminal() {
+    await window.terminalIdentity.ready;
     window.terminalLoad.step('preferences');
     const params = new URLSearchParams(location.search);
     const theme = params.get("theme") === "dark" ? "dark" : "light";
@@ -265,17 +267,27 @@
         }
       });
     };
-    window.addEventListener('pagehide', () => {
-      persistChartState();
-      preferences.leave();
+    const dispose = discard => {
+      if (disposed) return;
+      if (!discard) {
+        persistChartState();
+        preferences.leave();
+      }
       disposed = true;
       clearTimeout(sessionResolutionTimer);
       clearTimeout(sessionToastTimer);
       intervalSubscription?.unsubscribe(null, onIntervalChanged);
       symbolSubscription?.unsubscribe(null, onSymbolChanged);
       sessionMenu?.dispose();
-      unbindTheme?.(); watchlistSync?.dispose(); window.ws.close(); window.futu.close(); datafeed.destroy(); broker?.destroy();
-    });
+      unbindTheme?.(); watchlistSync?.dispose({ discard }); window.ws.close(); window.futu.close(); datafeed.destroy(); broker?.destroy();
+      if (discard) {
+        widget?.remove();
+        document.getElementById('tv_chart_container').replaceChildren();
+        window.terminalLoad.fail('登录用户已变更，请重新加载。');
+      }
+    };
+    window.addEventListener('terminal:identity-lost', () => dispose(true));
+    window.addEventListener('pagehide', () => dispose(!window.terminalIdentity.active));
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState !== 'hidden' || disposed) return;
       persistChartState();

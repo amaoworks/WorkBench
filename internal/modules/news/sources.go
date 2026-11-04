@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 
+	"workbench/internal/contracts"
 	"workbench/internal/foundation/identity"
 	"workbench/internal/modules/news/sqlc"
 )
@@ -43,7 +44,11 @@ func normalizeSource(in SourceInput) (SourceInput, error) {
 	return in, validateURL(in.URL)
 }
 func (m *Module) Sources(ctx context.Context) ([]Source, error) {
-	rows, err := m.q.ListSources(ctx)
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return nil, err
+	}
+
+	rows, err := m.q.ListSources(ctx, contracts.UserID(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -54,6 +59,10 @@ func (m *Module) Sources(ctx context.Context) ([]Source, error) {
 	return out, nil
 }
 func (m *Module) SaveSource(ctx context.Context, id string, in SourceInput) (Source, error) {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return Source{}, err
+	}
+
 	in, err := normalizeSource(in)
 	if err != nil {
 		return Source{}, err
@@ -61,7 +70,7 @@ func (m *Module) SaveSource(ctx context.Context, id string, in SourceInput) (Sou
 	m.sourceMu.Lock()
 	defer m.sourceMu.Unlock()
 	if id == "" {
-		count, e := m.q.CountSources(ctx)
+		count, e := m.q.CountSources(ctx, contracts.UserID(ctx))
 		if e != nil {
 			return Source{}, e
 		}
@@ -72,11 +81,11 @@ func (m *Module) SaveSource(ctx context.Context, id string, in SourceInput) (Sou
 		if err != nil {
 			return Source{}, err
 		}
-	} else if _, err = m.q.GetSource(ctx, id); err != nil {
+	} else if _, err = m.q.GetSource(ctx, newssqlc.GetSourceParams{UserID: contracts.UserID(ctx), ID: id}); err != nil {
 		return Source{}, err
 	}
 	err = m.mutate(ctx, "news.source.changed", id, func(q *newssqlc.Queries) error {
-		if err := q.SaveSource(ctx, newssqlc.SaveSourceParams{ID: id, Name: in.Name, Kind: in.Kind, Url: in.URL, Query: in.Query, Topic: in.Topic, Enabled: bit(in.Enabled), IntervalMinutes: in.IntervalMinutes}); err != nil {
+		if err := q.SaveSource(ctx, newssqlc.SaveSourceParams{UserID: contracts.UserID(ctx), ID: id, Name: in.Name, Kind: in.Kind, Url: in.URL, Query: in.Query, Topic: in.Topic, Enabled: bit(in.Enabled), IntervalMinutes: in.IntervalMinutes}); err != nil {
 			return err
 		}
 		return m.rematch(ctx, q)
@@ -84,14 +93,18 @@ func (m *Module) SaveSource(ctx context.Context, id string, in SourceInput) (Sou
 	if err != nil {
 		return Source{}, err
 	}
-	row, err := m.q.GetSource(ctx, id)
+	row, err := m.q.GetSource(ctx, newssqlc.GetSourceParams{UserID: contracts.UserID(ctx), ID: id})
 	return sourceDTO(row), err
 }
 func (m *Module) DeleteSource(ctx context.Context, id string) error {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return err
+	}
+
 	m.sourceMu.Lock()
 	defer m.sourceMu.Unlock()
 	return m.mutate(ctx, "news.source.deleted", id, func(q *newssqlc.Queries) error {
-		n, err := q.DeleteSource(ctx, id)
+		n, err := q.DeleteSource(ctx, newssqlc.DeleteSourceParams{UserID: contracts.UserID(ctx), ID: id})
 		if err != nil {
 			return err
 		}

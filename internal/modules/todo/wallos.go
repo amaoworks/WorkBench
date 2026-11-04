@@ -14,6 +14,7 @@ import (
 	"time"
 	_ "time/tzdata"
 
+	"workbench/internal/contracts"
 	"workbench/internal/foundation/httpapi"
 	"workbench/internal/foundation/identity"
 	todosqlc "workbench/internal/modules/todo/sqlc"
@@ -36,8 +37,12 @@ type wallosSettings struct {
 }
 
 func (m *Module) loadWallos(ctx context.Context) (wallosSettings, error) {
+	userID, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return wallosSettings{}, err
+	}
 	s := wallosSettings{wallosConfig: wallosConfig{DaysBefore: 3, ReminderHour: 9, TimeZone: "Asia/Shanghai"}}
-	row, err := m.queries.GetWallosSettings(ctx)
+	row, err := m.queries.GetWallosSettings(ctx, userID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return s, nil
 	}
@@ -53,6 +58,9 @@ func (m *Module) loadWallos(ctx context.Context) (wallosSettings, error) {
 }
 
 func (m *Module) getWallos(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireHTTPUser(w, r); !ok {
+		return
+	}
 	s, err := m.loadWallos(r.Context())
 	if err != nil {
 		httpapi.Error(w, 500, "wallos_settings_failed", "无法读取 Wallos 配置")
@@ -91,6 +99,9 @@ func validateWallos(c *wallosConfig) error {
 }
 
 func (m *Module) saveWallos(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireHTTPUser(w, r); !ok {
+		return
+	}
 	var c wallosConfig
 	if httpapi.Decode(w, r, &c, 16*1024) != nil {
 		httpapi.Error(w, 400, "invalid_request", "无效的 Wallos 配置")
@@ -118,7 +129,7 @@ func (m *Module) saveWallos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data, _ := json.Marshal(c)
-	if err := m.queries.SaveWallosSettings(r.Context(), string(data)); err != nil {
+	if err := m.queries.SaveWallosSettings(r.Context(), todosqlc.SaveWallosSettingsParams{UserID: contracts.UserID(r.Context()), Config: string(data)}); err != nil {
 		httpapi.Error(w, 500, "wallos_settings_failed", "无法保存配置")
 		return
 	}
@@ -209,10 +220,19 @@ func (m *Module) syncWallos(ctx context.Context) (int, error) {
 	}
 	subs, err := fetchWallos(ctx, s.wallosConfig)
 	created := 0
+	if m.users != nil {
+		active, activeErr := m.users.IsUserActive(ctx, contracts.UserID(ctx))
+		if activeErr != nil {
+			return 0, activeErr
+		}
+		if !active {
+			return 0, contracts.ErrUnauthenticated
+		}
+	}
 	if err == nil {
 		created, err = m.importWallos(ctx, s.wallosConfig, subs)
 	}
-	status := todosqlc.SetWallosSyncStatusParams{LastSync: toNullTime(s.LastSync)}
+	status := todosqlc.SetWallosSyncStatusParams{LastSync: toNullTime(s.LastSync), UserID: contracts.UserID(ctx)}
 	if err != nil {
 		status.LastError = err.Error()
 	} else {
@@ -225,6 +245,9 @@ func (m *Module) syncWallos(ctx context.Context) (int, error) {
 }
 
 func (m *Module) syncWallosHTTP(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireHTTPUser(w, r); !ok {
+		return
+	}
 	n, err := m.syncWallos(r.Context())
 	if err != nil {
 		httpapi.Error(w, 502, "wallos_sync_failed", err.Error())
@@ -234,6 +257,10 @@ func (m *Module) syncWallosHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) importWallos(ctx context.Context, c wallosConfig, subs []wallosSubscription) (int, error) {
+	userID, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return 0, err
+	}
 	loc, err := time.LoadLocation(c.TimeZone)
 	if err != nil {
 		return 0, err
@@ -276,17 +303,17 @@ func (m *Module) importWallos(ctx context.Context, c wallosConfig, subs []wallos
 		if err != nil {
 			return 0, err
 		}
-		n, err := q.ClaimWallosOccurrence(ctx, todosqlc.ClaimWallosOccurrenceParams{Source: source, SubscriptionID: sub.ID.String(), PaymentDate: sub.NextPayment, TaskID: taskID})
+		n, err := q.ClaimWallosOccurrence(ctx, todosqlc.ClaimWallosOccurrenceParams{UserID: userID, Source: source, SubscriptionID: sub.ID.String(), PaymentDate: sub.NextPayment, TaskID: taskID})
 		if err != nil {
 			return 0, err
 		}
 		description := wallosDescription(sub, c.TimeZone)
 		if n == 0 {
-			existingID, err := q.GetWallosOccurrenceTask(ctx, todosqlc.GetWallosOccurrenceTaskParams{Source: source, SubscriptionID: sub.ID.String(), PaymentDate: sub.NextPayment})
+			existingID, err := q.GetWallosOccurrenceTask(ctx, todosqlc.GetWallosOccurrenceTaskParams{UserID: userID, Source: source, SubscriptionID: sub.ID.String(), PaymentDate: sub.NextPayment})
 			if err != nil {
 				return 0, err
 			}
-			row, err := q.GetTask(ctx, existingID)
+			row, err := q.GetTask(ctx, todosqlc.GetTaskParams{ID: existingID, UserID: userID})
 			if err != nil {
 				return 0, err
 			}

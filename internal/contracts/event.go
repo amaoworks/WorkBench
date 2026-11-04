@@ -11,6 +11,7 @@ type EventID string
 type ConsumerID string
 
 type Event struct {
+	UserID        string          `json:"userId,omitempty"`
 	ID            EventID         `json:"id"`
 	Topic         string          `json:"topic"`
 	SchemaVersion int             `json:"schemaVersion"`
@@ -21,6 +22,7 @@ type Event struct {
 }
 
 type NewEvent struct {
+	UserID        string
 	Topic         string
 	SchemaVersion int
 	SourceModule  ModuleID

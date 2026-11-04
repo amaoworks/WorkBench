@@ -45,7 +45,7 @@ func TestPositionsUseQuotesAndPreserveMissingValues(t *testing.T) {
 		}
 	})
 	w := httptest.NewRecorder()
-	m.getPositions(w, httptest.NewRequest("GET", "/", nil))
+	m.getPositions(w, testRequest("GET", "/", nil))
 	var got portfolioResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func TestOrdersSplitCappedWindowsBeforeFilteringAndDeduplicateChildren(t *testin
 		}
 	})
 	w := httptest.NewRecorder()
-	m.getOrders(w, httptest.NewRequest("GET", "/?days=7&status=working&tz=America%2FNew_York", nil))
+	m.getOrders(w, testRequest("GET", "/?days=7&status=working&tz=America%2FNew_York", nil))
 	var got ordersResponse
 	json.Unmarshal(w.Body.Bytes(), &got)
 	if got.Status != "ready" || len(got.Items) != 1 || got.Items[0].ID != "2" || calls != 3 {
@@ -139,7 +139,7 @@ func TestOrdersFailRatherThanReturnAnUnsplittableCappedWindow(t *testing.T) {
 	m := portfolioModule(t, func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, "["+strings.TrimSuffix(strings.Repeat(`{"orderId":1},`, portfolioOrderLimit), ",")+"]")
 	})
-	_, err := m.readPortfolioOrders(context.Background(), "access", m.now(), m.now())
+	_, err := m.readPortfolioOrders(testContext(context.Background()), "access", m.now(), m.now())
 	if err == nil || !strings.Contains(err.Error(), "上限") {
 		t.Fatalf("capped response reported complete: %v", err)
 	}
@@ -160,13 +160,13 @@ func TestOrdersUseCalendarRangeAcrossDSTAndValidateFilters(t *testing.T) {
 	seedSchwab(t, m, schwabRecord{AppKey: "key", AppSecret: "secret", CallbackURL: "https://127.0.0.1/oauth/schwab",
 		AccessToken: "access", RefreshToken: "refresh", TokenExpiresAt: m.now().Add(time.Hour), AuthorizedAt: m.now()})
 	w := httptest.NewRecorder()
-	m.getOrders(w, httptest.NewRequest("GET", "/?days=7&tz=America%2FNew_York", nil))
+	m.getOrders(w, testRequest("GET", "/?days=7&tz=America%2FNew_York", nil))
 	if !strings.Contains(w.Body.String(), `"status":"ready"`) {
 		t.Fatalf("orders: %s", w.Body)
 	}
 	for _, query := range []string{"days=2", "status=invalid", "tz=unknown"} {
 		w = httptest.NewRecorder()
-		m.getOrders(w, httptest.NewRequest("GET", "/?"+query, nil))
+		m.getOrders(w, testRequest("GET", "/?"+query, nil))
 		if w.Code != 400 {
 			t.Errorf("accepted %s: %d", query, w.Code)
 		}
@@ -177,14 +177,14 @@ func TestPortfolioDisconnectedAndReauthorizationStates(t *testing.T) {
 	m := openInvestmentModule(t)
 	for _, method := range []http.HandlerFunc{m.getPositions, m.getOrders} {
 		w := httptest.NewRecorder()
-		method(w, httptest.NewRequest("GET", "/", nil))
+		method(w, testRequest("GET", "/", nil))
 		if !strings.Contains(w.Body.String(), `"status":"unconfigured"`) {
 			t.Fatalf("unconfigured: %s", w.Body)
 		}
 	}
 	seedSchwab(t, m, schwabRecord{AppKey: "key", AppSecret: "secret", ReauthorizationRequired: true})
 	w := httptest.NewRecorder()
-	m.getPositions(w, httptest.NewRequest("GET", "/", nil))
+	m.getPositions(w, testRequest("GET", "/", nil))
 	if !strings.Contains(w.Body.String(), `"status":"reauth"`) {
 		t.Fatal(fmt.Sprintf("reauthorization: %s", w.Body))
 	}

@@ -26,19 +26,26 @@ func (q *Queries) DeleteInvalidMobilePushToken(ctx context.Context, arg DeleteIn
 
 const deleteMobilePushToken = `-- name: DeleteMobilePushToken :exec
 DELETE FROM mobile_push_tokens
-WHERE device_session_id = ?1
-  AND platform = ?2
-  AND token = ?3
+WHERE mobile_push_tokens.device_session_id = ?1
+  AND mobile_push_tokens.platform = ?2
+  AND mobile_push_tokens.token = ?3
+  AND EXISTS (SELECT 1 FROM auth_device_sessions s WHERE s.id = mobile_push_tokens.device_session_id AND s.user_id = ?4)
 `
 
 type DeleteMobilePushTokenParams struct {
 	DeviceSessionID string `json:"device_session_id"`
 	Platform        string `json:"platform"`
 	Token           string `json:"token"`
+	UserID          string `json:"user_id"`
 }
 
 func (q *Queries) DeleteMobilePushToken(ctx context.Context, arg DeleteMobilePushTokenParams) error {
-	_, err := q.db.ExecContext(ctx, deleteMobilePushToken, arg.DeviceSessionID, arg.Platform, arg.Token)
+	_, err := q.db.ExecContext(ctx, deleteMobilePushToken,
+		arg.DeviceSessionID,
+		arg.Platform,
+		arg.Token,
+		arg.UserID,
+	)
 	return err
 }
 
@@ -75,14 +82,16 @@ const listActiveMobilePushTokens = `-- name: ListActiveMobilePushTokens :many
 SELECT t.id, t.platform, t.token
 FROM mobile_push_tokens t
 JOIN auth_device_sessions s ON s.id = t.device_session_id
-WHERE s.revoked_at IS NULL
-  AND s.expires_at > ?1
-  AND t.created_at <= ?2
+JOIN auth_users u ON u.id = s.user_id AND u.status = 'active'
+WHERE s.user_id = ?1 AND s.revoked_at IS NULL
+  AND s.expires_at > ?2
+  AND t.created_at <= ?3
 `
 
 type ListActiveMobilePushTokensParams struct {
-	Now                   int64 `json:"now"`
-	NotificationCreatedAt int64 `json:"notification_created_at"`
+	RecipientID           string `json:"recipient_id"`
+	Now                   int64  `json:"now"`
+	NotificationCreatedAt int64  `json:"notification_created_at"`
 }
 
 type ListActiveMobilePushTokensRow struct {
@@ -92,7 +101,7 @@ type ListActiveMobilePushTokensRow struct {
 }
 
 func (q *Queries) ListActiveMobilePushTokens(ctx context.Context, arg ListActiveMobilePushTokensParams) ([]ListActiveMobilePushTokensRow, error) {
-	rows, err := q.db.QueryContext(ctx, listActiveMobilePushTokens, arg.Now, arg.NotificationCreatedAt)
+	rows, err := q.db.QueryContext(ctx, listActiveMobilePushTokens, arg.RecipientID, arg.Now, arg.NotificationCreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -130,6 +139,8 @@ SELECT ?1, ?2, ?3, ?4,
        ?5, ?6
 FROM auth_device_sessions
 WHERE id = ?2
+  AND user_id = ?7
+  AND EXISTS (SELECT 1 FROM auth_users u WHERE u.id = auth_device_sessions.user_id AND u.status = 'active')
   AND revoked_at IS NULL
   AND expires_at > ?6
 ON CONFLICT(device_session_id, platform) DO UPDATE SET
@@ -146,6 +157,7 @@ type UpsertMobilePushTokenParams struct {
 	Token           string `json:"token"`
 	CreatedAt       int64  `json:"created_at"`
 	UpdatedAt       int64  `json:"updated_at"`
+	UserID          string `json:"user_id"`
 }
 
 func (q *Queries) UpsertMobilePushToken(ctx context.Context, arg UpsertMobilePushTokenParams) (int64, error) {
@@ -156,6 +168,7 @@ func (q *Queries) UpsertMobilePushToken(ctx context.Context, arg UpsertMobilePus
 		arg.Token,
 		arg.CreatedAt,
 		arg.UpdatedAt,
+		arg.UserID,
 	)
 	if err != nil {
 		return 0, err

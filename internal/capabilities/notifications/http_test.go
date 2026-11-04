@@ -1,7 +1,6 @@
 package notifications
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,7 +12,7 @@ import (
 func TestHTTPFiltersListAndUnreadCountBySource(t *testing.T) {
 	service, _ := openService(t)
 	for _, source := range []contracts.ModuleID{"todo", "news"} {
-		if _, err := service.Create(context.Background(), contracts.NewNotification{
+		if _, err := service.Create(testContext(), contracts.NewNotification{
 			SourceModule: source, Severity: contracts.NotificationInfo, Title: string(source),
 			IdempotencyKey: "http:" + string(source),
 		}); err != nil {
@@ -23,7 +22,7 @@ func TestHTTPFiltersListAndUnreadCountBySource(t *testing.T) {
 	handler := NewHTTPHandler(service, nil)
 
 	listRecorder := httptest.NewRecorder()
-	handler.List(listRecorder, httptest.NewRequest(http.MethodGet, "/api/notifications?source=todo&unread=true&limit=1", nil))
+	handler.List(listRecorder, httptest.NewRequest(http.MethodGet, "/api/notifications?source=todo&unread=true&limit=1", nil).WithContext(testContext()))
 	if listRecorder.Code != http.StatusOK {
 		t.Fatalf("list status = %d, body = %s", listRecorder.Code, listRecorder.Body.String())
 	}
@@ -36,7 +35,7 @@ func TestHTTPFiltersListAndUnreadCountBySource(t *testing.T) {
 	}
 
 	countRecorder := httptest.NewRecorder()
-	handler.UnreadCount(countRecorder, httptest.NewRequest(http.MethodGet, "/api/notifications/unread-count?source=news", nil))
+	handler.UnreadCount(countRecorder, httptest.NewRequest(http.MethodGet, "/api/notifications/unread-count?source=news", nil).WithContext(testContext()))
 	if countRecorder.Code != http.StatusOK {
 		t.Fatalf("count status = %d, body = %s", countRecorder.Code, countRecorder.Body.String())
 	}

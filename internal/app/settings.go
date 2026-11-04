@@ -12,6 +12,7 @@ import (
 
 	"workbench/internal/capabilities/ai"
 	"workbench/internal/contracts"
+	dbsqlc "workbench/internal/foundation/database/sqlc"
 	"workbench/internal/foundation/httpapi"
 	"workbench/internal/foundation/logging"
 )
@@ -38,9 +39,8 @@ func (a *App) loadSettings(ctx context.Context) error {
 	if a.aiSettings.Model == "" {
 		a.aiSettings.Model = "gpt-5.2"
 	}
-	a.appearance = Appearance{Theme: "system", Motion: "full", Palette: "default"}
 	a.logging = LoggingSettings{Level: a.config.LogLevel}
-	for section, target := range map[string]any{"ai": &a.aiSettings, "appearance": &a.appearance, "logging": &a.logging} {
+	for section, target := range map[string]any{"ai": &a.aiSettings, "logging": &a.logging} {
 		var raw string
 		err := a.database.SQL().QueryRowContext(ctx, "SELECT value FROM workspace_settings WHERE section = ?", section).Scan(&raw)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -52,9 +52,6 @@ func (a *App) loadSettings(ctx context.Context) error {
 		if err := json.Unmarshal([]byte(raw), target); err != nil {
 			return err
 		}
-	}
-	if a.appearance.Palette == "" {
-		a.appearance.Palette = "default"
 	}
 	level, err := logging.ParseLevel(a.logging.Level)
 	if err != nil {
@@ -81,15 +78,40 @@ func (a *App) persistSettings(ctx context.Context, section string, value any) er
 }
 
 func (a *App) getSettings(w http.ResponseWriter, r *http.Request) {
-	a.settingsMu.Lock()
-	defer a.settingsMu.Unlock()
 	w.Header().Set("Cache-Control", "no-store")
-	httpapi.Write(w, 200, map[string]any{
-		"ai":         map[string]any{"enabled": a.aiSettings.Enabled, "baseUrl": a.aiSettings.BaseURL, "model": a.aiSettings.Model, "hasApiKey": a.aiSettings.APIKey != ""},
-		"appearance": a.appearance,
-		"logging":    a.logging,
-		"deployment": map[string]any{"listenAddress": a.config.ListenAddress, "dataPath": a.config.DataPath, "databaseDriver": a.database.Driver(), "backupSupported": a.database.BackupSupported(), "authMode": a.config.AuthMode, "publicUrl": a.config.PublicURL, "allowedHosts": a.config.AllowedHosts},
-	})
+	appearance, err := a.userAppearance(r.Context())
+	if err != nil {
+		httpapi.Error(w, 500, "settings_failed", "无法读取设置")
+		return
+	}
+	result := map[string]any{"appearance": appearance}
+	if contracts.IsAdmin(r.Context()) {
+		a.settingsMu.Lock()
+		result["ai"] = map[string]any{"enabled": a.aiSettings.Enabled, "baseUrl": a.aiSettings.BaseURL, "model": a.aiSettings.Model, "hasApiKey": a.aiSettings.APIKey != ""}
+		result["logging"] = a.logging
+		a.settingsMu.Unlock()
+		result["deployment"] = map[string]any{"listenAddress": a.config.ListenAddress, "dataPath": a.config.DataPath, "databaseDriver": a.database.Driver(), "backupSupported": a.database.BackupSupported(), "authMode": a.config.AuthMode, "publicUrl": a.config.PublicURL, "allowedHosts": a.config.AllowedHosts}
+	}
+	httpapi.Write(w, 200, result)
+}
+
+func (a *App) userAppearance(ctx context.Context) (Appearance, error) {
+	value := Appearance{Theme: "system", Motion: "full", Palette: "default"}
+	userID, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return value, err
+	}
+	raw, err := dbsqlc.New(a.database.SQL()).GetUserSetting(ctx, dbsqlc.GetUserSettingParams{UserID: userID, Section: "appearance"})
+	if errors.Is(err, sql.ErrNoRows) {
+		return value, nil
+	}
+	if err != nil {
+		return value, err
+	}
+	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+		return value, err
+	}
+	return value, nil
 }
 
 func (a *App) readAIInput(w http.ResponseWriter, r *http.Request) (AISettings, error) {
@@ -216,13 +238,16 @@ func (a *App) saveAppearance(w http.ResponseWriter, r *http.Request) {
 		httpapi.Error(w, 400, "invalid_settings", "不支持的主题、配色风格或动态效果选项")
 		return
 	}
-	a.settingsMu.Lock()
-	defer a.settingsMu.Unlock()
-	if err := a.persistSettings(r.Context(), "appearance", value); err != nil {
+	userID, err := contracts.RequireUserID(r.Context())
+	if err != nil {
+		httpapi.Error(w, 401, "authentication_required", "需要登录")
+		return
+	}
+	raw, err := json.Marshal(value)
+	if err != nil || dbsqlc.New(a.database.SQL()).PutUserSetting(r.Context(), dbsqlc.PutUserSettingParams{UserID: userID, Section: "appearance", Value: string(raw)}) != nil {
 		httpapi.Error(w, 500, "settings_failed", "无法保存设置")
 		return
 	}
-	a.appearance = value
-	a.logger.Info("appearance saved", "component", "settings")
+	a.logger.Info("appearance saved", "component", "settings", "userId", userID)
 	httpapi.Write(w, 200, value)
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"time"
+	"workbench/internal/contracts"
 )
 
 const futuLease = time.Minute
@@ -22,10 +23,11 @@ type browserSubKey struct {
 // browserCommand binds browser references to an online WebSocket. The owner
 // mutex also serializes disconnect cleanup with commands already in flight.
 func (g *futuGateway) browserCommand(ctx context.Context, command, owner, generation, symbol, resolution string) (string, bool, error) {
+	principal, _ := contracts.CurrentPrincipal(ctx)
 	g.mu.Lock()
 	var client *futuWSClient
 	for candidate := range g.clients {
-		if candidate.owner == owner && candidate.generation == generation && generation == g.generationTokenLocked() {
+		if candidate.userID == contracts.UserID(ctx) && candidate.sessionID == principal.SessionID && contracts.UserID(ctx) != "" && candidate.owner == owner && candidate.generation == generation && generation == g.generationTokenLocked() {
 			client = candidate
 			break
 		}
@@ -45,27 +47,56 @@ func (g *futuGateway) browserCommand(ctx context.Context, command, owner, genera
 		return g.currentGeneration(), true, nil
 	}
 	key := browserSubKey{symbol: symbol, resolution: resolution}
+	client.subsMu.RLock()
 	_, held := client.subs[key]
+	client.subsMu.RUnlock()
 	if (command == "ADD" && held) || (command == "UNSUB" && !held) {
 		return g.currentGeneration(), true, nil
 	}
 	var applied bool
 	var err error
 	if command == "ADD" {
+		if err := g.reserveBrowserSub(client, key); err != nil {
+			return g.currentGeneration(), false, err
+		}
 		current, applied, err = g.addSub(ctx, symbol, resolution, generation)
-		if applied && err == nil {
-			client.subs[key] = struct{}{}
+		if !applied || err != nil {
+			client.subsMu.Lock()
+			delete(client.subs, key)
+			client.subsMu.Unlock()
 		}
 	} else {
 		current, applied, err = g.releaseSub(ctx, symbol, resolution, generation)
 		if applied && err == nil {
+			client.subsMu.Lock()
 			delete(client.subs, key)
+			client.subsMu.Unlock()
 		}
 	}
 	if !g.browserOnline(client) {
 		return g.currentGeneration(), false, nil
 	}
 	return current, applied, err
+}
+
+func (g *futuGateway) reserveBrowserSub(client *futuWSClient, key browserSubKey) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	total := 0
+	for peer := range g.clients {
+		if peer.userID == client.userID {
+			peer.subsMu.RLock()
+			total += len(peer.subs)
+			peer.subsMu.RUnlock()
+		}
+	}
+	client.subsMu.Lock()
+	defer client.subsMu.Unlock()
+	if total >= 128 || len(client.subs) >= 64 {
+		return errors.New("订阅数量超过限制")
+	}
+	client.subs[key] = struct{}{}
+	return nil
 }
 
 func (g *futuGateway) browserOnline(client *futuWSClient) bool {
@@ -261,6 +292,10 @@ func (g *futuGateway) hold(ctx context.Context, client *opendClient, symbol stri
 	if g.closed || g.client != client || g.generation != generation {
 		g.mu.Unlock()
 		return errors.New("富途连接代次已变更")
+	}
+	if len(g.refs) >= 1024 && g.refs[key] == nil {
+		g.mu.Unlock()
+		return errors.New("共享行情订阅额度已用尽")
 	}
 	lease := g.refs[key]
 	if lease == nil || lease.generation != generation {

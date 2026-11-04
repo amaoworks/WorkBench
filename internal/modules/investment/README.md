@@ -5,6 +5,7 @@
 | 职责 | 文件 |
 |---|---|
 | 装配、注册、模块启停与退出 | `module.go` |
+| 用户连接、权限、后台用户枚举与访问撤销 | `users.go` |
 | Schwab 配置与持久化 | `schwab.go` |
 | OAuth 页面与回调、令牌刷新、REST 代理 | `schwab_oauth.go`、`schwab_auth.go`、`schwab_proxy.go` |
 | Schwab 实时连接、凭据读取、浏览器入口 | `streamer.go`、`streamer_credentials.go`、`streamer_http.go` |
@@ -18,7 +19,26 @@
 | 工作台自选表持久化、编辑版本检查 | `watchlists.go` |
 | 模块内共享的路径、时间及随机值辅助函数 | `helpers.go` |
 
-`Module` 统一装配并持有连接资源。拆文件不改变锁的归属：Schwab 凭据仍由 `tokenMu` 串行保护，连接建立和配置替换仍使用各网关的 `connectMu`，连接集合与代数由网关自身的 `mu` 保护。修改这些路径时，应一起检查模块停用、令牌更新、迟到响应和退出清理。
+根 `Module` 持有共享富途网关、图表代理及用户连接映射；每个用户的子 `Module` 独立持有 Schwab `tokenMu`、OAuth 状态查询、Streamer、交易日历及总览缓存。HTTP 和 AI 工具入口从可信 `contracts.Principal` 选择连接；个人业务缺少身份时拒绝访问。后台任务通过 `UserDirectory` 枚举有效用户，最多同时处理四个用户。`RevokeUser` 关闭该用户的 Schwab 与富途下游连接并取消资产采集，不重置共享 OpenD。
+
+## 数据与权限
+
+| 数据 | 归属 |
+|---|---|
+| `investment_schwab_app` | 管理员维护共享 App Key、Secret、回调地址和配置版本 |
+| `investment_schwab_connections` | `user_id` 独立令牌、授权时间、OAuth state、连接错误和 Streamer 信息 |
+| 自选表、投资偏好、监控规则、触发历史、监控状态 | `user_id` 隔离；修改和分页同时限定归属 |
+| 净值及授权账户范围 | 用户、账户及日期/授权时间联合主键 |
+| `investment_trade_audit` | 记录用户、账户、接口、结果及时间，不保存订单正文或令牌 |
+| 富途配置、上游行情池及 K 线缓存 | 全局共享；配置读写仅管理员可用 |
+
+`GET /schwab` 返回本人连接状态及 `configured`。普通用户的 `appKey`、`callbackUrl` 为空，`hasAppSecret` 为 false；管理员可读应用配置。`PUT /schwab` 只接受管理员，配置变化递增版本，使所有旧连接和未完成 OAuth state 失效。断开、授权和刷新只操作本人连接。公开 OAuth 回调由持久化的一次性 state 确定用户，与回调 Cookie 无关；状态查询只对发起用户开放。
+
+交易代理按前端实际接口及 HTTP 方法放行；账户路径必须属于调用者令牌返回的账户集合。写操作先记录审计，发送后记录 HTTP 结果或不确定状态，未经重放。管理员也不能借用其他用户的令牌。
+
+`GET /futu`、富途配置、服务断开及 `PUT /overnight` 仅管理员可用。普通用户通过 `GET /overnight` 和总览读取安全运行状态。富途租约同时绑定用户、登录会话、WebSocket owner 和连接代数；推送只发送给实际订阅对应标的和周期的连接。订阅上限为每连接 64、每用户 128、共享上游租约 1024。富途继续只补夜盘，不替代个人 Schwab 主行情。
+
+迁移 `00014_users.sql` 将旧个人数据和 Schwab 授权归入 `owner`，清除旧 OAuth state；新用户无个人数据。升级前备份；该迁移拒绝降级，回到单用户版本需恢复升级前备份。
 
 价格扫描由 `scanMu` 串行化，行情 HTTP 不持有业务写锁；提交前取得 `monitorMu`、`tokenMu`，检查启停、规则版本及当前授权。规则 CRUD 与生命周期也通过 `monitorMu` 串行。每日触发记录与通知事件共用事务，使用平台 `NotificationService`，不直接发送 TG。
 

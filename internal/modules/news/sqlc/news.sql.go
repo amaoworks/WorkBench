@@ -10,58 +10,83 @@ import (
 )
 
 const countSources = `-- name: CountSources :one
-SELECT COUNT(*) FROM news_sources
+SELECT COUNT(*) FROM news_sources WHERE user_id=?1
 `
 
-func (q *Queries) CountSources(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countSources)
+func (q *Queries) CountSources(ctx context.Context, userID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countSources, userID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
 const deleteArticle = `-- name: DeleteArticle :exec
-DELETE FROM news_articles WHERE id=?
+DELETE FROM news_articles WHERE user_id=?1 AND id=?2
 `
 
-func (q *Queries) DeleteArticle(ctx context.Context, id string) error {
-	_, err := q.db.ExecContext(ctx, deleteArticle, id)
+type DeleteArticleParams struct {
+	UserID string `json:"user_id"`
+	ID     string `json:"id"`
+}
+
+func (q *Queries) DeleteArticle(ctx context.Context, arg DeleteArticleParams) error {
+	_, err := q.db.ExecContext(ctx, deleteArticle, arg.UserID, arg.ID)
 	return err
 }
 
 const deleteOldArticles = `-- name: DeleteOldArticles :exec
-DELETE FROM news_articles WHERE published_at<? AND starred=0
+DELETE FROM news_articles WHERE user_id=?1 AND published_at<?2 AND starred=0
 `
 
-func (q *Queries) DeleteOldArticles(ctx context.Context, publishedAt int64) error {
-	_, err := q.db.ExecContext(ctx, deleteOldArticles, publishedAt)
+type DeleteOldArticlesParams struct {
+	UserID      string `json:"user_id"`
+	PublishedAt int64  `json:"published_at"`
+}
+
+func (q *Queries) DeleteOldArticles(ctx context.Context, arg DeleteOldArticlesParams) error {
+	_, err := q.db.ExecContext(ctx, deleteOldArticles, arg.UserID, arg.PublishedAt)
 	return err
 }
 
 const deleteOldDigests = `-- name: DeleteOldDigests :exec
-DELETE FROM news_digests WHERE created_at<?
+DELETE FROM news_digests WHERE user_id=?1 AND created_at<?2
 `
 
-func (q *Queries) DeleteOldDigests(ctx context.Context, createdAt int64) error {
-	_, err := q.db.ExecContext(ctx, deleteOldDigests, createdAt)
+type DeleteOldDigestsParams struct {
+	UserID    string `json:"user_id"`
+	CreatedAt int64  `json:"created_at"`
+}
+
+func (q *Queries) DeleteOldDigests(ctx context.Context, arg DeleteOldDigestsParams) error {
+	_, err := q.db.ExecContext(ctx, deleteOldDigests, arg.UserID, arg.CreatedAt)
 	return err
 }
 
 const deleteOldUsage = `-- name: DeleteOldUsage :exec
-DELETE FROM news_ai_usage WHERE day<?
+DELETE FROM news_ai_usage WHERE user_id=?1 AND day<?2
 `
 
-func (q *Queries) DeleteOldUsage(ctx context.Context, day string) error {
-	_, err := q.db.ExecContext(ctx, deleteOldUsage, day)
+type DeleteOldUsageParams struct {
+	UserID string `json:"user_id"`
+	Day    string `json:"day"`
+}
+
+func (q *Queries) DeleteOldUsage(ctx context.Context, arg DeleteOldUsageParams) error {
+	_, err := q.db.ExecContext(ctx, deleteOldUsage, arg.UserID, arg.Day)
 	return err
 }
 
 const deleteRule = `-- name: DeleteRule :execrows
-DELETE FROM news_rules WHERE id=?
+DELETE FROM news_rules WHERE user_id=?1 AND id=?2
 `
 
-func (q *Queries) DeleteRule(ctx context.Context, id string) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteRule, id)
+type DeleteRuleParams struct {
+	UserID string `json:"user_id"`
+	ID     string `json:"id"`
+}
+
+func (q *Queries) DeleteRule(ctx context.Context, arg DeleteRuleParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteRule, arg.UserID, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -69,11 +94,16 @@ func (q *Queries) DeleteRule(ctx context.Context, id string) (int64, error) {
 }
 
 const deleteSource = `-- name: DeleteSource :execrows
-DELETE FROM news_sources WHERE id=?
+DELETE FROM news_sources WHERE user_id=?1 AND id=?2
 `
 
-func (q *Queries) DeleteSource(ctx context.Context, id string) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteSource, id)
+type DeleteSourceParams struct {
+	UserID string `json:"user_id"`
+	ID     string `json:"id"`
+}
+
+func (q *Queries) DeleteSource(ctx context.Context, arg DeleteSourceParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteSource, arg.UserID, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -81,12 +111,13 @@ func (q *Queries) DeleteSource(ctx context.Context, id string) (int64, error) {
 }
 
 const digestArticles = `-- name: DigestArticles :many
-SELECT id, title, url, source_name, content, language, topic, matched, is_read, starred, published_at, created_at, translated_title, translated_content, summary, ai_status, ai_error, ai_cache_key, ai_attempted_at FROM news_articles WHERE matched=1 AND published_at>=CAST(?1 AS BIGINT)
-AND published_at<=CAST(?2 AS BIGINT) AND (CAST(?3 AS TEXT)='' OR topic=?3)
-ORDER BY published_at DESC,id DESC LIMIT ?4
+SELECT user_id, id, title, url, source_name, content, language, topic, matched, is_read, starred, published_at, created_at, translated_title, translated_content, summary, ai_status, ai_error, ai_cache_key, ai_attempted_at FROM news_articles WHERE user_id=?1 AND matched=1 AND published_at>=CAST(?2 AS BIGINT)
+AND published_at<=CAST(?3 AS BIGINT) AND (CAST(?4 AS TEXT)='' OR topic=?4)
+ORDER BY published_at DESC,id DESC LIMIT ?5
 `
 
 type DigestArticlesParams struct {
+	UserID    string `json:"user_id"`
 	Since     int64  `json:"since"`
 	Until     int64  `json:"until"`
 	Topic     string `json:"topic"`
@@ -95,6 +126,7 @@ type DigestArticlesParams struct {
 
 func (q *Queries) DigestArticles(ctx context.Context, arg DigestArticlesParams) ([]NewsArticle, error) {
 	rows, err := q.db.QueryContext(ctx, digestArticles,
+		arg.UserID,
 		arg.Since,
 		arg.Until,
 		arg.Topic,
@@ -108,6 +140,7 @@ func (q *Queries) DigestArticles(ctx context.Context, arg DigestArticlesParams) 
 	for rows.Next() {
 		var i NewsArticle
 		if err := rows.Scan(
+			&i.UserID,
 			&i.ID,
 			&i.Title,
 			&i.Url,
@@ -141,22 +174,32 @@ func (q *Queries) DigestArticles(ctx context.Context, arg DigestArticlesParams) 
 	return items, nil
 }
 
+const ensureSettings = `-- name: EnsureSettings :exec
+INSERT INTO news_settings(user_id) VALUES(?1) ON CONFLICT(user_id) DO NOTHING
+`
+
+func (q *Queries) EnsureSettings(ctx context.Context, userID string) error {
+	_, err := q.db.ExecContext(ctx, ensureSettings, userID)
+	return err
+}
+
 const failArticleAI = `-- name: FailArticleAI :exec
-UPDATE news_articles SET ai_status='error',ai_error=? WHERE id=?
+UPDATE news_articles SET ai_status='error',ai_error=?1 WHERE user_id=?2 AND id=?3
 `
 
 type FailArticleAIParams struct {
 	AiError string `json:"ai_error"`
+	UserID  string `json:"user_id"`
 	ID      string `json:"id"`
 }
 
 func (q *Queries) FailArticleAI(ctx context.Context, arg FailArticleAIParams) error {
-	_, err := q.db.ExecContext(ctx, failArticleAI, arg.AiError, arg.ID)
+	_, err := q.db.ExecContext(ctx, failArticleAI, arg.AiError, arg.UserID, arg.ID)
 	return err
 }
 
 const finishArticleAI = `-- name: FinishArticleAI :exec
-UPDATE news_articles SET translated_title=?,translated_content=?,summary=?,ai_status='ready',ai_error='',ai_cache_key=? WHERE id=?
+UPDATE news_articles SET translated_title=?1,translated_content=?2,summary=?3,ai_status='ready',ai_error='',ai_cache_key=?4 WHERE user_id=?5 AND id=?6
 `
 
 type FinishArticleAIParams struct {
@@ -164,6 +207,7 @@ type FinishArticleAIParams struct {
 	TranslatedContent string `json:"translated_content"`
 	Summary           string `json:"summary"`
 	AiCacheKey        string `json:"ai_cache_key"`
+	UserID            string `json:"user_id"`
 	ID                string `json:"id"`
 }
 
@@ -173,30 +217,42 @@ func (q *Queries) FinishArticleAI(ctx context.Context, arg FinishArticleAIParams
 		arg.TranslatedContent,
 		arg.Summary,
 		arg.AiCacheKey,
+		arg.UserID,
 		arg.ID,
 	)
 	return err
 }
 
 const getAIUsage = `-- name: GetAIUsage :one
-SELECT calls FROM news_ai_usage WHERE day=?
+SELECT calls FROM news_ai_usage WHERE user_id=?1 AND day=?2
 `
 
-func (q *Queries) GetAIUsage(ctx context.Context, day string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getAIUsage, day)
+type GetAIUsageParams struct {
+	UserID string `json:"user_id"`
+	Day    string `json:"day"`
+}
+
+func (q *Queries) GetAIUsage(ctx context.Context, arg GetAIUsageParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getAIUsage, arg.UserID, arg.Day)
 	var calls int64
 	err := row.Scan(&calls)
 	return calls, err
 }
 
 const getArticle = `-- name: GetArticle :one
-SELECT id, title, url, source_name, content, language, topic, matched, is_read, starred, published_at, created_at, translated_title, translated_content, summary, ai_status, ai_error, ai_cache_key, ai_attempted_at FROM news_articles WHERE id=?
+SELECT user_id, id, title, url, source_name, content, language, topic, matched, is_read, starred, published_at, created_at, translated_title, translated_content, summary, ai_status, ai_error, ai_cache_key, ai_attempted_at FROM news_articles WHERE user_id=?1 AND id=?2
 `
 
-func (q *Queries) GetArticle(ctx context.Context, id string) (NewsArticle, error) {
-	row := q.db.QueryRowContext(ctx, getArticle, id)
+type GetArticleParams struct {
+	UserID string `json:"user_id"`
+	ID     string `json:"id"`
+}
+
+func (q *Queries) GetArticle(ctx context.Context, arg GetArticleParams) (NewsArticle, error) {
+	row := q.db.QueryRowContext(ctx, getArticle, arg.UserID, arg.ID)
 	var i NewsArticle
 	err := row.Scan(
+		&i.UserID,
 		&i.ID,
 		&i.Title,
 		&i.Url,
@@ -221,13 +277,19 @@ func (q *Queries) GetArticle(ctx context.Context, id string) (NewsArticle, error
 }
 
 const getArticleByURL = `-- name: GetArticleByURL :one
-SELECT id, title, url, source_name, content, language, topic, matched, is_read, starred, published_at, created_at, translated_title, translated_content, summary, ai_status, ai_error, ai_cache_key, ai_attempted_at FROM news_articles WHERE url=? ORDER BY created_at,id LIMIT 1
+SELECT user_id, id, title, url, source_name, content, language, topic, matched, is_read, starred, published_at, created_at, translated_title, translated_content, summary, ai_status, ai_error, ai_cache_key, ai_attempted_at FROM news_articles WHERE user_id=?1 AND url=?2 ORDER BY created_at,id LIMIT 1
 `
 
-func (q *Queries) GetArticleByURL(ctx context.Context, url string) (NewsArticle, error) {
-	row := q.db.QueryRowContext(ctx, getArticleByURL, url)
+type GetArticleByURLParams struct {
+	UserID string `json:"user_id"`
+	Url    string `json:"url"`
+}
+
+func (q *Queries) GetArticleByURL(ctx context.Context, arg GetArticleByURLParams) (NewsArticle, error) {
+	row := q.db.QueryRowContext(ctx, getArticleByURL, arg.UserID, arg.Url)
 	var i NewsArticle
 	err := row.Scan(
+		&i.UserID,
 		&i.ID,
 		&i.Title,
 		&i.Url,
@@ -252,13 +314,19 @@ func (q *Queries) GetArticleByURL(ctx context.Context, url string) (NewsArticle,
 }
 
 const getDigest = `-- name: GetDigest :one
-SELECT id, slot, title, topic, content, items_json, created_at, ai_used, notification_id FROM news_digests WHERE id=?
+SELECT user_id, id, slot, title, topic, content, items_json, created_at, ai_used, notification_id FROM news_digests WHERE user_id=?1 AND id=?2
 `
 
-func (q *Queries) GetDigest(ctx context.Context, id string) (NewsDigest, error) {
-	row := q.db.QueryRowContext(ctx, getDigest, id)
+type GetDigestParams struct {
+	UserID string `json:"user_id"`
+	ID     string `json:"id"`
+}
+
+func (q *Queries) GetDigest(ctx context.Context, arg GetDigestParams) (NewsDigest, error) {
+	row := q.db.QueryRowContext(ctx, getDigest, arg.UserID, arg.ID)
 	var i NewsDigest
 	err := row.Scan(
+		&i.UserID,
 		&i.ID,
 		&i.Slot,
 		&i.Title,
@@ -273,13 +341,19 @@ func (q *Queries) GetDigest(ctx context.Context, id string) (NewsDigest, error) 
 }
 
 const getDigestBySlot = `-- name: GetDigestBySlot :one
-SELECT id, slot, title, topic, content, items_json, created_at, ai_used, notification_id FROM news_digests WHERE slot=?
+SELECT user_id, id, slot, title, topic, content, items_json, created_at, ai_used, notification_id FROM news_digests WHERE user_id=?1 AND slot=?2
 `
 
-func (q *Queries) GetDigestBySlot(ctx context.Context, slot string) (NewsDigest, error) {
-	row := q.db.QueryRowContext(ctx, getDigestBySlot, slot)
+type GetDigestBySlotParams struct {
+	UserID string `json:"user_id"`
+	Slot   string `json:"slot"`
+}
+
+func (q *Queries) GetDigestBySlot(ctx context.Context, arg GetDigestBySlotParams) (NewsDigest, error) {
+	row := q.db.QueryRowContext(ctx, getDigestBySlot, arg.UserID, arg.Slot)
 	var i NewsDigest
 	err := row.Scan(
+		&i.UserID,
 		&i.ID,
 		&i.Slot,
 		&i.Title,
@@ -294,29 +368,36 @@ func (q *Queries) GetDigestBySlot(ctx context.Context, slot string) (NewsDigest,
 }
 
 const getOriginArticle = `-- name: GetOriginArticle :one
-SELECT article_id FROM news_origins WHERE source_id=? AND item_key=?
+SELECT article_id FROM news_origins WHERE user_id=?1 AND source_id=?2 AND item_key=?3
 `
 
 type GetOriginArticleParams struct {
+	UserID   string `json:"user_id"`
 	SourceID string `json:"source_id"`
 	ItemKey  string `json:"item_key"`
 }
 
 func (q *Queries) GetOriginArticle(ctx context.Context, arg GetOriginArticleParams) (string, error) {
-	row := q.db.QueryRowContext(ctx, getOriginArticle, arg.SourceID, arg.ItemKey)
+	row := q.db.QueryRowContext(ctx, getOriginArticle, arg.UserID, arg.SourceID, arg.ItemKey)
 	var article_id string
 	err := row.Scan(&article_id)
 	return article_id, err
 }
 
 const getRule = `-- name: GetRule :one
-SELECT id, name, include_json, exclude_json, sources_json, topic, enabled FROM news_rules WHERE id=?
+SELECT user_id, id, name, include_json, exclude_json, sources_json, topic, enabled FROM news_rules WHERE user_id=?1 AND id=?2
 `
 
-func (q *Queries) GetRule(ctx context.Context, id string) (NewsRule, error) {
-	row := q.db.QueryRowContext(ctx, getRule, id)
+type GetRuleParams struct {
+	UserID string `json:"user_id"`
+	ID     string `json:"id"`
+}
+
+func (q *Queries) GetRule(ctx context.Context, arg GetRuleParams) (NewsRule, error) {
+	row := q.db.QueryRowContext(ctx, getRule, arg.UserID, arg.ID)
 	var i NewsRule
 	err := row.Scan(
+		&i.UserID,
 		&i.ID,
 		&i.Name,
 		&i.IncludeJson,
@@ -329,14 +410,14 @@ func (q *Queries) GetRule(ctx context.Context, id string) (NewsRule, error) {
 }
 
 const getSettings = `-- name: GetSettings :one
-SELECT id, settings_json, last_digest_at, last_digest_error, last_digest_attempt_at FROM news_settings WHERE id=1
+SELECT user_id, settings_json, last_digest_at, last_digest_error, last_digest_attempt_at FROM news_settings WHERE user_id=?1
 `
 
-func (q *Queries) GetSettings(ctx context.Context) (NewsSetting, error) {
-	row := q.db.QueryRowContext(ctx, getSettings)
+func (q *Queries) GetSettings(ctx context.Context, userID string) (NewsSetting, error) {
+	row := q.db.QueryRowContext(ctx, getSettings, userID)
 	var i NewsSetting
 	err := row.Scan(
-		&i.ID,
+		&i.UserID,
 		&i.SettingsJson,
 		&i.LastDigestAt,
 		&i.LastDigestError,
@@ -346,13 +427,19 @@ func (q *Queries) GetSettings(ctx context.Context) (NewsSetting, error) {
 }
 
 const getSource = `-- name: GetSource :one
-SELECT id, name, kind, url, "query", topic, enabled, interval_minutes, fetched_at, next_fetch_at, last_error, failure_count, etag, last_modified, item_count FROM news_sources WHERE id=?
+SELECT user_id, id, name, kind, url, "query", topic, enabled, interval_minutes, fetched_at, next_fetch_at, last_error, failure_count, etag, last_modified, item_count FROM news_sources WHERE user_id=?1 AND id=?2
 `
 
-func (q *Queries) GetSource(ctx context.Context, id string) (NewsSource, error) {
-	row := q.db.QueryRowContext(ctx, getSource, id)
+type GetSourceParams struct {
+	UserID string `json:"user_id"`
+	ID     string `json:"id"`
+}
+
+func (q *Queries) GetSource(ctx context.Context, arg GetSourceParams) (NewsSource, error) {
+	row := q.db.QueryRowContext(ctx, getSource, arg.UserID, arg.ID)
 	var i NewsSource
 	err := row.Scan(
+		&i.UserID,
 		&i.ID,
 		&i.Name,
 		&i.Kind,
@@ -373,11 +460,12 @@ func (q *Queries) GetSource(ctx context.Context, id string) (NewsSource, error) 
 }
 
 const insertArticle = `-- name: InsertArticle :execrows
-INSERT INTO news_articles(id,title,url,source_name,content,language,topic,matched,published_at,created_at)
-VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING
+INSERT INTO news_articles(user_id,id,title,url,source_name,content,language,topic,matched,published_at,created_at)
+VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) ON CONFLICT(user_id,id) DO NOTHING
 `
 
 type InsertArticleParams struct {
+	UserID      string `json:"user_id"`
 	ID          string `json:"id"`
 	Title       string `json:"title"`
 	Url         string `json:"url"`
@@ -392,6 +480,7 @@ type InsertArticleParams struct {
 
 func (q *Queries) InsertArticle(ctx context.Context, arg InsertArticleParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, insertArticle,
+		arg.UserID,
 		arg.ID,
 		arg.Title,
 		arg.Url,
@@ -410,10 +499,11 @@ func (q *Queries) InsertArticle(ctx context.Context, arg InsertArticleParams) (i
 }
 
 const insertDigest = `-- name: InsertDigest :exec
-INSERT INTO news_digests(id,slot,title,topic,content,items_json,created_at,ai_used,notification_id) VALUES(?,?,?,?,?,?,?,?,?)
+INSERT INTO news_digests(user_id,id,slot,title,topic,content,items_json,created_at,ai_used,notification_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
 `
 
 type InsertDigestParams struct {
+	UserID         string `json:"user_id"`
 	ID             string `json:"id"`
 	Slot           string `json:"slot"`
 	Title          string `json:"title"`
@@ -427,6 +517,7 @@ type InsertDigestParams struct {
 
 func (q *Queries) InsertDigest(ctx context.Context, arg InsertDigestParams) error {
 	_, err := q.db.ExecContext(ctx, insertDigest,
+		arg.UserID,
 		arg.ID,
 		arg.Slot,
 		arg.Title,
@@ -441,12 +532,17 @@ func (q *Queries) InsertDigest(ctx context.Context, arg InsertDigestParams) erro
 }
 
 const listAICandidates = `-- name: ListAICandidates :many
-SELECT id FROM news_articles WHERE matched=1 AND (ai_status='none' OR (ai_status IN('running','error') AND ai_attempted_at<?))
+SELECT id FROM news_articles WHERE user_id=?1 AND matched=1 AND (ai_status='none' OR (ai_status IN('running','error') AND ai_attempted_at<?2))
 ORDER BY published_at DESC,id DESC LIMIT 3
 `
 
-func (q *Queries) ListAICandidates(ctx context.Context, aiAttemptedAt int64) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, listAICandidates, aiAttemptedAt)
+type ListAICandidatesParams struct {
+	UserID        string `json:"user_id"`
+	AiAttemptedAt int64  `json:"ai_attempted_at"`
+}
+
+func (q *Queries) ListAICandidates(ctx context.Context, arg ListAICandidatesParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listAICandidates, arg.UserID, arg.AiAttemptedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -469,11 +565,11 @@ func (q *Queries) ListAICandidates(ctx context.Context, aiAttemptedAt int64) ([]
 }
 
 const listAllArticles = `-- name: ListAllArticles :many
-SELECT id, title, url, source_name, content, language, topic, matched, is_read, starred, published_at, created_at, translated_title, translated_content, summary, ai_status, ai_error, ai_cache_key, ai_attempted_at FROM news_articles ORDER BY id
+SELECT user_id, id, title, url, source_name, content, language, topic, matched, is_read, starred, published_at, created_at, translated_title, translated_content, summary, ai_status, ai_error, ai_cache_key, ai_attempted_at FROM news_articles WHERE user_id=?1 ORDER BY id
 `
 
-func (q *Queries) ListAllArticles(ctx context.Context) ([]NewsArticle, error) {
-	rows, err := q.db.QueryContext(ctx, listAllArticles)
+func (q *Queries) ListAllArticles(ctx context.Context, userID string) ([]NewsArticle, error) {
+	rows, err := q.db.QueryContext(ctx, listAllArticles, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -482,6 +578,7 @@ func (q *Queries) ListAllArticles(ctx context.Context) ([]NewsArticle, error) {
 	for rows.Next() {
 		var i NewsArticle
 		if err := rows.Scan(
+			&i.UserID,
 			&i.ID,
 			&i.Title,
 			&i.Url,
@@ -516,20 +613,22 @@ func (q *Queries) ListAllArticles(ctx context.Context) ([]NewsArticle, error) {
 }
 
 const listArticlesPage = `-- name: ListArticlesPage :many
-SELECT id, title, url, source_name, content, language, topic, matched, is_read, starred, published_at, created_at, translated_title, translated_content, summary, ai_status, ai_error, ai_cache_key, ai_attempted_at FROM news_articles a
-WHERE (CAST(?1 AS TEXT)='' OR (LOWER(a.title) LIKE CAST(?2 AS TEXT) ESCAPE '\')
- OR (LOWER(a.content) LIKE CAST(?2 AS TEXT) ESCAPE '\')
- OR (LOWER(a.translated_title) LIKE CAST(?2 AS TEXT) ESCAPE '\'))
-AND (CAST(?3 AS TEXT)='' OR EXISTS(SELECT 1 FROM news_origins o WHERE o.article_id=a.id AND o.source_id=?3))
-AND (CAST(?4 AS TEXT)='' OR a.topic=?4)
-AND (CAST(?5 AS BIGINT)=0 OR a.is_read=0)
-AND (CAST(?6 AS BIGINT)=0 OR a.starred=1)
-AND (CAST(?7 AS BIGINT)=0 OR a.matched=1)
-AND (a.published_at < CAST(?8 AS BIGINT) OR (a.published_at=CAST(?8 AS BIGINT) AND a.id < CAST(?9 AS TEXT)))
-ORDER BY a.published_at DESC,a.id DESC LIMIT ?10
+SELECT user_id, id, title, url, source_name, content, language, topic, matched, is_read, starred, published_at, created_at, translated_title, translated_content, summary, ai_status, ai_error, ai_cache_key, ai_attempted_at FROM news_articles a
+WHERE a.user_id=?1
+AND (CAST(?2 AS TEXT)='' OR (LOWER(a.title) LIKE CAST(?3 AS TEXT) ESCAPE '\')
+ OR (LOWER(a.content) LIKE CAST(?3 AS TEXT) ESCAPE '\')
+ OR (LOWER(a.translated_title) LIKE CAST(?3 AS TEXT) ESCAPE '\'))
+AND (CAST(?4 AS TEXT)='' OR EXISTS(SELECT 1 FROM news_origins o WHERE o.user_id=a.user_id AND o.article_id=a.id AND o.source_id=?4))
+AND (CAST(?5 AS TEXT)='' OR a.topic=?5)
+AND (CAST(?6 AS BIGINT)=0 OR a.is_read=0)
+AND (CAST(?7 AS BIGINT)=0 OR a.starred=1)
+AND (CAST(?8 AS BIGINT)=0 OR a.matched=1)
+AND (a.published_at < CAST(?9 AS BIGINT) OR (a.published_at=CAST(?9 AS BIGINT) AND a.id < CAST(?10 AS TEXT)))
+ORDER BY a.published_at DESC,a.id DESC LIMIT ?11
 `
 
 type ListArticlesPageParams struct {
+	UserID     string `json:"user_id"`
 	Search     string `json:"search"`
 	Pattern    string `json:"pattern"`
 	SourceID   string `json:"source_id"`
@@ -544,6 +643,7 @@ type ListArticlesPageParams struct {
 
 func (q *Queries) ListArticlesPage(ctx context.Context, arg ListArticlesPageParams) ([]NewsArticle, error) {
 	rows, err := q.db.QueryContext(ctx, listArticlesPage,
+		arg.UserID,
 		arg.Search,
 		arg.Pattern,
 		arg.SourceID,
@@ -563,6 +663,7 @@ func (q *Queries) ListArticlesPage(ctx context.Context, arg ListArticlesPagePara
 	for rows.Next() {
 		var i NewsArticle
 		if err := rows.Scan(
+			&i.UserID,
 			&i.ID,
 			&i.Title,
 			&i.Url,
@@ -597,19 +698,25 @@ func (q *Queries) ListArticlesPage(ctx context.Context, arg ListArticlesPagePara
 }
 
 const listDigestsPage = `-- name: ListDigestsPage :many
-SELECT id, slot, title, topic, content, items_json, created_at, ai_used, notification_id FROM news_digests WHERE created_at<CAST(?1 AS BIGINT)
-OR (created_at=CAST(?1 AS BIGINT) AND id<CAST(?2 AS TEXT))
-ORDER BY created_at DESC,id DESC LIMIT ?3
+SELECT user_id, id, slot, title, topic, content, items_json, created_at, ai_used, notification_id FROM news_digests WHERE user_id=?1 AND (created_at<CAST(?2 AS BIGINT)
+OR (created_at=CAST(?2 AS BIGINT) AND id<CAST(?3 AS TEXT)))
+ORDER BY created_at DESC,id DESC LIMIT ?4
 `
 
 type ListDigestsPageParams struct {
+	UserID     string `json:"user_id"`
 	CursorTime int64  `json:"cursor_time"`
 	CursorID   string `json:"cursor_id"`
 	PageLimit  int64  `json:"page_limit"`
 }
 
 func (q *Queries) ListDigestsPage(ctx context.Context, arg ListDigestsPageParams) ([]NewsDigest, error) {
-	rows, err := q.db.QueryContext(ctx, listDigestsPage, arg.CursorTime, arg.CursorID, arg.PageLimit)
+	rows, err := q.db.QueryContext(ctx, listDigestsPage,
+		arg.UserID,
+		arg.CursorTime,
+		arg.CursorID,
+		arg.PageLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -618,6 +725,7 @@ func (q *Queries) ListDigestsPage(ctx context.Context, arg ListDigestsPageParams
 	for rows.Next() {
 		var i NewsDigest
 		if err := rows.Scan(
+			&i.UserID,
 			&i.ID,
 			&i.Slot,
 			&i.Title,
@@ -642,8 +750,13 @@ func (q *Queries) ListDigestsPage(ctx context.Context, arg ListDigestsPageParams
 }
 
 const listOrigins = `-- name: ListOrigins :many
-SELECT DISTINCT source_id,source_name,url FROM news_origins WHERE article_id=? ORDER BY source_name,source_id,url
+SELECT DISTINCT source_id,source_name,url FROM news_origins WHERE user_id=?1 AND article_id=?2 ORDER BY source_name,source_id,url
 `
+
+type ListOriginsParams struct {
+	UserID    string `json:"user_id"`
+	ArticleID string `json:"article_id"`
+}
 
 type ListOriginsRow struct {
 	SourceID   string `json:"source_id"`
@@ -651,8 +764,8 @@ type ListOriginsRow struct {
 	Url        string `json:"url"`
 }
 
-func (q *Queries) ListOrigins(ctx context.Context, articleID string) ([]ListOriginsRow, error) {
-	rows, err := q.db.QueryContext(ctx, listOrigins, articleID)
+func (q *Queries) ListOrigins(ctx context.Context, arg ListOriginsParams) ([]ListOriginsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listOrigins, arg.UserID, arg.ArticleID)
 	if err != nil {
 		return nil, err
 	}
@@ -675,11 +788,11 @@ func (q *Queries) ListOrigins(ctx context.Context, articleID string) ([]ListOrig
 }
 
 const listRules = `-- name: ListRules :many
-SELECT id, name, include_json, exclude_json, sources_json, topic, enabled FROM news_rules ORDER BY name,id
+SELECT user_id, id, name, include_json, exclude_json, sources_json, topic, enabled FROM news_rules WHERE user_id=?1 ORDER BY name,id
 `
 
-func (q *Queries) ListRules(ctx context.Context) ([]NewsRule, error) {
-	rows, err := q.db.QueryContext(ctx, listRules)
+func (q *Queries) ListRules(ctx context.Context, userID string) ([]NewsRule, error) {
+	rows, err := q.db.QueryContext(ctx, listRules, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -688,6 +801,7 @@ func (q *Queries) ListRules(ctx context.Context) ([]NewsRule, error) {
 	for rows.Next() {
 		var i NewsRule
 		if err := rows.Scan(
+			&i.UserID,
 			&i.ID,
 			&i.Name,
 			&i.IncludeJson,
@@ -710,11 +824,11 @@ func (q *Queries) ListRules(ctx context.Context) ([]NewsRule, error) {
 }
 
 const listSources = `-- name: ListSources :many
-SELECT id, name, kind, url, "query", topic, enabled, interval_minutes, fetched_at, next_fetch_at, last_error, failure_count, etag, last_modified, item_count FROM news_sources ORDER BY name,id
+SELECT user_id, id, name, kind, url, "query", topic, enabled, interval_minutes, fetched_at, next_fetch_at, last_error, failure_count, etag, last_modified, item_count FROM news_sources WHERE user_id=?1 ORDER BY name,id
 `
 
-func (q *Queries) ListSources(ctx context.Context) ([]NewsSource, error) {
-	rows, err := q.db.QueryContext(ctx, listSources)
+func (q *Queries) ListSources(ctx context.Context, userID string) ([]NewsSource, error) {
+	rows, err := q.db.QueryContext(ctx, listSources, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -723,6 +837,7 @@ func (q *Queries) ListSources(ctx context.Context) ([]NewsSource, error) {
 	for rows.Next() {
 		var i NewsSource
 		if err := rows.Scan(
+			&i.UserID,
 			&i.ID,
 			&i.Name,
 			&i.Kind,
@@ -754,38 +869,45 @@ func (q *Queries) ListSources(ctx context.Context) ([]NewsSource, error) {
 
 const mergeArticleState = `-- name: MergeArticleState :exec
 UPDATE news_articles SET is_read=CASE WHEN is_read=1 OR CAST(?1 AS BIGINT)=1 THEN 1 ELSE 0 END,
-starred=CASE WHEN starred=1 OR CAST(?2 AS BIGINT)=1 THEN 1 ELSE 0 END WHERE id=?3
+starred=CASE WHEN starred=1 OR CAST(?2 AS BIGINT)=1 THEN 1 ELSE 0 END WHERE user_id=?3 AND id=?4
 `
 
 type MergeArticleStateParams struct {
 	IsRead  int64  `json:"is_read"`
 	Starred int64  `json:"starred"`
+	UserID  string `json:"user_id"`
 	ID      string `json:"id"`
 }
 
 func (q *Queries) MergeArticleState(ctx context.Context, arg MergeArticleStateParams) error {
-	_, err := q.db.ExecContext(ctx, mergeArticleState, arg.IsRead, arg.Starred, arg.ID)
+	_, err := q.db.ExecContext(ctx, mergeArticleState,
+		arg.IsRead,
+		arg.Starred,
+		arg.UserID,
+		arg.ID,
+	)
 	return err
 }
 
 const moveOrigins = `-- name: MoveOrigins :exec
-UPDATE news_origins SET article_id=?1 WHERE article_id=?2
+UPDATE news_origins SET article_id=?1 WHERE user_id=?2 AND article_id=?3
 `
 
 type MoveOriginsParams struct {
 	Target   string `json:"target"`
+	UserID   string `json:"user_id"`
 	Previous string `json:"previous"`
 }
 
 func (q *Queries) MoveOrigins(ctx context.Context, arg MoveOriginsParams) error {
-	_, err := q.db.ExecContext(ctx, moveOrigins, arg.Target, arg.Previous)
+	_, err := q.db.ExecContext(ctx, moveOrigins, arg.Target, arg.UserID, arg.Previous)
 	return err
 }
 
 const newsStats = `-- name: NewsStats :one
 SELECT COUNT(*) AS articles,
 CAST(COALESCE(SUM(CASE WHEN is_read=0 THEN 1 ELSE 0 END),0) AS BIGINT) AS unread,
-CAST(COALESCE(SUM(starred),0) AS BIGINT) AS starred FROM news_articles
+CAST(COALESCE(SUM(starred),0) AS BIGINT) AS starred FROM news_articles WHERE user_id=?1
 `
 
 type NewsStatsRow struct {
@@ -794,15 +916,15 @@ type NewsStatsRow struct {
 	Starred  int64 `json:"starred"`
 }
 
-func (q *Queries) NewsStats(ctx context.Context) (NewsStatsRow, error) {
-	row := q.db.QueryRowContext(ctx, newsStats)
+func (q *Queries) NewsStats(ctx context.Context, userID string) (NewsStatsRow, error) {
+	row := q.db.QueryRowContext(ctx, newsStats, userID)
 	var i NewsStatsRow
 	err := row.Scan(&i.Articles, &i.Unread, &i.Starred)
 	return i, err
 }
 
 const recordFetch = `-- name: RecordFetch :exec
-UPDATE news_sources SET fetched_at=?,next_fetch_at=?,last_error='',failure_count=0,etag=?,last_modified=?,item_count=? WHERE id=?
+UPDATE news_sources SET fetched_at=?1,next_fetch_at=?2,last_error='',failure_count=0,etag=?3,last_modified=?4,item_count=?5 WHERE user_id=?6 AND id=?7
 `
 
 type RecordFetchParams struct {
@@ -811,6 +933,7 @@ type RecordFetchParams struct {
 	Etag         string `json:"etag"`
 	LastModified string `json:"last_modified"`
 	ItemCount    int64  `json:"item_count"`
+	UserID       string `json:"user_id"`
 	ID           string `json:"id"`
 }
 
@@ -821,62 +944,80 @@ func (q *Queries) RecordFetch(ctx context.Context, arg RecordFetchParams) error 
 		arg.Etag,
 		arg.LastModified,
 		arg.ItemCount,
+		arg.UserID,
 		arg.ID,
 	)
 	return err
 }
 
 const recordFetchFailure = `-- name: RecordFetchFailure :exec
-UPDATE news_sources SET next_fetch_at=?,last_error=?,failure_count=failure_count+1 WHERE id=?
+UPDATE news_sources SET next_fetch_at=?1,last_error=?2,failure_count=failure_count+1 WHERE user_id=?3 AND id=?4
 `
 
 type RecordFetchFailureParams struct {
 	NextFetchAt int64  `json:"next_fetch_at"`
 	LastError   string `json:"last_error"`
+	UserID      string `json:"user_id"`
 	ID          string `json:"id"`
 }
 
 func (q *Queries) RecordFetchFailure(ctx context.Context, arg RecordFetchFailureParams) error {
-	_, err := q.db.ExecContext(ctx, recordFetchFailure, arg.NextFetchAt, arg.LastError, arg.ID)
+	_, err := q.db.ExecContext(ctx, recordFetchFailure,
+		arg.NextFetchAt,
+		arg.LastError,
+		arg.UserID,
+		arg.ID,
+	)
 	return err
 }
 
 const refundAI = `-- name: RefundAI :exec
-UPDATE news_ai_usage SET calls=calls-1 WHERE day=? AND calls>0
+UPDATE news_ai_usage SET calls=calls-1 WHERE user_id=?1 AND day=?2 AND calls>0
 `
 
-func (q *Queries) RefundAI(ctx context.Context, day string) error {
-	_, err := q.db.ExecContext(ctx, refundAI, day)
+type RefundAIParams struct {
+	UserID string `json:"user_id"`
+	Day    string `json:"day"`
+}
+
+func (q *Queries) RefundAI(ctx context.Context, arg RefundAIParams) error {
+	_, err := q.db.ExecContext(ctx, refundAI, arg.UserID, arg.Day)
 	return err
 }
 
 const reserveAI = `-- name: ReserveAI :one
-INSERT INTO news_ai_usage(day,calls) VALUES(?,1)
-ON CONFLICT(day) DO UPDATE SET calls=news_ai_usage.calls+1 RETURNING calls
+INSERT INTO news_ai_usage(user_id,day,calls) VALUES(?1,?2,1)
+ON CONFLICT(user_id,day) DO UPDATE SET calls=news_ai_usage.calls+1 RETURNING calls
 `
 
-func (q *Queries) ReserveAI(ctx context.Context, day string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, reserveAI, day)
+type ReserveAIParams struct {
+	UserID string `json:"user_id"`
+	Day    string `json:"day"`
+}
+
+func (q *Queries) ReserveAI(ctx context.Context, arg ReserveAIParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, reserveAI, arg.UserID, arg.Day)
 	var calls int64
 	err := row.Scan(&calls)
 	return calls, err
 }
 
 const resetArticleAI = `-- name: ResetArticleAI :exec
-UPDATE news_articles SET ai_status='none',ai_cache_key='',translated_title='',translated_content='',summary='',ai_error=''
+UPDATE news_articles SET ai_status='none',ai_cache_key='',translated_title='',translated_content='',summary='',ai_error='' WHERE user_id=?1
 `
 
-func (q *Queries) ResetArticleAI(ctx context.Context) error {
-	_, err := q.db.ExecContext(ctx, resetArticleAI)
+func (q *Queries) ResetArticleAI(ctx context.Context, userID string) error {
+	_, err := q.db.ExecContext(ctx, resetArticleAI, userID)
 	return err
 }
 
 const saveOrigin = `-- name: SaveOrigin :exec
-INSERT INTO news_origins(source_id,item_key,article_id,source_name,url) VALUES(?,?,?,?,?)
-ON CONFLICT(source_id,item_key) DO UPDATE SET source_name=excluded.source_name,url=excluded.url,article_id=excluded.article_id
+INSERT INTO news_origins(user_id,source_id,item_key,article_id,source_name,url) VALUES(?1,?2,?3,?4,?5,?6)
+ON CONFLICT(user_id,source_id,item_key) DO UPDATE SET source_name=excluded.source_name,url=excluded.url,article_id=excluded.article_id
 `
 
 type SaveOriginParams struct {
+	UserID     string `json:"user_id"`
 	SourceID   string `json:"source_id"`
 	ItemKey    string `json:"item_key"`
 	ArticleID  string `json:"article_id"`
@@ -886,6 +1027,7 @@ type SaveOriginParams struct {
 
 func (q *Queries) SaveOrigin(ctx context.Context, arg SaveOriginParams) error {
 	_, err := q.db.ExecContext(ctx, saveOrigin,
+		arg.UserID,
 		arg.SourceID,
 		arg.ItemKey,
 		arg.ArticleID,
@@ -896,12 +1038,13 @@ func (q *Queries) SaveOrigin(ctx context.Context, arg SaveOriginParams) error {
 }
 
 const saveRule = `-- name: SaveRule :exec
-INSERT INTO news_rules(id,name,include_json,exclude_json,sources_json,topic,enabled)
-VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,include_json=excluded.include_json,
+INSERT INTO news_rules(user_id,id,name,include_json,exclude_json,sources_json,topic,enabled)
+VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(user_id,id) DO UPDATE SET name=excluded.name,include_json=excluded.include_json,
 exclude_json=excluded.exclude_json,sources_json=excluded.sources_json,topic=excluded.topic,enabled=excluded.enabled
 `
 
 type SaveRuleParams struct {
+	UserID      string `json:"user_id"`
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	IncludeJson string `json:"include_json"`
@@ -913,6 +1056,7 @@ type SaveRuleParams struct {
 
 func (q *Queries) SaveRule(ctx context.Context, arg SaveRuleParams) error {
 	_, err := q.db.ExecContext(ctx, saveRule,
+		arg.UserID,
 		arg.ID,
 		arg.Name,
 		arg.IncludeJson,
@@ -925,17 +1069,22 @@ func (q *Queries) SaveRule(ctx context.Context, arg SaveRuleParams) error {
 }
 
 const saveSettings = `-- name: SaveSettings :exec
-UPDATE news_settings SET settings_json=? WHERE id=1
+UPDATE news_settings SET settings_json=?1 WHERE user_id=?2
 `
 
-func (q *Queries) SaveSettings(ctx context.Context, settingsJson string) error {
-	_, err := q.db.ExecContext(ctx, saveSettings, settingsJson)
+type SaveSettingsParams struct {
+	SettingsJson string `json:"settings_json"`
+	UserID       string `json:"user_id"`
+}
+
+func (q *Queries) SaveSettings(ctx context.Context, arg SaveSettingsParams) error {
+	_, err := q.db.ExecContext(ctx, saveSettings, arg.SettingsJson, arg.UserID)
 	return err
 }
 
 const saveSource = `-- name: SaveSource :exec
-INSERT INTO news_sources(id,name,kind,url,query,topic,enabled,interval_minutes)
-VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+INSERT INTO news_sources(user_id,id,name,kind,url,query,topic,enabled,interval_minutes)
+VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(user_id,id) DO UPDATE SET
  name=excluded.name,kind=excluded.kind,url=excluded.url,query=excluded.query,topic=excluded.topic,
  enabled=excluded.enabled,interval_minutes=excluded.interval_minutes,
  etag=CASE WHEN news_sources.url=excluded.url THEN news_sources.etag ELSE '' END,
@@ -944,6 +1093,7 @@ VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
 `
 
 type SaveSourceParams struct {
+	UserID          string `json:"user_id"`
 	ID              string `json:"id"`
 	Name            string `json:"name"`
 	Kind            string `json:"kind"`
@@ -956,6 +1106,7 @@ type SaveSourceParams struct {
 
 func (q *Queries) SaveSource(ctx context.Context, arg SaveSourceParams) error {
 	_, err := q.db.ExecContext(ctx, saveSource,
+		arg.UserID,
 		arg.ID,
 		arg.Name,
 		arg.Kind,
@@ -969,106 +1120,131 @@ func (q *Queries) SaveSource(ctx context.Context, arg SaveSourceParams) error {
 }
 
 const setArticleMatch = `-- name: SetArticleMatch :exec
-UPDATE news_articles SET topic=?,matched=? WHERE id=?
+UPDATE news_articles SET topic=?1,matched=?2 WHERE user_id=?3 AND id=?4
 `
 
 type SetArticleMatchParams struct {
 	Topic   string `json:"topic"`
 	Matched int64  `json:"matched"`
+	UserID  string `json:"user_id"`
 	ID      string `json:"id"`
 }
 
 func (q *Queries) SetArticleMatch(ctx context.Context, arg SetArticleMatchParams) error {
-	_, err := q.db.ExecContext(ctx, setArticleMatch, arg.Topic, arg.Matched, arg.ID)
+	_, err := q.db.ExecContext(ctx, setArticleMatch,
+		arg.Topic,
+		arg.Matched,
+		arg.UserID,
+		arg.ID,
+	)
 	return err
 }
 
 const setArticleRead = `-- name: SetArticleRead :exec
-UPDATE news_articles SET is_read=? WHERE id=?
+UPDATE news_articles SET is_read=?1 WHERE user_id=?2 AND id=?3
 `
 
 type SetArticleReadParams struct {
 	IsRead int64  `json:"is_read"`
+	UserID string `json:"user_id"`
 	ID     string `json:"id"`
 }
 
 func (q *Queries) SetArticleRead(ctx context.Context, arg SetArticleReadParams) error {
-	_, err := q.db.ExecContext(ctx, setArticleRead, arg.IsRead, arg.ID)
+	_, err := q.db.ExecContext(ctx, setArticleRead, arg.IsRead, arg.UserID, arg.ID)
 	return err
 }
 
 const setArticleStarred = `-- name: SetArticleStarred :exec
-UPDATE news_articles SET starred=? WHERE id=?
+UPDATE news_articles SET starred=?1 WHERE user_id=?2 AND id=?3
 `
 
 type SetArticleStarredParams struct {
 	Starred int64  `json:"starred"`
+	UserID  string `json:"user_id"`
 	ID      string `json:"id"`
 }
 
 func (q *Queries) SetArticleStarred(ctx context.Context, arg SetArticleStarredParams) error {
-	_, err := q.db.ExecContext(ctx, setArticleStarred, arg.Starred, arg.ID)
+	_, err := q.db.ExecContext(ctx, setArticleStarred, arg.Starred, arg.UserID, arg.ID)
 	return err
 }
 
 const setDigestAttempt = `-- name: SetDigestAttempt :exec
-UPDATE news_settings SET last_digest_attempt_at=? WHERE id=1
+UPDATE news_settings SET last_digest_attempt_at=?1 WHERE user_id=?2
 `
 
-func (q *Queries) SetDigestAttempt(ctx context.Context, lastDigestAttemptAt int64) error {
-	_, err := q.db.ExecContext(ctx, setDigestAttempt, lastDigestAttemptAt)
+type SetDigestAttemptParams struct {
+	LastDigestAttemptAt int64  `json:"last_digest_attempt_at"`
+	UserID              string `json:"user_id"`
+}
+
+func (q *Queries) SetDigestAttempt(ctx context.Context, arg SetDigestAttemptParams) error {
+	_, err := q.db.ExecContext(ctx, setDigestAttempt, arg.LastDigestAttemptAt, arg.UserID)
 	return err
 }
 
 const setDigestError = `-- name: SetDigestError :exec
-UPDATE news_settings SET last_digest_error=? WHERE id=1
+UPDATE news_settings SET last_digest_error=?1 WHERE user_id=?2
 `
 
-func (q *Queries) SetDigestError(ctx context.Context, lastDigestError string) error {
-	_, err := q.db.ExecContext(ctx, setDigestError, lastDigestError)
+type SetDigestErrorParams struct {
+	LastDigestError string `json:"last_digest_error"`
+	UserID          string `json:"user_id"`
+}
+
+func (q *Queries) SetDigestError(ctx context.Context, arg SetDigestErrorParams) error {
+	_, err := q.db.ExecContext(ctx, setDigestError, arg.LastDigestError, arg.UserID)
 	return err
 }
 
 const setDigestNotification = `-- name: SetDigestNotification :exec
-UPDATE news_digests SET notification_id=? WHERE id=?
+UPDATE news_digests SET notification_id=?1 WHERE user_id=?2 AND id=?3
 `
 
 type SetDigestNotificationParams struct {
 	NotificationID string `json:"notification_id"`
+	UserID         string `json:"user_id"`
 	ID             string `json:"id"`
 }
 
 func (q *Queries) SetDigestNotification(ctx context.Context, arg SetDigestNotificationParams) error {
-	_, err := q.db.ExecContext(ctx, setDigestNotification, arg.NotificationID, arg.ID)
+	_, err := q.db.ExecContext(ctx, setDigestNotification, arg.NotificationID, arg.UserID, arg.ID)
 	return err
 }
 
 const setDigestSuccess = `-- name: SetDigestSuccess :exec
-UPDATE news_settings SET last_digest_at=?,last_digest_error='' WHERE id=1
+UPDATE news_settings SET last_digest_at=?1,last_digest_error='' WHERE user_id=?2
 `
 
-func (q *Queries) SetDigestSuccess(ctx context.Context, lastDigestAt int64) error {
-	_, err := q.db.ExecContext(ctx, setDigestSuccess, lastDigestAt)
+type SetDigestSuccessParams struct {
+	LastDigestAt int64  `json:"last_digest_at"`
+	UserID       string `json:"user_id"`
+}
+
+func (q *Queries) SetDigestSuccess(ctx context.Context, arg SetDigestSuccessParams) error {
+	_, err := q.db.ExecContext(ctx, setDigestSuccess, arg.LastDigestAt, arg.UserID)
 	return err
 }
 
 const startArticleAI = `-- name: StartArticleAI :exec
-UPDATE news_articles SET ai_status='running',ai_error='',ai_attempted_at=? WHERE id=?
+UPDATE news_articles SET ai_status='running',ai_error='',ai_attempted_at=?1 WHERE user_id=?2 AND id=?3
 `
 
 type StartArticleAIParams struct {
 	AiAttemptedAt int64  `json:"ai_attempted_at"`
+	UserID        string `json:"user_id"`
 	ID            string `json:"id"`
 }
 
 func (q *Queries) StartArticleAI(ctx context.Context, arg StartArticleAIParams) error {
-	_, err := q.db.ExecContext(ctx, startArticleAI, arg.AiAttemptedAt, arg.ID)
+	_, err := q.db.ExecContext(ctx, startArticleAI, arg.AiAttemptedAt, arg.UserID, arg.ID)
 	return err
 }
 
 const updateArticleText = `-- name: UpdateArticleText :exec
-UPDATE news_articles SET title=?,content=?,language=?,url=?,ai_status='none',ai_cache_key='',ai_error='',
-translated_title='',translated_content='',summary='' WHERE id=?
+UPDATE news_articles SET title=?1,content=?2,language=?3,url=?4,ai_status='none',ai_cache_key='',ai_error='',
+translated_title='',translated_content='',summary='' WHERE user_id=?5 AND id=?6
 `
 
 type UpdateArticleTextParams struct {
@@ -1076,6 +1252,7 @@ type UpdateArticleTextParams struct {
 	Content  string `json:"content"`
 	Language string `json:"language"`
 	Url      string `json:"url"`
+	UserID   string `json:"user_id"`
 	ID       string `json:"id"`
 }
 
@@ -1085,6 +1262,7 @@ func (q *Queries) UpdateArticleText(ctx context.Context, arg UpdateArticleTextPa
 		arg.Content,
 		arg.Language,
 		arg.Url,
+		arg.UserID,
 		arg.ID,
 	)
 	return err

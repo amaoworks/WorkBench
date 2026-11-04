@@ -157,7 +157,8 @@ func TestFrontendContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	expires := time.Now().Add(time.Hour)
-	note, err := service.Create(context.Background(), contracts.NewNotification{
+	ownerCtx := contracts.WithPrincipal(context.Background(), contracts.Principal{UserID: contracts.LegacyUserID, Role: contracts.RoleAdmin})
+	note, err := service.Create(ownerCtx, contracts.NewNotification{
 		SourceModule: "todo", Severity: contracts.NotificationInfo, Title: "Fixture", Content: "Contract notification",
 		ActionLabel: "Open", ActionRoute: "/todo", IdempotencyKey: "contract-fixture", ExpiresAt: &expires,
 	})
@@ -165,7 +166,7 @@ func TestFrontendContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	capture("notifications.populated", "notifications", "GET", "/api/notifications", "", 200)
-	if _, err := service.Create(context.Background(), contracts.NewNotification{
+	if _, err := service.Create(ownerCtx, contracts.NewNotification{
 		SourceModule: "news", Severity: contracts.NotificationInfo, Title: "News fixture", Content: "News contract",
 		IdempotencyKey: "news-contract-fixture",
 	}); err != nil {
@@ -173,7 +174,7 @@ func TestFrontendContracts(t *testing.T) {
 	}
 	capture("notifications.filtered", "notifications", "GET", "/api/notifications?source=todo&unread=true&limit=1", "", 200)
 	capture("notifications.source-count", "unreadCount", "GET", "/api/notifications/unread-count?source=news", "", 200)
-	if err := service.MarkRead(context.Background(), []string{note.ID}); err != nil {
+	if err := service.MarkRead(ownerCtx, []string{note.ID}); err != nil {
 		t.Fatal(err)
 	}
 	capture("notifications.read", "notifications", "GET", "/api/notifications", "", 200)
@@ -205,6 +206,39 @@ func TestFrontendContracts(t *testing.T) {
 	capture("module.lifecycle.failed", "module", "GET", "/api/modules/fixture/status", "", 200)
 	fixture.fail = false
 	capture("module.lifecycle.retry", "module", "PUT", "/api/modules/fixture/enabled", `{"enabled":true}`, 200)
+
+	// Exercise user-management and ordinary-user responses through real password authentication.
+	passwordApp := newMultiUserApp(t)
+	handler = passwordApp.Handler()
+	token, cookies = csrf(t, handler)
+	capture("auth.login", "loginResponse", "POST", "/api/auth/login", `{"username":"admin","password":"Adminpass1!"}`, 200)
+	admin := loginUser(t, passwordApp, "admin", "Adminpass1!")
+	token, cookies = admin.token, admin.cookies
+	createdUser := capture("users.created", "createdUser", "POST", "/api/admin/users", `{"username":"contract-user","displayName":"Contract user","role":"user","password":"Contract-User-123!"}`, 201)
+	var managed struct {
+		User struct {
+			ID string `json:"id"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(createdUser, &managed); err != nil || managed.User.ID == "" {
+		t.Fatalf("invalid created user fixture: %s", createdUser)
+	}
+	capture("users.list", "managedUsers", "GET", "/api/admin/users", "", 200)
+	capture("users.updated", "updatedUser", "PATCH", "/api/admin/users/"+managed.User.ID, `{"displayName":"Updated contract user"}`, 200)
+	capture("users.password", "resetUserPassword", "POST", "/api/admin/users/"+managed.User.ID+"/password", `{"password":"Contract-User-123!"}`, 200)
+	capture("telegram.mapping.saved", "saved", "PUT", "/api/settings/telegram/recipients/"+managed.User.ID, `{"enabled":false,"chatId":"12345"}`, 200)
+	capture("telegram.mapping", "telegramRecipient", "GET", "/api/settings/telegram/recipients/"+managed.User.ID, "", 200)
+	if _, err := passwordApp.DB().Exec("UPDATE auth_users SET must_change_password=0 WHERE id=?", managed.User.ID); err != nil {
+		t.Fatal(err)
+	}
+	ordinary := loginUser(t, passwordApp, "contract-user", "Contract-User-123!")
+	token, cookies = ordinary.token, ordinary.cookies
+	capture("auth.ordinary", "authStatus", "GET", "/api/auth/status", "", 200)
+	capture("settings.ordinary", "settings", "GET", "/api/settings", "", 200)
+	capture("schwab.ordinary", "schwab", "GET", "/api/modules/investment/schwab", "", 200)
+	capture("telegram.recipient", "telegramRecipient", "GET", "/api/settings/telegram/recipient", "", 200)
+	capture("telegram.recipient.saved", "saved", "PUT", "/api/settings/telegram/recipient", `{"enabled":false}`, 200)
+	capture("users.forbidden", "error", "GET", "/api/admin/users", "", 403)
 	if output := os.Getenv("WORKBENCH_CONTRACT_OUTPUT"); output != "" {
 		raw, err := json.Marshal(samples)
 		if err != nil {

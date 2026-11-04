@@ -63,7 +63,7 @@ func TestSchwabOAuthBrowser(t *testing.T) {
 	module.schwabAPI = strings.Replace(upstream.URL, "127.0.0.1", "localhost", 1)
 
 	seedSchwab(t, module, schwabRecord{AppKey: "browser-key", AppSecret: "browser-secret", CallbackURL: baseURL + "/oauth/schwab"})
-	service, err := auth.New(context.Background(), module.deps.DB, auth.Config{
+	service, err := auth.New(testContext(context.Background()), module.deps.DB, auth.Config{
 		Mode: auth.ModePassword, ListenAddress: server.Listener.Addr().String(), PublicHTTPS: true, InitialPassword: "Browser-Test-123",
 	})
 	if err != nil {
@@ -100,7 +100,7 @@ func TestSchwabOAuthBrowser(t *testing.T) {
 	server.StartTLS()
 	defer server.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(testContext(context.Background()), 60*time.Second)
 	defer cancel()
 	script, err := filepath.Abs("../../../scripts/schwab-oauth.e2e.cjs")
 	if err != nil {
@@ -116,7 +116,7 @@ func TestSchwabOAuthBrowser(t *testing.T) {
 	if callbackHadSession.Load() {
 		t.Error("test did not exercise a cross-site callback without the Strict session cookie")
 	}
-	stored, err := module.loadSchwab(context.Background())
+	stored, err := module.loadSchwab(testContext(context.Background()))
 	if err != nil || stored.AccessToken != "browser-access" || stored.RefreshToken != "browser-refresh" || stored.OAuthState != "" || exchanges.Load() != 1 {
 		t.Error("OAuth must persist tokens and consume the state with exactly one token exchange")
 	}

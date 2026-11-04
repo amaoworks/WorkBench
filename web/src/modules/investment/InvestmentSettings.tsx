@@ -6,6 +6,7 @@ import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { Notice } from "../../components/ui/Notice";
 import { Skeleton } from "../../components/ui/States";
 import { useReportDirty, useSettingsDialog } from "../../shared/settingsDialog";
+import { useIsAdmin } from "../../shared/auth";
 import { SchwabSection, type SchwabDraft } from "./SchwabSettings";
 import { FutuSection, type FutuDraft } from "./FutuSettings";
 import { OvernightSection } from "./OvernightSettings";
@@ -26,11 +27,12 @@ const SAVED_MESSAGES: Record<Section, string> = { schwab: "Schwab 设置已保�
 const SECTION_NAMES: Record<Section, string> = { schwab: "Charles Schwab", futu: "富途牛牛行情", overnight: "夜盘行情" };
 
 export default function InvestmentSettings({ enabled }: { enabled: boolean }) {
+  const isAdmin = useIsAdmin();
   const schwab = useSchwabSettings(enabled);
-  const futu = useFutuSettings(enabled);
+  const futu = useFutuSettings(enabled && isAdmin);
   const overnight = useOvernightSettings(enabled);
   if (!enabled) return <Notice title="投资业务已停用">启用后可配置 Charles Schwab。</Notice>;
-  if (schwab.isPending || futu.isPending || overnight.isPending) return <Skeleton className="h-64" />;
+  if (schwab.isPending || (isAdmin && futu.isPending) || overnight.isPending) return <Skeleton className="h-64" />;
   return <InvestmentSettingsForm schwab={schwab} futu={futu} overnight={overnight} />;
 }
 
@@ -43,6 +45,7 @@ function InvestmentSettingsForm({
   futu: ReturnType<typeof useFutuSettings>;
   overnight: ReturnType<typeof useOvernightSettings>;
 }) {
+  const isAdmin = useIsAdmin();
   const dialog = useSettingsDialog();
   const refresh = useRefreshInvestment();
   // A null draft means "unchanged": the section follows the latest server data.
@@ -137,7 +140,7 @@ function InvestmentSettingsForm({
             />
           )
         )}
-        {futu.isError ? (
+        {isAdmin && (futu.isError ? (
           <Notice tone="danger" title="富途牛牛设置读取失败">
             {futu.error.message}
           </Notice>
@@ -153,8 +156,8 @@ function InvestmentSettingsForm({
               onCleared={() => setFutuDraft(null)}
             />
           )
-        )}
-        {overnight.isError ? (
+        ))}
+        {isAdmin && (overnight.isError ? (
           <Notice tone="danger" title="夜盘设置读取失败">
             {overnight.error.message}
           </Notice>
@@ -167,6 +170,14 @@ function InvestmentSettingsForm({
               error={errors.overnight}
             />
           )
+        ))}
+        {!isAdmin && overnight.data && (
+          <div className="flex items-center justify-between gap-3 text-sm">
+            <span>共享夜盘行情</span>
+            <Badge tone={overnight.data.enabled && overnight.data.providerEnabled ? "info" : "neutral"}>
+              {overnight.data.enabled && overnight.data.providerEnabled ? "已开放" : "未开放"}
+            </Badge>
+          </div>
         )}
       </fieldset>
       <div className="settings-dialog-footer">
@@ -176,9 +187,11 @@ function InvestmentSettingsForm({
             取消
           </Button>
         )}
-        <Button ref={saveButton} type="submit" disabled={!dirty || saving}>
-          {saving ? "保存中…" : "保存"}
-        </Button>
+        {isAdmin && (
+          <Button ref={saveButton} type="submit" disabled={!dirty || saving}>
+            {saving ? "保存中…" : "保存"}
+          </Button>
+        )}
       </div>
       <ConfirmDialog
         open={confirmDisable}

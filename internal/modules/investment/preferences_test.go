@@ -14,7 +14,7 @@ func putPreference(t *testing.T, m *Module, name string, revision, sequence int6
 	t.Helper()
 	body := fmt.Sprintf(`{"name":%q,"revision":%d,"writer":%q,"sequence":%d,"value":%s}`, name, revision, writer, sequence, value)
 	response := httptest.NewRecorder()
-	m.savePreference(response, httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)))
+	m.savePreference(response, testRequest(http.MethodPut, "/", strings.NewReader(body)))
 	if response.Code != want || response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("save %s: %d %s", name, response.Code, response.Body.String())
 	}
@@ -28,7 +28,7 @@ func putPreference(t *testing.T, m *Module, name string, revision, sequence int6
 func readPreferences(t *testing.T, m *Module) preferencesView {
 	t.Helper()
 	response := httptest.NewRecorder()
-	m.getPreferences(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	m.getPreferences(response, testRequest(http.MethodGet, "/", nil))
 	var view preferencesView
 	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" || json.Unmarshal(response.Body.Bytes(), &view) != nil {
 		t.Fatalf("read: %d %s", response.Code, response.Body.String())
@@ -74,7 +74,7 @@ func TestPreferencesReadCanExcludeLegacyLayout(t *testing.T) {
 	putPreference(t, m, "layout", 0, 1, "legacy", layout, http.StatusOK)
 	putPreference(t, m, "account", 0, 1, "tab", `"account-hash"`, http.StatusOK)
 	response := httptest.NewRecorder()
-	m.getPreferences(response, httptest.NewRequest(http.MethodGet, "/?includeLayout=false", nil))
+	m.getPreferences(response, testRequest(http.MethodGet, "/?includeLayout=false", nil))
 	var view preferencesView
 	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &view) != nil {
 		t.Fatalf("filtered read: %d %s", response.Code, response.Body.String())
@@ -149,14 +149,14 @@ func TestPreferencesRejectInvalidInput(t *testing.T) {
 	}
 	for i, body := range cases {
 		response := httptest.NewRecorder()
-		m.savePreference(response, httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)))
+		m.savePreference(response, testRequest(http.MethodPut, "/", strings.NewReader(body)))
 		if response.Code != http.StatusBadRequest {
 			t.Fatalf("case %d: %d %s", i, response.Code, response.Body.String())
 		}
 	}
 	oversized := fmt.Sprintf(`{"name":"layout","revision":0,"writer":"w","sequence":1,"value":{"charts":[{}],"opaque":%q}}`, strings.Repeat("x", maxPreferenceRequest))
 	response := httptest.NewRecorder()
-	m.savePreference(response, httptest.NewRequest(http.MethodPut, "/", strings.NewReader(oversized)))
+	m.savePreference(response, testRequest(http.MethodPut, "/", strings.NewReader(oversized)))
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("oversized request: %d %s", response.Code, response.Body.String())
 	}

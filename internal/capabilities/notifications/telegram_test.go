@@ -30,6 +30,10 @@ func setupTelegram(t *testing.T) (*Telegram, *Service, *time.Time) {
 	service.now = func() time.Time { return now }
 	channel := NewTelegram(db.SQL(), "https://workbench.example", func(contracts.ModuleID) bool { return true }, nil)
 	channel.now = func() time.Time { return now }
+	channel.SetUserDirectory(activeUsers{})
+	if _, err := channel.db.Exec(`INSERT INTO telegram_recipients(user_id,enabled,chat_id,activated_at,bot_generation) VALUES('owner',1,'-100123',?,0)`, now.Add(-24*time.Hour).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
 	if err := channel.save(context.Background(), "telegram", telegramConfig{Enabled: true, BotToken: "123:private-token", ChatID: "-100123", ActivatedAt: now.Add(-time.Minute).UnixMilli()}); err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +41,7 @@ func setupTelegram(t *testing.T) (*Telegram, *Service, *time.Time) {
 }
 
 func telegramNotice(now time.Time) contracts.Notification {
-	return contracts.Notification{SourceModule: "investment", External: true, Title: "AAPL 上涨达到 3%", Content: "最新价：103 USD", CreatedAt: now,
+	return contracts.Notification{RecipientID: contracts.LegacyUserID, SourceModule: "investment", External: true, Title: "AAPL 上涨达到 3%", Content: "最新价：103 USD", CreatedAt: now,
 		ActionRoute: "/investment?tab=monitor", IdempotencyKey: "investment:monitor:rule:2026-09-22"}
 }
 
@@ -80,7 +84,7 @@ func TestTelegramPlaintextRoutingAndNoSecretExposure(t *testing.T) {
 		t.Fatal("forwarded unselected notifications", calls)
 	}
 	w := httptest.NewRecorder()
-	channel.Settings(w, httptest.NewRequest("GET", "/", nil))
+	channel.Settings(w, httptest.NewRequest("GET", "/", nil).WithContext(testContext()))
 	if strings.Contains(w.Body.String(), "private-token") || w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal("settings leaked or cached credentials")
 	}
@@ -88,7 +92,7 @@ func TestTelegramPlaintextRoutingAndNoSecretExposure(t *testing.T) {
 
 func TestTelegramDurableRetryAcrossChannelRestart(t *testing.T) {
 	channel, service, now := setupTelegram(t)
-	_, err := service.Create(context.Background(), contracts.NewNotification{SourceModule: "investment", External: true, Severity: contracts.NotificationWarning, Title: "Price alert", Content: "AAPL", IdempotencyKey: "investment:monitor:rule:day"})
+	_, err := service.Create(testContext(), contracts.NewNotification{SourceModule: "investment", External: true, Severity: contracts.NotificationWarning, Title: "Price alert", Content: "AAPL", IdempotencyKey: "investment:monitor:rule:day"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,6 +110,7 @@ func TestTelegramDurableRetryAcrossChannelRestart(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		dispatcher.SetUserDirectory(activeUsers{})
 		if err := dispatcher.DispatchOnce(context.Background()); err != nil {
 			t.Fatal(err)
 		}
@@ -121,6 +126,7 @@ func TestTelegramDurableRetryAcrossChannelRestart(t *testing.T) {
 	*now = now.Add(5 * time.Second)
 	restarted := NewTelegram(channel.db, channel.publicURL, nil, nil)
 	restarted.now = channel.now
+	restarted.SetUserDirectory(activeUsers{})
 	restarted.client.Transport = transport
 	run(restarted)
 	run(restarted)
@@ -140,7 +146,7 @@ func TestTelegramRateLimitIsolatedBetweenBotsAndTestDoesNotSave(t *testing.T) {
 		return telegramResponse(200, `{"ok":true}`), nil
 	})
 	w := httptest.NewRecorder()
-	channel.TestSettings(w, httptest.NewRequest("POST", "/", strings.NewReader(`{"enabled":true,"botToken":"456:unsaved-token","chatId":"12345"}`)))
+	channel.TestSettings(w, httptest.NewRequest("POST", "/", strings.NewReader(`{"enabled":true,"botToken":"456:unsaved-token","chatId":"12345"}`)).WithContext(testContext()))
 	if w.Code != 502 {
 		t.Fatal(w.Code, w.Body.String())
 	}
@@ -161,7 +167,7 @@ func TestTelegramRateLimitIsolatedBetweenBotsAndTestDoesNotSave(t *testing.T) {
 
 func TestTelegramExpiredRetryStopsAsFailure(t *testing.T) {
 	channel, service, now := setupTelegram(t)
-	_, err := service.Create(context.Background(), contracts.NewNotification{SourceModule: "investment", External: true, Severity: contracts.NotificationWarning, Title: "Price alert", Content: "AAPL", IdempotencyKey: "investment:monitor:rule:day"})
+	_, err := service.Create(testContext(), contracts.NewNotification{SourceModule: "investment", External: true, Severity: contracts.NotificationWarning, Title: "Price alert", Content: "AAPL", IdempotencyKey: "investment:monitor:rule:day"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,6 +180,7 @@ func TestTelegramExpiredRetryStopsAsFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dispatcher.SetUserDirectory(activeUsers{})
 	if err := dispatcher.DispatchOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +197,7 @@ func TestTelegramExpiredRetryStopsAsFailure(t *testing.T) {
 
 func TestTelegramStatusFailureDoesNotResendSuccess(t *testing.T) {
 	channel, _, now := setupTelegram(t)
-	_, err := channel.db.Exec(`CREATE TRIGGER reject_telegram_status BEFORE INSERT ON workspace_settings WHEN NEW.section='telegram_status' BEGIN SELECT RAISE(FAIL,'status fixture failure'); END`)
+	_, err := channel.db.Exec(`CREATE TRIGGER reject_telegram_status BEFORE UPDATE OF status_json ON telegram_recipients WHEN NEW.user_id='owner' BEGIN SELECT RAISE(FAIL,'status fixture failure'); END`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +211,7 @@ func TestTelegramSettingsRetentionClearAndActivation(t *testing.T) {
 	channel, _, now := setupTelegram(t)
 	put := func(body string, want int) {
 		w := httptest.NewRecorder()
-		channel.SaveSettings(w, httptest.NewRequest("PUT", "/", strings.NewReader(body)))
+		channel.SaveSettings(w, httptest.NewRequest("PUT", "/", strings.NewReader(body)).WithContext(testContext()))
 		if w.Code != want {
 			t.Fatalf("settings %d: %s", w.Code, w.Body.String())
 		}
@@ -274,7 +281,7 @@ func TestTelegramExternalNotificationUsesExplicitExpiry(t *testing.T) {
 		return telegramResponse(200, `{"ok":true}`), nil
 	})
 	expiresAt := now.Add(time.Hour)
-	note := contracts.Notification{SourceModule: "news", External: true, Title: "今日资讯", Content: "摘要", CreatedAt: now.Add(-23 * time.Hour), ExpiresAt: &expiresAt}
+	note := contracts.Notification{RecipientID: contracts.LegacyUserID, SourceModule: "news", External: true, Title: "今日资讯", Content: "摘要", CreatedAt: now.Add(-23 * time.Hour), ExpiresAt: &expiresAt}
 	if err := channel.Deliver(context.Background(), note); err != nil {
 		t.Fatal(err)
 	}

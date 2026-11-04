@@ -151,7 +151,7 @@ func TestInvestmentCredentialsSurviveDisableAndRestart(t *testing.T) {
 
 // Simulate an older workspace that has only Todo, then install the second compiled business.
 func TestUpgradeTodoOnlyWorkspacePreservesDataAndAddsDefaultWidget(t *testing.T) {
-	ctx := context.Background()
+	ctx := contracts.WithPrincipal(context.Background(), contracts.Principal{UserID: contracts.LegacyUserID, Role: contracts.RoleAdmin})
 	path := filepath.Join(t.TempDir(), "data.db")
 	db, err := workbenchdb.Open(ctx, workbenchdb.Config{Path: path})
 	if err != nil {
@@ -181,7 +181,7 @@ func TestUpgradeTodoOnlyWorkspacePreservesDataAndAddsDefaultWidget(t *testing.T)
 	if _, err := module.Create(ctx, todo.CreateTask{Title: "Old workspace task"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.SQL().Exec(`INSERT INTO workspace_settings(section,value) VALUES('dashboard','[{"id":"todo.summary","visible":true,"size":"small","order":9},{"id":"todo.today","visible":false,"size":"large","order":0}]')`); err != nil {
+	if _, err := db.SQL().Exec(`INSERT INTO user_settings(user_id,section,value) VALUES('owner','dashboard','[{"id":"todo.summary","visible":true,"size":"small","order":9},{"id":"todo.today","visible":false,"size":"large","order":0}]')`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {

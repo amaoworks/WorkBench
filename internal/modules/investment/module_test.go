@@ -11,7 +11,7 @@ import (
 )
 
 func TestRemovingDemoTablesPreservesExistingSchwabCredentials(t *testing.T) {
-	ctx := context.Background()
+	ctx := testContext(context.Background())
 	db, err := workbenchdb.Open(ctx, workbenchdb.Config{Path: filepath.Join(t.TempDir(), "data.db")})
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +82,7 @@ func TestRemovingDemoTablesPreservesExistingSchwabCredentials(t *testing.T) {
 }
 
 func TestOvernightMigrationPreservesExistingEnabledChoice(t *testing.T) {
-	ctx := context.Background()
+	ctx := testContext(context.Background())
 	db, err := workbenchdb.Open(ctx, workbenchdb.Config{Path: filepath.Join(t.TempDir(), "data.db")})
 	if err != nil {
 		t.Fatal(err)

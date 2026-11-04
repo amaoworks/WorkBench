@@ -2,13 +2,12 @@ import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as 
 import { Link, NavLink, useLocation } from "react-router-dom";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Aperture, ChevronDown, LogOut, Menu, Sparkles, UserRound, X } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { cn } from "../shared/cn";
 import { aiShortcut } from "../shared/keyboard";
 import { matchesLocation, settingsIcon, type NavEntry } from "./navigation";
-import { api, apiValidated } from "../shared/api";
-import { authStatusSchema } from "../shared/schema";
+import { api } from "../shared/api";
+import { useAuth } from "../shared/auth";
 import type { ModuleMenuItem } from "../modules/registry";
 
 export function TopNav({
@@ -229,8 +228,7 @@ function UserMenu() {
   useDismiss(open, root, close);
   const location = useLocation();
   const onSettings = location.pathname === "/settings";
-  // Same query as App, so this reads the cached status. Signing out only means something with a password.
-  const auth = useQuery({ queryKey: ["auth"], queryFn: () => apiValidated("/api/auth/status", authStatusSchema), staleTime: 60_000 });
+  const auth = useAuth();
   const [leaving, setLeaving] = useState(false);
   async function logout() {
     setLeaving(true);
@@ -254,7 +252,7 @@ function UserMenu() {
         ref={button}
         type="button"
         className={cn("workspace-avatar focus-ring", onSettings && "is-active")}
-        aria-label="账户菜单"
+        aria-label={`账户菜单 · ${auth.user?.displayName || auth.user?.username || "账户"}`}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? id : undefined}
@@ -277,7 +275,7 @@ function UserMenu() {
           onKeyDown={(event) => menuKeys(event, menu.current, closeAndFocus)}
         >
           <MenuLink item={{ label: "设置", to: "/settings", icon: settingsIcon }} active={onSettings} onSelect={() => setOpen(false)} />
-          {auth.data?.mode === "password" && (
+          {auth.mode === "password" && (
             <>
               <div className="workspace-menu-sep" role="separator" />
               <button

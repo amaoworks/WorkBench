@@ -58,7 +58,7 @@ func TestTVNightQuoteCompatFreshAndDiskCachedBundles(t *testing.T) {
 					}
 				}
 				get := func(version, etag string) *httptest.ResponseRecorder {
-					req := httptest.NewRequest(http.MethodGet, strings.Replace(assetPath, "/charting_library/", "/charting_library/"+version+"/", 1), nil)
+					req := testRequest(http.MethodGet, strings.Replace(assetPath, "/charting_library/", "/charting_library/"+version+"/", 1), nil)
 					req.Header.Set("Accept-Encoding", cacheEncoding)
 					req.Header.Set("If-None-Match", etag)
 					req.Header.Set("Range", "bytes=0-")

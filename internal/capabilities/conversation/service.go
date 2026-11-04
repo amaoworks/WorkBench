@@ -69,6 +69,7 @@ type messagePage struct {
 }
 
 type chatTurn struct {
+	userID         string
 	conversationID string
 	messageID      string
 	profile        string
@@ -85,6 +86,9 @@ func NewService(db *sql.DB, gateway *ai.Gateway) (*Service, error) {
 func (s *Service) Available() bool { return s.gateway.Available() }
 
 func (s *Service) Chat(ctx context.Context, request ChatRequest) (ChatResponse, error) {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return ChatResponse{}, err
+	}
 	if !s.Available() {
 		return ChatResponse{}, ai.ErrUnavailable
 	}
@@ -102,6 +106,10 @@ func (s *Service) Chat(ctx context.Context, request ChatRequest) (ChatResponse, 
 }
 
 func (s *Service) begin(ctx context.Context, request ChatRequest) (chatTurn, error) {
+	userID, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return chatTurn{}, err
+	}
 	request.Message = strings.TrimSpace(request.Message)
 	if request.Message == "" || len(request.Message) > 50_000 {
 		return chatTurn{}, fmt.Errorf("%w: message must contain 1 to 50000 bytes", ErrInvalidRequest)
@@ -147,10 +155,10 @@ func (s *Service) begin(ctx context.Context, request ChatRequest) (chatTurn, err
 			title = title[:60]
 		}
 		err = queries.InsertConversation(ctx, dbsqlc.InsertConversationParams{
-			ID: conversationID, Title: string(title), CreatedAt: now, UpdatedAt: now,
+			ID: conversationID, UserID: userID, Title: string(title), CreatedAt: now, UpdatedAt: now,
 		})
 	} else {
-		rows, updateErr := queries.TouchConversation(ctx, dbsqlc.TouchConversationParams{UpdatedAt: now, ID: conversationID})
+		rows, updateErr := queries.TouchConversation(ctx, dbsqlc.TouchConversationParams{UpdatedAt: now, ID: conversationID, UserID: userID})
 		if updateErr != nil {
 			return chatTurn{}, updateErr
 		}
@@ -161,11 +169,14 @@ func (s *Service) begin(ctx context.Context, request ChatRequest) (chatTurn, err
 	if err != nil {
 		return chatTurn{}, err
 	}
-	err = queries.InsertUserMessage(ctx, dbsqlc.InsertUserMessageParams{
-		ID: messageID, ConversationID: conversationID, ContentJson: string(content), CreatedAt: now,
+	inserted, err := queries.InsertUserMessage(ctx, dbsqlc.InsertUserMessageParams{
+		ID: messageID, ConversationID: conversationID, UserID: userID, ContentJson: string(content), CreatedAt: now,
 	})
 	if err != nil {
 		return chatTurn{}, err
+	}
+	if inserted != 1 {
+		return chatTurn{}, sql.ErrNoRows
 	}
 	if err := tx.Commit(); err != nil {
 		return chatTurn{}, err
@@ -176,7 +187,7 @@ func (s *Service) begin(ctx context.Context, request ChatRequest) (chatTurn, err
 		return chatTurn{}, err
 	}
 	messages = append([]contracts.AIMessage{contextMessage(pageContext, s.now().In(location), request.TimeZone)}, messages...)
-	return chatTurn{conversationID: conversationID, messageID: messageID, profile: request.Profile, messages: messages}, nil
+	return chatTurn{userID: userID, conversationID: conversationID, messageID: messageID, profile: request.Profile, messages: messages}, nil
 }
 
 func validatePageContext(value *PageContext) (*PageContext, error) {
@@ -207,6 +218,9 @@ func contextMessage(value *PageContext, now time.Time, timeZone string) contract
 }
 
 func (s *Service) stream(ctx context.Context, request ChatRequest) (chatTurn, contracts.AIStream, error) {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return chatTurn{}, nil, err
+	}
 	if !s.Available() {
 		return chatTurn{}, nil, ai.ErrUnavailable
 	}
@@ -224,17 +238,27 @@ func (s *Service) stream(ctx context.Context, request ChatRequest) (chatTurn, co
 }
 
 func (s *Service) complete(ctx context.Context, turn chatTurn, result contracts.GenerateResult) (ChatResponse, error) {
+	userID, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return ChatResponse{}, err
+	}
+	if turn.userID != userID {
+		return ChatResponse{}, sql.ErrNoRows
+	}
 	assistantID, err := identity.New()
 	if err != nil {
 		return ChatResponse{}, err
 	}
 	assistantContent, _ := json.Marshal(result.Text)
-	err = s.queries.InsertAssistantMessage(ctx, dbsqlc.InsertAssistantMessageParams{
-		ID: assistantID, ConversationID: turn.conversationID, ContentJson: string(assistantContent),
+	inserted, err := s.queries.InsertAssistantMessage(ctx, dbsqlc.InsertAssistantMessageParams{
+		ID: assistantID, ConversationID: turn.conversationID, UserID: userID, ContentJson: string(assistantContent),
 		Model: sql.NullString{String: turn.profile, Valid: true}, CreatedAt: s.now().UTC().UnixMilli(),
 	})
 	if err != nil {
 		return ChatResponse{}, fmt.Errorf("save assistant message: %w", err)
+	}
+	if inserted != 1 {
+		return ChatResponse{}, sql.ErrNoRows
 	}
 	return ChatResponse{
 		ConversationID: turn.conversationID, MessageID: assistantID, Text: result.Text, Usage: result.Usage,
@@ -243,8 +267,15 @@ func (s *Service) complete(ctx context.Context, turn chatTurn, result contracts.
 }
 
 func (s *Service) messages(ctx context.Context, conversationID string, limit int) ([]contracts.AIMessage, error) {
+	userID, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.queries.GetActiveConversation(ctx, dbsqlc.GetActiveConversationParams{ID: conversationID, UserID: userID}); err != nil {
+		return nil, err
+	}
 	rows, err := s.queries.ListRecentConversationMessages(ctx, dbsqlc.ListRecentConversationMessagesParams{
-		ConversationID: conversationID, Limit: int64(limit),
+		ConversationID: conversationID, UserID: userID, PageSize: int64(limit),
 	})
 	if err != nil {
 		return nil, err
@@ -257,8 +288,12 @@ func (s *Service) messages(ctx context.Context, conversationID string, limit int
 }
 
 func (s *Service) listConversations(ctx context.Context, limit int, cursor conversationCursor) (conversationPage, error) {
+	userID, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return conversationPage{}, err
+	}
 	rows, err := s.queries.ListConversations(ctx, dbsqlc.ListConversationsParams{
-		CursorID: cursor.ID, CursorUpdatedAt: cursor.Timestamp, PageSize: int64(limit + 1),
+		UserID: userID, CursorID: cursor.ID, CursorUpdatedAt: cursor.Timestamp, PageSize: int64(limit + 1),
 	})
 	if err != nil {
 		return conversationPage{}, err
@@ -282,11 +317,15 @@ func (s *Service) listConversations(ctx context.Context, limit int, cursor conve
 }
 
 func (s *Service) messagePage(ctx context.Context, conversationID string, limit int, cursor conversationCursor) (messagePage, error) {
-	if _, err := s.queries.GetActiveConversation(ctx, conversationID); err != nil {
+	userID, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return messagePage{}, err
+	}
+	if _, err := s.queries.GetActiveConversation(ctx, dbsqlc.GetActiveConversationParams{ID: conversationID, UserID: userID}); err != nil {
 		return messagePage{}, err
 	}
 	rows, err := s.queries.ListConversationMessagesPage(ctx, dbsqlc.ListConversationMessagesPageParams{
-		ConversationID: conversationID, CursorID: cursor.ID, CursorCreatedAt: cursor.Timestamp, PageSize: int64(limit + 1),
+		ConversationID: conversationID, UserID: userID, CursorID: cursor.ID, CursorCreatedAt: cursor.Timestamp, PageSize: int64(limit + 1),
 	})
 	if err != nil {
 		return messagePage{}, err
@@ -305,12 +344,16 @@ func (s *Service) messagePage(ctx context.Context, conversationID string, limit 
 }
 
 func (s *Service) rename(ctx context.Context, conversationID, title string) error {
+	userID, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return err
+	}
 	title = strings.TrimSpace(title)
 	if title == "" || len([]rune(title)) > 120 {
 		return fmt.Errorf("%w: title must contain 1 to 120 characters", ErrInvalidRequest)
 	}
 	updated, err := s.queries.RenameConversation(ctx, dbsqlc.RenameConversationParams{
-		Title: title, UpdatedAt: s.now().UTC().UnixMilli(), ID: conversationID,
+		Title: title, UpdatedAt: s.now().UTC().UnixMilli(), ID: conversationID, UserID: userID,
 	})
 	if err != nil {
 		return err
@@ -322,8 +365,12 @@ func (s *Service) rename(ctx context.Context, conversationID, title string) erro
 }
 
 func (s *Service) archive(ctx context.Context, conversationID string) error {
+	userID, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return err
+	}
 	archived, err := s.queries.ArchiveConversation(ctx, dbsqlc.ArchiveConversationParams{
-		ArchivedAt: sql.NullInt64{Int64: s.now().UTC().UnixMilli(), Valid: true}, ID: conversationID,
+		ArchivedAt: sql.NullInt64{Int64: s.now().UTC().UnixMilli(), Valid: true}, ID: conversationID, UserID: userID,
 	})
 	if err != nil {
 		return err

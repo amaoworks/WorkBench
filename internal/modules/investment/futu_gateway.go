@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"workbench/internal/contracts"
 	investmentsqlc "workbench/internal/modules/investment/sqlc"
 )
 
@@ -21,6 +22,9 @@ const (
 )
 
 type futuWSClient struct {
+	userID     string
+	sessionID  string
+	subsMu     sync.RWMutex
 	conn       *websocket.Conn
 	send       chan []byte
 	owner      string
@@ -223,6 +227,13 @@ func (g *futuGateway) addWS(ctx context.Context, client *futuWSClient) error {
 	if g.client == nil || g.closed {
 		return errors.New("OpenD 连接已断开")
 	}
+	id, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return err
+	}
+	client.userID = id
+	principal, _ := contracts.CurrentPrincipal(ctx)
+	client.sessionID = principal.SessionID
 	g.nextOwner++
 	client.owner = g.instanceID + ":ws:" + strconv.FormatUint(g.nextOwner, 10)
 	client.generation = g.generationTokenLocked()
@@ -246,16 +257,45 @@ func (g *futuGateway) removeWS(client *futuWSClient) {
 	// before releasing exactly the references acquired by this WebSocket.
 	client.opMu.Lock()
 	defer client.opMu.Unlock()
+	client.subsMu.Lock()
+	keys := make([]browserSubKey, 0, len(client.subs))
 	for key := range client.subs {
+		keys = append(keys, key)
+	}
+	clear(client.subs)
+	client.subsMu.Unlock()
+	for _, key := range keys {
 		g.releaseBrowserSub(client, key)
-		delete(client.subs, key)
 	}
 }
 
 func (g *futuGateway) broadcast(payload []byte) {
+	var message struct {
+		Data []struct {
+			Symbol     string `json:"symbol"`
+			Resolution string `json:"resolution"`
+			Service    string `json:"service"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(payload, &message) != nil || len(message.Data) == 0 {
+		return
+	}
+	update := message.Data[0]
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	for client := range g.clients {
+		client.subsMu.RLock()
+		subscribed := false
+		for key := range client.subs {
+			if key.symbol == update.Symbol && (update.Service == "FUTU_QUOTE" || key.resolution == update.Resolution) {
+				subscribed = true
+				break
+			}
+		}
+		client.subsMu.RUnlock()
+		if !subscribed {
+			continue
+		}
 		select {
 		case client.send <- payload:
 		default:

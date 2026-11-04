@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
@@ -14,6 +17,26 @@ import (
 	workbenchdb "workbench/internal/foundation/database"
 	"workbench/internal/foundation/events"
 )
+
+func todoContext() context.Context {
+	return contracts.WithPrincipal(context.Background(), contracts.Principal{UserID: contracts.LegacyUserID, Role: contracts.RoleAdmin})
+}
+
+func todoRequest(method, target string, body io.Reader) *http.Request {
+	return httptest.NewRequest(method, target, body).WithContext(todoContext())
+}
+
+type todoUsers []string
+
+func (users todoUsers) ActiveUserIDs(context.Context) ([]string, error) { return users, nil }
+func (users todoUsers) IsUserActive(_ context.Context, id string) (bool, error) {
+	for _, user := range users {
+		if user == id {
+			return true, nil
+		}
+	}
+	return false, nil
+}
 
 type failingPublisher struct{}
 
@@ -27,7 +50,7 @@ func (failingPublisher) PublishTx(context.Context, *sql.Tx, contracts.NewEvent) 
 
 func openTodoModule(t *testing.T) (*Module, *workbenchdb.Database) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := todoContext()
 	database, err := workbenchdb.Open(ctx, workbenchdb.Config{Path: filepath.Join(t.TempDir(), "data.db")})
 	if err != nil {
 		t.Fatal(err)
@@ -41,7 +64,7 @@ func openTodoModule(t *testing.T) (*Module, *workbenchdb.Database) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	module, err := New(database.SQL(), eventStore, notificationService)
+	module, err := New(database.SQL(), eventStore, notificationService, todoUsers{contracts.LegacyUserID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +76,7 @@ func openTodoModule(t *testing.T) (*Module, *workbenchdb.Database) {
 
 func TestTaskLifecyclePublishesDomainEvents(t *testing.T) {
 	module, database := openTodoModule(t)
-	created, err := module.Create(context.Background(), CreateTask{Title: "  Write tests  ", Description: "Cover events"})
+	created, err := module.Create(todoContext(), CreateTask{Title: "  Write tests  ", Description: "Cover events"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +84,7 @@ func TestTaskLifecyclePublishesDomainEvents(t *testing.T) {
 		t.Fatalf("created title = %q", created.Title)
 	}
 	completed := true
-	updated, err := module.update(context.Background(), created.ID, UpdateTask{Completed: &completed})
+	updated, err := module.update(todoContext(), created.ID, UpdateTask{Completed: &completed})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,14 +114,14 @@ func TestDueScanCreatesOneIdempotentNotification(t *testing.T) {
 	now := time.Unix(1_000, 0).UTC()
 	module.now = func() time.Time { return now }
 	due := now.Add(-time.Minute)
-	if _, err := module.Create(context.Background(), CreateTask{Title: "Overdue", DueAt: &due}); err != nil {
+	if _, err := module.Create(todoContext(), CreateTask{Title: "Overdue", DueAt: &due}); err != nil {
 		t.Fatal(err)
 	}
 	run := contracts.JobRun{ID: "run", JobID: "todo.scan_due", ScheduledAt: now, Attempt: 1}
-	if err := module.scanDue(context.Background(), run); err != nil {
+	if err := module.scanDue(todoContext(), run); err != nil {
 		t.Fatal(err)
 	}
-	if err := module.scanDue(context.Background(), run); err != nil {
+	if err := module.scanDue(todoContext(), run); err != nil {
 		t.Fatal(err)
 	}
 	var count int
@@ -119,7 +142,7 @@ func TestDueScanCreatesOneIdempotentNotification(t *testing.T) {
 
 func TestDueScanVisitsEveryBatchWithEqualDueTimes(t *testing.T) {
 	module, database := openTodoModule(t)
-	ctx := context.Background()
+	ctx := todoContext()
 	now := time.Unix(1_000, 0).UTC()
 	module.now = func() time.Time { return now }
 	due := now.Add(-time.Minute)
@@ -164,7 +187,7 @@ func TestCreateRollsBackWhenDomainEventFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := module.Create(context.Background(), CreateTask{Title: "Must roll back"}); err == nil {
+	if _, err := module.Create(todoContext(), CreateTask{Title: "Must roll back"}); err == nil {
 		t.Fatal("Create succeeded when event publication failed")
 	}
 	var tasks int

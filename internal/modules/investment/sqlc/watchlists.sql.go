@@ -10,7 +10,7 @@ import (
 )
 
 const getWatchlists = `-- name: GetWatchlists :one
-SELECT revision, writer, base_revision, sequence, content FROM investment_watchlists WHERE id = 1
+SELECT revision, writer, base_revision, sequence, content FROM investment_watchlists WHERE user_id = ?
 `
 
 type GetWatchlistsRow struct {
@@ -21,8 +21,8 @@ type GetWatchlistsRow struct {
 	Content      string `json:"content"`
 }
 
-func (q *Queries) GetWatchlists(ctx context.Context) (GetWatchlistsRow, error) {
-	row := q.db.QueryRowContext(ctx, getWatchlists)
+func (q *Queries) GetWatchlists(ctx context.Context, userID string) (GetWatchlistsRow, error) {
+	row := q.db.QueryRowContext(ctx, getWatchlists, userID)
 	var i GetWatchlistsRow
 	err := row.Scan(
 		&i.Revision,
@@ -35,17 +35,18 @@ func (q *Queries) GetWatchlists(ctx context.Context) (GetWatchlistsRow, error) {
 }
 
 const saveWatchlists = `-- name: SaveWatchlists :one
-UPDATE investment_watchlists
-SET content = ?1, revision = revision + 1,
-    writer = ?2, base_revision = ?3, sequence = ?4
-WHERE id = 1 AND (
-    revision = ?3 OR
-    (writer = ?2 AND base_revision = ?3 AND sequence < ?4)
-)
-RETURNING revision, sequence
+INSERT INTO investment_watchlists(user_id,content,revision,writer,base_revision,sequence)
+SELECT ?1,?2,1,?3,CAST(?4 AS BIGINT),CAST(?5 AS BIGINT)
+WHERE CAST(?4 AS BIGINT)=CAST(0 AS BIGINT) OR EXISTS(SELECT 1 FROM investment_watchlists WHERE user_id=?1)
+ON CONFLICT(user_id) DO UPDATE SET content=excluded.content,revision=investment_watchlists.revision+1,
+writer=excluded.writer,base_revision=excluded.base_revision,sequence=excluded.sequence
+WHERE investment_watchlists.revision=excluded.base_revision OR (
+ investment_watchlists.writer=excluded.writer AND investment_watchlists.base_revision=excluded.base_revision AND investment_watchlists.sequence<excluded.sequence)
+RETURNING revision,sequence
 `
 
 type SaveWatchlistsParams struct {
+	UserID       string `json:"user_id"`
 	Content      string `json:"content"`
 	Writer       string `json:"writer"`
 	BaseRevision int64  `json:"base_revision"`
@@ -59,6 +60,7 @@ type SaveWatchlistsRow struct {
 
 func (q *Queries) SaveWatchlists(ctx context.Context, arg SaveWatchlistsParams) (SaveWatchlistsRow, error) {
 	row := q.db.QueryRowContext(ctx, saveWatchlists,
+		arg.UserID,
 		arg.Content,
 		arg.Writer,
 		arg.BaseRevision,

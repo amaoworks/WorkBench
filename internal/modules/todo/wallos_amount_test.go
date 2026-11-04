@@ -1,12 +1,13 @@
 package todo
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+	"workbench/internal/contracts"
+	todosqlc "workbench/internal/modules/todo/sqlc"
 )
 
 func TestWallosAmountConversion(t *testing.T) {
@@ -29,7 +30,7 @@ func TestWallosAmountConversion(t *testing.T) {
 
 func TestWallosDetailsFetchAndExistingTaskRefresh(t *testing.T) {
 	m, db := openTodoModule(t)
-	ctx := context.Background()
+	ctx := todoContext()
 	m.now = func() time.Time { return time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC) }
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -67,7 +68,7 @@ func TestWallosDetailsFetchAndExistingTaskRefresh(t *testing.T) {
 	if err := db.SQL().QueryRow("SELECT id FROM todo_tasks").Scan(&id); err != nil {
 		t.Fatal(err)
 	}
-	before, err := m.queries.GetTask(ctx, id)
+	before, err := m.queries.GetTask(ctx, todosqlc.GetTaskParams{ID: id, UserID: contracts.UserID(ctx)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +83,7 @@ func TestWallosDetailsFetchAndExistingTaskRefresh(t *testing.T) {
 	if n, err := m.importWallos(ctx, c, subs); err != nil || n != 0 {
 		t.Fatalf("refresh: %d %v", n, err)
 	}
-	after, err := m.queries.GetTask(ctx, id)
+	after, err := m.queries.GetTask(ctx, todosqlc.GetTaskParams{ID: id, UserID: contracts.UserID(ctx)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,14 +98,14 @@ func TestWallosDetailsFetchAndExistingTaskRefresh(t *testing.T) {
 	if _, err := m.importWallos(ctx, c, subs); err != nil {
 		t.Fatal(err)
 	}
-	unchanged, err := m.queries.GetTask(ctx, id)
+	unchanged, err := m.queries.GetTask(ctx, todosqlc.GetTaskParams{ID: id, UserID: contracts.UserID(ctx)})
 	if err != nil || unchanged != after {
 		t.Fatalf("unchanged sync modified task: %#v %v", unchanged, err)
 	}
 	if err := db.SQL().QueryRow("SELECT COUNT(*) FROM events_log WHERE topic='todo.task.updated'").Scan(&updates); err != nil || updates != 1 {
 		t.Fatalf("unchanged sync events: %d %v", updates, err)
 	}
-	if _, err := m.queries.DeleteTask(ctx, id); err != nil {
+	if _, err := m.queries.DeleteTask(ctx, todosqlc.DeleteTaskParams{ID: id, UserID: contracts.UserID(ctx)}); err != nil {
 		t.Fatal(err)
 	}
 	if n, err := m.importWallos(ctx, c, subs); err != nil || n != 1 {
@@ -114,7 +115,7 @@ func TestWallosDetailsFetchAndExistingTaskRefresh(t *testing.T) {
 
 func TestWallosContentUpdateRollsBackWhenEventFails(t *testing.T) {
 	m, db := openTodoModule(t)
-	ctx := context.Background()
+	ctx := todoContext()
 	m.now = func() time.Time { return time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC) }
 	subs := []wallosSubscription{{ID: "1", Name: "原订阅", NextPayment: "2026-09-14"}}
 	if _, err := m.importWallos(ctx, wallosTestConfig(), subs); err != nil {
@@ -124,7 +125,7 @@ func TestWallosContentUpdateRollsBackWhenEventFails(t *testing.T) {
 	if err := db.SQL().QueryRow("SELECT id FROM todo_tasks").Scan(&id); err != nil {
 		t.Fatal(err)
 	}
-	before, err := m.queries.GetTask(ctx, id)
+	before, err := m.queries.GetTask(ctx, todosqlc.GetTaskParams{ID: id, UserID: contracts.UserID(ctx)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +135,7 @@ func TestWallosContentUpdateRollsBackWhenEventFails(t *testing.T) {
 	if _, err := m.importWallos(ctx, wallosTestConfig(), subs); err == nil {
 		t.Fatal("expected event failure")
 	}
-	after, err := m.queries.GetTask(ctx, id)
+	after, err := m.queries.GetTask(ctx, todosqlc.GetTaskParams{ID: id, UserID: contracts.UserID(ctx)})
 	if err != nil || after != before {
 		t.Fatalf("failed event did not roll back task: %#v %v", after, err)
 	}

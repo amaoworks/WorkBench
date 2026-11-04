@@ -23,7 +23,10 @@ type Service struct {
 	events  contracts.EventPublisher
 	now     func() time.Time
 	newID   func() (string, error)
+	users   contracts.UserDirectory
 }
+
+func (s *Service) SetUserDirectory(users contracts.UserDirectory) { s.users = users }
 
 func NewService(db *sql.DB, events contracts.EventPublisher) (*Service, error) {
 	if db == nil || events == nil {
@@ -52,6 +55,25 @@ func (s *Service) CreateTx(ctx context.Context, tx *sql.Tx, input contracts.NewN
 	if tx == nil {
 		return contracts.Notification{}, errors.New("transaction is required")
 	}
+	caller := contracts.UserID(ctx)
+	if input.RecipientID != "" && caller != "" && input.RecipientID != caller {
+		return contracts.Notification{}, errors.New("notification recipient must match current user")
+	}
+	if input.RecipientID == "" {
+		input.RecipientID = caller
+	}
+	if input.RecipientID == "" {
+		return contracts.Notification{}, contracts.ErrUnauthenticated
+	}
+	if s.users != nil || caller == "" {
+		if s.users == nil {
+			return contracts.Notification{}, errors.New("notification user directory is unavailable")
+		}
+		active, err := s.users.IsUserActive(ctx, input.RecipientID)
+		if err != nil || !active {
+			return contracts.Notification{}, errors.New("notification recipient is inactive")
+		}
+	}
 	if err := validateNew(input); err != nil {
 		return contracts.Notification{}, err
 	}
@@ -66,7 +88,7 @@ func (s *Service) CreateTx(ctx context.Context, tx *sql.Tx, input contracts.NewN
 	}
 	queries := dbsqlc.New(tx)
 	rows, err := queries.InsertNotification(ctx, dbsqlc.InsertNotificationParams{
-		ID: id, SourceModule: string(input.SourceModule), External: boolInt64(input.External), Severity: string(input.Severity),
+		ID: id, RecipientID: input.RecipientID, SourceModule: string(input.SourceModule), External: boolInt64(input.External), Severity: string(input.Severity),
 		Title: input.Title, Content: input.Content, ActionLabel: input.ActionLabel,
 		ActionRoute: input.ActionRoute, IdempotencyKey: input.IdempotencyKey,
 		SourceEventID: string(input.SourceEventID), CreatedAt: now.UnixMilli(), ExpiresAt: expiresAt,
@@ -75,17 +97,17 @@ func (s *Service) CreateTx(ctx context.Context, tx *sql.Tx, input contracts.NewN
 		return contracts.Notification{}, fmt.Errorf("insert notification: %w", err)
 	}
 	if rows == 0 {
-		return getByIdempotencyKey(ctx, queries, input.IdempotencyKey)
+		return getByIdempotencyKey(ctx, queries, input.RecipientID, input.IdempotencyKey)
 	}
 
 	payload, _ := json.Marshal(map[string]string{"notificationId": id})
 	if _, err := s.events.PublishTx(ctx, tx, contracts.NewEvent{
-		Topic: "core.notification.created", SchemaVersion: 1, SourceModule: "core", AggregateID: id, Payload: payload,
+		UserID: input.RecipientID, Topic: "core.notification.created", SchemaVersion: 1, SourceModule: "core", AggregateID: id, Payload: payload,
 	}); err != nil {
 		return contracts.Notification{}, fmt.Errorf("publish notification event: %w", err)
 	}
 	return contracts.Notification{
-		ID: id, SourceModule: input.SourceModule, External: input.External, Severity: input.Severity,
+		ID: id, RecipientID: input.RecipientID, SourceModule: input.SourceModule, External: input.External, Severity: input.Severity,
 		Title: input.Title, Content: input.Content, ActionLabel: input.ActionLabel,
 		ActionRoute: input.ActionRoute, IdempotencyKey: input.IdempotencyKey,
 		SourceEventID: input.SourceEventID, CreatedAt: now, ExpiresAt: input.ExpiresAt,
@@ -116,13 +138,13 @@ func validateNew(input contracts.NewNotification) error {
 	return nil
 }
 
-func getByIdempotencyKey(ctx context.Context, queries *dbsqlc.Queries, key string) (contracts.Notification, error) {
-	row, err := queries.GetNotificationByIdempotencyKey(ctx, key)
+func getByIdempotencyKey(ctx context.Context, queries *dbsqlc.Queries, recipient, key string) (contracts.Notification, error) {
+	row, err := queries.GetNotificationByIdempotencyKey(ctx, dbsqlc.GetNotificationByIdempotencyKeyParams{RecipientID: recipient, IdempotencyKey: key})
 	if err != nil {
 		return contracts.Notification{}, err
 	}
 	return contracts.Notification{
-		ID: row.ID, SourceModule: contracts.ModuleID(row.SourceModule), External: row.External != 0, Severity: contracts.NotificationSeverity(row.Severity),
+		ID: row.ID, RecipientID: row.RecipientID, SourceModule: contracts.ModuleID(row.SourceModule), External: row.External != 0, Severity: contracts.NotificationSeverity(row.Severity),
 		Title: row.Title, Content: row.Content, ActionLabel: row.ActionLabel, ActionRoute: row.ActionRoute,
 		IdempotencyKey: row.IdempotencyKey, SourceEventID: contracts.EventID(row.SourceEventID),
 		CreatedAt: time.UnixMilli(row.CreatedAt).UTC(), ReadAt: nullableTime(row.ReadAt),
@@ -151,6 +173,10 @@ type cursor struct {
 }
 
 func (s *Service) List(ctx context.Context, query contracts.NotificationQuery) (contracts.NotificationPage, error) {
+	userID, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return contracts.NotificationPage{}, err
+	}
 	if query.Limit <= 0 {
 		query.Limit = 50
 	}
@@ -166,6 +192,7 @@ func (s *Service) List(ctx context.Context, query contracts.NotificationQuery) (
 	}
 
 	rows, err := s.queries.ListNotifications(ctx, dbsqlc.ListNotificationsParams{
+		RecipientID:     userID,
 		CursorCreatedAt: position.CreatedAt,
 		CursorID:        position.ID,
 		UnreadOnly:      boolInt64(query.UnreadOnly),
@@ -179,7 +206,7 @@ func (s *Service) List(ctx context.Context, query contracts.NotificationQuery) (
 	page := contracts.NotificationPage{Items: make([]contracts.Notification, 0, query.Limit)}
 	for _, row := range rows {
 		page.Items = append(page.Items, contracts.Notification{
-			ID: row.ID, SourceModule: contracts.ModuleID(row.SourceModule), External: row.External != 0,
+			ID: row.ID, RecipientID: row.RecipientID, SourceModule: contracts.ModuleID(row.SourceModule), External: row.External != 0,
 			Severity: contracts.NotificationSeverity(row.Severity), Title: row.Title, Content: row.Content,
 			ActionLabel: row.ActionLabel, ActionRoute: row.ActionRoute, IdempotencyKey: row.IdempotencyKey,
 			SourceEventID: contracts.EventID(row.SourceEventID), CreatedAt: time.UnixMilli(row.CreatedAt).UTC(),
@@ -204,6 +231,10 @@ func (s *Service) Archive(ctx context.Context, ids []string) error {
 }
 
 func (s *Service) updateMany(ctx context.Context, ids []string, column, topic string) error {
+	userID, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return err
+	}
 	if len(ids) == 0 {
 		return nil
 	}
@@ -216,16 +247,16 @@ func (s *Service) updateMany(ctx context.Context, ids []string, column, topic st
 		return err
 	}
 	defer tx.Rollback()
-	args := []any{s.now().UTC().UnixMilli()}
+	args := []any{s.now().UTC().UnixMilli(), userID}
 	for _, id := range ids {
 		args = append(args, id)
 	}
-	if _, err := tx.ExecContext(ctx, "UPDATE notifications SET "+column+" = ? WHERE id IN ("+placeholders+")", args...); err != nil {
+	if _, err := tx.ExecContext(ctx, "UPDATE notifications SET "+column+" = ? WHERE recipient_id = ? AND id IN ("+placeholders+")", args...); err != nil {
 		return fmt.Errorf("update notifications: %w", err)
 	}
 	payload, _ := json.Marshal(map[string][]string{"notificationIds": ids})
 	if _, err := s.events.PublishTx(ctx, tx, contracts.NewEvent{
-		Topic: topic, SchemaVersion: 1, SourceModule: "core", Payload: payload,
+		UserID: userID, Topic: topic, SchemaVersion: 1, SourceModule: "core", Payload: payload,
 	}); err != nil {
 		return err
 	}
@@ -233,6 +264,10 @@ func (s *Service) updateMany(ctx context.Context, ids []string, column, topic st
 }
 
 func (s *Service) MarkAllRead(ctx context.Context, before time.Time) error {
+	userID, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -240,13 +275,13 @@ func (s *Service) MarkAllRead(ctx context.Context, before time.Time) error {
 	defer tx.Rollback()
 	now := s.now().UTC().UnixMilli()
 	if err := dbsqlc.New(tx).MarkAllNotificationsRead(ctx, dbsqlc.MarkAllNotificationsReadParams{
-		ReadAt: sql.NullInt64{Int64: now, Valid: true}, CreatedAt: before.UTC().UnixMilli(),
+		RecipientID: userID, ReadAt: sql.NullInt64{Int64: now, Valid: true}, CreatedAt: before.UTC().UnixMilli(),
 	}); err != nil {
 		return err
 	}
 	payload, _ := json.Marshal(map[string]int64{"before": before.UTC().UnixMilli()})
 	if _, err := s.events.PublishTx(ctx, tx, contracts.NewEvent{
-		Topic: "core.notification.updated", SchemaVersion: 1, SourceModule: "core", Payload: payload,
+		UserID: userID, Topic: "core.notification.updated", SchemaVersion: 1, SourceModule: "core", Payload: payload,
 	}); err != nil {
 		return err
 	}
@@ -258,7 +293,12 @@ func (s *Service) UnreadCount(ctx context.Context) (int64, error) {
 }
 
 func (s *Service) UnreadCountBySource(ctx context.Context, source contracts.ModuleID) (int64, error) {
+	userID, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return 0, err
+	}
 	return s.queries.CountUnreadNotificationsBySource(ctx, dbsqlc.CountUnreadNotificationsBySourceParams{
+		RecipientID:  userID,
 		ExpiresAt:    sql.NullInt64{Int64: s.now().UTC().UnixMilli(), Valid: true},
 		SourceModule: string(source),
 	})

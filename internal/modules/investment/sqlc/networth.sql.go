@@ -10,40 +10,49 @@ import (
 )
 
 const addNetWorthAccountScope = `-- name: AddNetWorthAccountScope :exec
-INSERT INTO investment_networth_account_scopes(authorized_at, account_hash)
-VALUES (?, ?)
-ON CONFLICT(authorized_at, account_hash) DO NOTHING
+INSERT INTO investment_networth_account_scopes(user_id,authorized_at,account_hash)
+VALUES(?1,?2,?3)
+ON CONFLICT(user_id,authorized_at,account_hash) DO NOTHING
 `
 
 type AddNetWorthAccountScopeParams struct {
+	UserID       string `json:"user_id"`
 	AuthorizedAt int64  `json:"authorized_at"`
 	AccountHash  string `json:"account_hash"`
 }
 
 func (q *Queries) AddNetWorthAccountScope(ctx context.Context, arg AddNetWorthAccountScopeParams) error {
-	_, err := q.db.ExecContext(ctx, addNetWorthAccountScope, arg.AuthorizedAt, arg.AccountHash)
+	_, err := q.db.ExecContext(ctx, addNetWorthAccountScope, arg.UserID, arg.AuthorizedAt, arg.AccountHash)
 	return err
 }
 
 const deleteNetWorthAccountScope = `-- name: DeleteNetWorthAccountScope :exec
-DELETE FROM investment_networth_account_scopes
-WHERE authorized_at = ?
+DELETE FROM investment_networth_account_scopes WHERE user_id=?1 AND authorized_at=?2
 `
 
-func (q *Queries) DeleteNetWorthAccountScope(ctx context.Context, authorizedAt int64) error {
-	_, err := q.db.ExecContext(ctx, deleteNetWorthAccountScope, authorizedAt)
+type DeleteNetWorthAccountScopeParams struct {
+	UserID       string `json:"user_id"`
+	AuthorizedAt int64  `json:"authorized_at"`
+}
+
+func (q *Queries) DeleteNetWorthAccountScope(ctx context.Context, arg DeleteNetWorthAccountScopeParams) error {
+	_, err := q.db.ExecContext(ctx, deleteNetWorthAccountScope, arg.UserID, arg.AuthorizedAt)
 	return err
 }
 
 const listNetWorthAccounts = `-- name: ListNetWorthAccounts :many
-SELECT account_hash
-FROM investment_networth_account_scopes
-WHERE authorized_at = CAST(?1 AS BIGINT)
+SELECT account_hash FROM investment_networth_account_scopes
+WHERE user_id=?1 AND authorized_at=CAST(?2 AS BIGINT)
 ORDER BY account_hash
 `
 
-func (q *Queries) ListNetWorthAccounts(ctx context.Context, authorizedAt int64) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, listNetWorthAccounts, authorizedAt)
+type ListNetWorthAccountsParams struct {
+	UserID       string `json:"user_id"`
+	AuthorizedAt int64  `json:"authorized_at"`
+}
+
+func (q *Queries) ListNetWorthAccounts(ctx context.Context, arg ListNetWorthAccountsParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listNetWorthAccounts, arg.UserID, arg.AuthorizedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -66,21 +75,21 @@ func (q *Queries) ListNetWorthAccounts(ctx context.Context, authorizedAt int64) 
 }
 
 const listNetWorthSnapshots = `-- name: ListNetWorthSnapshots :many
-SELECT s.account_hash, s.day, s.net_worth, s.cash, s.invested, s.day_pnl, s.captured_at
-FROM investment_networth_snapshots s
-JOIN investment_networth_account_scopes a ON a.account_hash = s.account_hash
-WHERE a.authorized_at = CAST(?1 AS BIGINT)
-  AND (CAST(?2 AS TEXT) = '' OR s.day >= CAST(?2 AS TEXT))
-ORDER BY s.day, s.account_hash
+SELECT s.user_id, s.account_hash, s.day, s.net_worth, s.cash, s.invested, s.day_pnl, s.captured_at FROM investment_networth_snapshots s
+JOIN investment_networth_account_scopes a ON a.account_hash=s.account_hash AND a.user_id=s.user_id
+WHERE s.user_id=?1 AND a.authorized_at=CAST(?2 AS BIGINT)
+AND (CAST(?3 AS TEXT)='' OR s.day>=CAST(?3 AS TEXT))
+ORDER BY s.day,s.account_hash
 `
 
 type ListNetWorthSnapshotsParams struct {
+	UserID       string `json:"user_id"`
 	AuthorizedAt int64  `json:"authorized_at"`
 	StartDay     string `json:"start_day"`
 }
 
 func (q *Queries) ListNetWorthSnapshots(ctx context.Context, arg ListNetWorthSnapshotsParams) ([]InvestmentNetworthSnapshot, error) {
-	rows, err := q.db.QueryContext(ctx, listNetWorthSnapshots, arg.AuthorizedAt, arg.StartDay)
+	rows, err := q.db.QueryContext(ctx, listNetWorthSnapshots, arg.UserID, arg.AuthorizedAt, arg.StartDay)
 	if err != nil {
 		return nil, err
 	}
@@ -89,6 +98,7 @@ func (q *Queries) ListNetWorthSnapshots(ctx context.Context, arg ListNetWorthSna
 	for rows.Next() {
 		var i InvestmentNetworthSnapshot
 		if err := rows.Scan(
+			&i.UserID,
 			&i.AccountHash,
 			&i.Day,
 			&i.NetWorth,
@@ -111,18 +121,13 @@ func (q *Queries) ListNetWorthSnapshots(ctx context.Context, arg ListNetWorthSna
 }
 
 const upsertNetWorthSnapshot = `-- name: UpsertNetWorthSnapshot :exec
-INSERT INTO investment_networth_snapshots(
-  account_hash, day, net_worth, cash, invested, day_pnl, captured_at
-) VALUES (?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(account_hash, day) DO UPDATE SET
-  net_worth = excluded.net_worth,
-  cash = excluded.cash,
-  invested = excluded.invested,
-  day_pnl = excluded.day_pnl,
-  captured_at = excluded.captured_at
+INSERT INTO investment_networth_snapshots(user_id,account_hash,day,net_worth,cash,invested,day_pnl,captured_at)
+VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
+ON CONFLICT(user_id,account_hash,day) DO UPDATE SET net_worth=excluded.net_worth,cash=excluded.cash,invested=excluded.invested,day_pnl=excluded.day_pnl,captured_at=excluded.captured_at
 `
 
 type UpsertNetWorthSnapshotParams struct {
+	UserID      string  `json:"user_id"`
 	AccountHash string  `json:"account_hash"`
 	Day         string  `json:"day"`
 	NetWorth    float64 `json:"net_worth"`
@@ -134,6 +139,7 @@ type UpsertNetWorthSnapshotParams struct {
 
 func (q *Queries) UpsertNetWorthSnapshot(ctx context.Context, arg UpsertNetWorthSnapshotParams) error {
 	_, err := q.db.ExecContext(ctx, upsertNetWorthSnapshot,
+		arg.UserID,
 		arg.AccountHash,
 		arg.Day,
 		arg.NetWorth,

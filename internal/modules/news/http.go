@@ -15,6 +15,9 @@ import (
 
 func writeError(w http.ResponseWriter, err error) {
 	status := http.StatusBadRequest
+	if errors.Is(err, contracts.ErrUnauthenticated) {
+		status = http.StatusUnauthorized
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		status = http.StatusNotFound
 		err = errors.New("资讯记录不存在")
@@ -175,16 +178,16 @@ func (m *Module) updateArticleHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	err := m.mutate(r.Context(), "news.article.changed", id, func(q *newssqlc.Queries) error {
-		if _, err := q.GetArticle(r.Context(), id); err != nil {
+		if _, err := q.GetArticle(r.Context(), newssqlc.GetArticleParams{UserID: contracts.UserID(r.Context()), ID: id}); err != nil {
 			return err
 		}
 		if in.Read != nil {
-			if err := q.SetArticleRead(r.Context(), newssqlc.SetArticleReadParams{ID: id, IsRead: bit(*in.Read)}); err != nil {
+			if err := q.SetArticleRead(r.Context(), newssqlc.SetArticleReadParams{UserID: contracts.UserID(r.Context()), ID: id, IsRead: bit(*in.Read)}); err != nil {
 				return err
 			}
 		}
 		if in.Starred != nil {
-			if err := q.SetArticleStarred(r.Context(), newssqlc.SetArticleStarredParams{ID: id, Starred: bit(*in.Starred)}); err != nil {
+			if err := q.SetArticleStarred(r.Context(), newssqlc.SetArticleStarredParams{UserID: contracts.UserID(r.Context()), ID: id, Starred: bit(*in.Starred)}); err != nil {
 				return err
 			}
 		}
@@ -224,6 +227,10 @@ type articleListPage struct {
 }
 
 func (m *Module) articles(ctx context.Context, params articleListParams) (articleListPage, error) {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return articleListPage{}, err
+	}
+
 	cursor, err := decodeCursor(params.Cursor)
 	if err != nil {
 		return articleListPage{}, err
@@ -235,8 +242,7 @@ func (m *Module) articles(ctx context.Context, params articleListParams) (articl
 	if len(search) > 500 {
 		return articleListPage{}, errors.New("搜索词过长")
 	}
-	rows, err := m.q.ListArticlesPage(ctx, newssqlc.ListArticlesPageParams{
-		Search: search, Pattern: escapedPattern(search), SourceID: params.SourceID, Topic: params.Topic,
+	rows, err := m.q.ListArticlesPage(ctx, newssqlc.ListArticlesPageParams{UserID: contracts.UserID(ctx), Search: search, Pattern: escapedPattern(search), SourceID: params.SourceID, Topic: params.Topic,
 		Unread: bit(params.Unread), Starred: bit(params.Starred), Matched: bit(params.Matched),
 		CursorTime: cursor.Time, CursorID: cursor.ID, PageLimit: int64(params.Limit + 1),
 	})
@@ -287,7 +293,7 @@ func (m *Module) listDigestsHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, e)
 		return
 	}
-	rows, e := m.q.ListDigestsPage(r.Context(), newssqlc.ListDigestsPageParams{CursorTime: c.Time, CursorID: c.ID, PageLimit: int64(n + 1)})
+	rows, e := m.q.ListDigestsPage(r.Context(), newssqlc.ListDigestsPageParams{UserID: contracts.UserID(r.Context()), CursorTime: c.Time, CursorID: c.ID, PageLimit: int64(n + 1)})
 	if e != nil {
 		writeError(w, e)
 		return

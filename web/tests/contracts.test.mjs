@@ -13,7 +13,10 @@ import * as investment from "../src/modules/investment/schema.ts";
 import * as news from "../src/modules/news/schema.ts";
 
 const schemas = {
-  authStatus: shared.authStatusSchema, modules: shared.modulesResponseSchema,
+  authStatus: shared.authStatusSchema, loginResponse: shared.loginResponseSchema, modules: shared.modulesResponseSchema,
+  managedUsers: settings.managedUsersSchema, createdUser: settings.createdUserSchema,
+  updatedUser: settings.updatedUserSchema, resetUserPassword: settings.resetUserPasswordSchema,
+  telegramRecipient: settings.telegramRecipientSchema,
   module: shared.moduleSchema, dashboard: shared.dashboardSchema, widgets: shared.widgetCatalogSchema,
   notifications: shared.notificationsPageSchema, unreadCount: shared.unreadCountSchema,
   aiStatus: shared.aiStatusSchema, error: shared.apiErrorSchema, saved: shared.savedSchema,

@@ -14,8 +14,10 @@ import { Notice } from "../../components/ui/Notice";
 import { Switch } from "../../components/ui/Switch";
 import { useConfirmDelete } from "../../components/ui/useConfirmDelete";
 import { clearModuleQueries } from "../../shared/queryKeys";
+import { useIsAdmin } from "../../shared/auth";
 
 export function ModulesPanel() {
+  const isAdmin = useIsAdmin();
   const modules = useModules();
   const client = useQueryClient();
   const heading = useRef<HTMLHeadingElement>(null);
@@ -58,7 +60,7 @@ export function ModulesPanel() {
       <h3 ref={heading} tabIndex={-1} className="sr-only">
         业务
       </h3>
-      {modules.data.items.map((module) => (
+      {modules.data.items.filter((module) => isAdmin || module.kind === "builtin").map((module) => (
         <div key={module.id} className="module-row">
           <div>
             <h3>{module.name}</h3>
@@ -76,8 +78,8 @@ export function ModulesPanel() {
           </div>
           <div className="module-actions">
             <ModuleSettingsDialog module={module} />
-            {module.kind === "external" && <ExternalActions module={module} onChange={refresh} fallbackFocus={() => heading.current} />}
-            {module.kind === "builtin" && module.lastError && (
+            {isAdmin && module.kind === "external" && <ExternalActions module={module} onChange={refresh} fallbackFocus={() => heading.current} />}
+            {isAdmin && module.kind === "builtin" && module.lastError && (
               <Button
                 variant="secondary"
                 disabled={toggle.isPending}
@@ -86,12 +88,14 @@ export function ModulesPanel() {
                 重试
               </Button>
             )}
-            <Switch
-              label={module.name}
-              checked={module.enabled}
-              disabled={toggle.isPending}
-              onChange={(enabled) => toggle.mutate({ id: module.id, enabled })}
-            />
+            {isAdmin && (
+              <Switch
+                label={module.name}
+                checked={module.enabled}
+                disabled={toggle.isPending}
+                onChange={(enabled) => toggle.mutate({ id: module.id, enabled })}
+              />
+            )}
           </div>
         </div>
       ))}

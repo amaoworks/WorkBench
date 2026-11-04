@@ -6,12 +6,15 @@ import (
 	"errors"
 	"time"
 
+	"github.com/alexedwards/scs/v2"
+
 	"workbench/internal/foundation/database/sqlc"
 )
 
 type SessionStore struct {
-	queries *dbsqlc.Queries
-	now     func() time.Time
+	queries  *dbsqlc.Queries
+	sessions *scs.SessionManager
+	now      func() time.Time
 }
 
 func NewSessionStore(db *sql.DB) *SessionStore {
@@ -49,7 +52,13 @@ func (s *SessionStore) Commit(token string, data []byte, expiry time.Time) error
 }
 
 func (s *SessionStore) CommitCtx(ctx context.Context, token string, data []byte, expiry time.Time) error {
-	if err := s.queries.UpsertSession(ctx, dbsqlc.UpsertSessionParams{Token: token, Data: data, Expiry: expiry.UTC().UnixMilli()}); err != nil {
+	var userID string
+	if s.sessions != nil {
+		if _, values, err := s.sessions.Codec.Decode(data); err == nil {
+			userID, _ = values["userID"].(string)
+		}
+	}
+	if err := s.queries.UpsertSession(ctx, dbsqlc.UpsertSessionParams{Token: token, Data: data, Expiry: expiry.UTC().UnixMilli(), UserID: userID}); err != nil {
 		return err
 	}
 	return s.queries.TouchBrowserSession(ctx, dbsqlc.TouchBrowserSessionParams{TokenHash: token, LastSeenAt: s.now().UnixMilli()})

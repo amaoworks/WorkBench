@@ -56,7 +56,7 @@ func TestOpenAIContinuationPreservesOrderedItemsAcrossToolRounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := gateway.Generate(context.Background(), contracts.GenerateRequest{
+	result, err := gateway.Generate(aiUserContext("user"), contracts.GenerateRequest{
 		Profile: "default",
 		Messages: []contracts.AIMessage{
 			TextMessage("system", "keep system context"),
@@ -136,7 +136,7 @@ func TestOpenAIStreamReportsSuccessfulWriteBeforeLaterUpstreamFailure(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	stream, err := gateway.Stream(context.Background(), contracts.GenerateRequest{
+	stream, err := gateway.Stream(aiUserContext("user"), contracts.GenerateRequest{
 		Profile: "default", Messages: []contracts.AIMessage{TextMessage("user", "write once")},
 	})
 	if err != nil {

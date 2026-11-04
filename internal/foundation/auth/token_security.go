@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"workbench/internal/contracts"
 	dbsqlc "workbench/internal/foundation/database/sqlc"
 	"workbench/internal/foundation/httpapi"
 )
@@ -65,7 +66,7 @@ func (s *Service) tokenSecurity(next, browser http.Handler) http.Handler {
 
 func (s *Service) trackBrowser(r *http.Request) error {
 	return s.queries.InsertBrowserSession(r.Context(), dbsqlc.InsertBrowserSessionParams{
-		ID: uuid.NewString(), TokenHash: tokenHash(s.sessions.Token(r.Context())), CreatedAt: s.now().UnixMilli(), LastSeenAt: s.now().UnixMilli(),
+		ID: uuid.NewString(), UserID: s.sessions.GetString(r.Context(), "userID"), TokenHash: tokenHash(s.sessions.Token(r.Context())), CreatedAt: s.now().UnixMilli(), LastSeenAt: s.now().UnixMilli(),
 		DeviceSessionID: sql.NullString{String: s.sessions.GetString(r.Context(), "deviceSessionID"), Valid: s.sessions.GetString(r.Context(), "deviceSessionID") != ""},
 	})
 }
@@ -105,13 +106,26 @@ func (s *Service) serveAuthenticated(w http.ResponseWriter, r *http.Request, nex
 
 func (s *Service) liveLogin(ctx context.Context, r *http.Request, version int64) error {
 	if claims, ok := r.Context().Value(deviceContextKey{}).(*accessClaims); ok {
-		return s.checkDevice(ctx, claims)
+		if err := s.checkDevice(ctx, claims); err != nil {
+			return err
+		}
+		user, err := s.queries.GetAuthUser(ctx, claims.Subject)
+		principal, _ := contracts.CurrentPrincipal(r.Context())
+		if err != nil || user.Role != string(principal.Role) {
+			return errInvalidToken
+		}
+		return nil
 	}
-	credential, err := s.queries.GetAuthCredential(ctx)
+	if s.mode == ModeLocal {
+		_, err := s.localUser(ctx)
+		return err
+	}
+	credential, err := s.queries.GetAuthUser(ctx, contracts.UserID(r.Context()))
 	if err != nil {
 		return err
 	}
-	if credential.UpdatedAt != version {
+	principal, _ := contracts.CurrentPrincipal(r.Context())
+	if credential.CredentialVersion != version || credential.Status != "active" || credential.Role != string(principal.Role) {
 		return errInvalidToken
 	}
 	if !s.browserDeviceActive(r) {

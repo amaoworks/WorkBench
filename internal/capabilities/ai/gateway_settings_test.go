@@ -41,7 +41,7 @@ func TestProviderUpdateDoesNotInterruptInFlightRequest(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		result, err := gateway.Generate(context.Background(), contracts.GenerateRequest{})
+		result, err := gateway.Generate(aiUserContext("user"), contracts.GenerateRequest{})
 		if err != nil || result.Text != "original provider" {
 			t.Errorf("in-flight request changed provider: %+v %v", result, err)
 		}
@@ -51,7 +51,7 @@ func TestProviderUpdateDoesNotInterruptInFlightRequest(t *testing.T) {
 	if gateway.Available() {
 		t.Fatal("provider not disabled")
 	}
-	if _, err := gateway.Generate(context.Background(), contracts.GenerateRequest{}); !errors.Is(err, ErrUnavailable) {
+	if _, err := gateway.Generate(aiUserContext("user"), contracts.GenerateRequest{}); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("new request: %v", err)
 	}
 	close(provider.release)

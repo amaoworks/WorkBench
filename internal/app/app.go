@@ -63,7 +63,6 @@ type App struct {
 	closeOnce          sync.Once
 	settingsMu         sync.Mutex
 	aiSettings         AISettings
-	appearance         Appearance
 	logging            LoggingSettings
 	gateway            *ai.Gateway
 	textAI             *ai.TextService
@@ -106,8 +105,18 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	if err := database.MigrateCore(ctx); err != nil {
 		return nil, err
 	}
+	authService, err := auth.New(ctx, database.SQL(), auth.Config{
+		Mode: cfg.AuthMode, ListenAddress: cfg.ListenAddress, PublicHTTPS: cfg.PublicHTTPS(),
+		InitialPassword: cfg.Password, AllowedHosts: cfg.AllowedHosts,
+		AllowInsecureHTTP: cfg.AllowInsecureHTTP, CORSAllowOrigins: cfg.CORSAllowOrigins,
+		Logger: logger.With("component", "auth"),
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	eventStore := events.NewStore(database.SQL())
+	eventStore.SetUserDirectory(authService)
 	if err := eventStore.ResetConsumers(ctx); err != nil {
 		return nil, err
 	}
@@ -115,7 +124,8 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	todoModule, err := todo.New(database.SQL(), eventStore, notificationService)
+	notificationService.SetUserDirectory(authService)
+	todoModule, err := todo.New(database.SQL(), eventStore, notificationService, authService)
 	if err != nil {
 		return nil, err
 	}
@@ -123,11 +133,12 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	if cfg.FutuRuntimeDir == "" {
 		cfg.FutuRuntimeDir = filepath.Join(filepath.Dir(cfg.DataPath), "futu-opend")
 	}
-	investmentModule, err := investment.New(investment.Dependencies{DB: database.SQL(), Notifications: notificationService, Logger: logger.With("component", "investment"), FutuConfigDir: cfg.FutuConfigDir, FutuRuntimeDir: cfg.FutuRuntimeDir, FutuOpenDBinary: cfg.FutuOpenDBinary, FutuOpenDAddress: cfg.FutuOpenDAddress, FutuAllowNonLocal: cfg.FutuAllowNonLocal, ChartCacheDir: filepath.Join(filepath.Dir(cfg.DataPath), "chart-library")})
+	investmentModule, err := investment.New(investment.Dependencies{DB: database.SQL(), Users: authService, Notifications: notificationService, Logger: logger.With("component", "investment"), FutuConfigDir: cfg.FutuConfigDir, FutuRuntimeDir: cfg.FutuRuntimeDir, FutuOpenDBinary: cfg.FutuOpenDBinary, FutuOpenDAddress: cfg.FutuOpenDAddress, FutuAllowNonLocal: cfg.FutuAllowNonLocal, ChartCacheDir: filepath.Join(filepath.Dir(cfg.DataPath), "chart-library")})
 	if err != nil {
 		return nil, err
 	}
-	newsModule, err := news.New(news.Dependencies{DB: database.SQL(), Events: eventStore, Notifications: notificationService, AI: textAI})
+	authService.SetUserDisabledHandler(investmentModule.RevokeUser)
+	newsModule, err := news.New(news.Dependencies{DB: database.SQL(), Users: authService, Events: eventStore, Notifications: notificationService, AI: textAI})
 	if err != nil {
 		return nil, err
 	}
@@ -141,26 +152,32 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	builtins := bindBuiltinModules(definitions)
 
 	hub := notifications.NewHub()
+	hub.SetUserDirectory(authService)
 	consumers := append(registry.Catalog().Consumers, hub.Consumer())
 	enabled := func(id contracts.ModuleID) bool { return id == "core" || registry.IsEnabled(id) }
 	dispatcher, err := events.NewDispatcher(database.SQL(), eventStore, consumers, enabled, logger.With("component", "events"))
 	if err != nil {
 		return nil, err
 	}
+	dispatcher.SetUserDirectory(authService)
 	telegram := notifications.NewTelegram(database.SQL(), cfg.PublicURL, enabled, logger.With("component", "telegram"))
+	telegram.SetUserDirectory(authService)
 	telegramDispatcher, err := events.NewDispatcher(database.SQL(), eventStore, []contracts.EventConsumer{telegram.Consumer()}, enabled, logger.With("component", "telegram"))
 	if err != nil {
 		return nil, err
 	}
+	telegramDispatcher.SetUserDirectory(authService)
 	mobilePushConfig.Allowed = enabled
 	mobilePush, err := mobilepush.New(database.SQL(), mobilePushConfig, auth.DeviceSessionID)
 	if err != nil {
 		return nil, err
 	}
+	mobilePush.SetUserDirectory(authService)
 	mobileDispatcher, err := events.NewDispatcher(database.SQL(), eventStore, []contracts.EventConsumer{mobilePush.Consumer()}, enabled, logger.With("component", "mobile-push"))
 	if err != nil {
 		return nil, err
 	}
+	mobileDispatcher.SetUserDirectory(authService)
 	for _, dispatcher := range []*events.Dispatcher{dispatcher, telegramDispatcher, mobileDispatcher} {
 		if err := dispatcher.Register(ctx); err != nil {
 			return nil, err
@@ -169,16 +186,6 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 	jobs := append(registry.Catalog().Jobs, maintenanceJob(database.SQL()))
 	scheduled, err := scheduler.New(ctx, database.SQL(), jobs, enabled, logger.With("component", "scheduler"))
 	if err != nil {
-		return nil, err
-	}
-	authService, err := auth.New(ctx, database.SQL(), auth.Config{
-		Mode: cfg.AuthMode, ListenAddress: cfg.ListenAddress, PublicHTTPS: cfg.PublicHTTPS(),
-		InitialPassword: cfg.Password, AllowedHosts: cfg.AllowedHosts,
-		AllowInsecureHTTP: cfg.AllowInsecureHTTP, CORSAllowOrigins: cfg.CORSAllowOrigins,
-		Logger: logger.With("component", "auth"),
-	})
-	if err != nil {
-		_ = scheduled.Shutdown(context.Background())
 		return nil, err
 	}
 	ui, err := webui.New()
@@ -279,24 +286,39 @@ func (a *App) routes(
 
 	router.Group(func(protected chi.Router) {
 		protected.Use(a.auth.Require)
+		protected.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasPrefix(r.URL.Path, "/api/") {
+					w.Header().Set("Cache-Control", "no-store")
+				}
+				next.ServeHTTP(w, r)
+			})
+		})
 		protected.Get("/api/auth/sessions", a.auth.SessionsHandler)
 		protected.Delete("/api/auth/sessions/{id}", a.auth.DeleteSessionHandler)
 		protected.Post("/api/auth/token/revoke", a.auth.RevokeTokenHandler)
 		protected.Post("/api/auth/browser-grant", a.auth.BrowserGrantHandler)
 		protected.Post("/api/auth/logout-all", a.auth.LogoutAllHandler)
-		protected.Post("/api/auth/signing-key/rotate", a.auth.RotateSigningKeyHandler)
+		protected.With(a.auth.RequireAdmin).Post("/api/auth/signing-key/rotate", a.auth.RotateSigningKeyHandler)
+		protected.Route("/api/admin/users", func(admin chi.Router) {
+			admin.Use(a.auth.RequireAdmin)
+			admin.Get("/", a.auth.ListUsersHandler)
+			admin.Post("/", a.auth.CreateUserHandler)
+			admin.Patch("/{id}", a.auth.UpdateUserHandler)
+			admin.Post("/{id}/password", a.auth.ResetUserPasswordHandler)
+		})
 		protected.Get("/api/modules", a.listModules)
-		protected.Delete("/api/modules/external/{id}", a.unregisterExternal)
-		protected.Put("/api/modules/{id}/enabled", a.setModuleEnabled)
-		protected.Put("/api/modules/{id}/connection", a.updateExternalConnection)
-		protected.Post("/api/modules/{id}/refresh", a.refreshExternal)
+		protected.With(a.auth.RequireAdmin).Delete("/api/modules/external/{id}", a.unregisterExternal)
+		protected.With(a.auth.RequireAdmin).Put("/api/modules/{id}/enabled", a.setModuleEnabled)
+		protected.With(a.auth.RequireAdmin).Put("/api/modules/{id}/connection", a.updateExternalConnection)
+		protected.With(a.auth.RequireAdmin).Post("/api/modules/{id}/refresh", a.refreshExternal)
 		protected.Get("/api/modules/{id}/status", a.getModuleStatus)
-		protected.Get("/api/modules/{id}/config", a.getExternalConfig)
-		protected.Put("/api/modules/{id}/config", a.putExternalConfig)
-		protected.Handle("/modules/{id}/ui/*", a.registry.UIHandler())
-		protected.Method(http.MethodGet, "/modules/{id}/settings/*", a.registry.SettingsHandler())
-		protected.Method(http.MethodHead, "/modules/{id}/settings/*", a.registry.SettingsHandler())
-		protected.Handle("/api/modules/{id}/proxy/*", a.registry.APIProxyHandler())
+		protected.With(a.auth.RequireAdmin).Get("/api/modules/{id}/config", a.getExternalConfig)
+		protected.With(a.auth.RequireAdmin).Put("/api/modules/{id}/config", a.putExternalConfig)
+		protected.With(a.auth.RequireAdmin).Handle("/modules/{id}/ui/*", a.registry.UIHandler())
+		protected.With(a.auth.RequireAdmin).Method(http.MethodGet, "/modules/{id}/settings/*", a.registry.SettingsHandler())
+		protected.With(a.auth.RequireAdmin).Method(http.MethodHead, "/modules/{id}/settings/*", a.registry.SettingsHandler())
+		protected.With(a.auth.RequireAdmin).Handle("/api/modules/{id}/proxy/*", a.registry.APIProxyHandler())
 		protected.Get("/api/dashboard", dashboardService.ServeHTTP)
 		protected.Get("/api/dashboard/widgets", dashboardService.Catalog)
 		protected.Put("/api/dashboard/layout", dashboardService.Save)
@@ -317,15 +339,20 @@ func (a *App) routes(
 		protected.Get("/api/conversations", conversationHTTP.List)
 		protected.Patch("/api/conversations/{id}", conversationHTTP.Rename)
 		protected.Delete("/api/conversations/{id}", conversationHTTP.Archive)
-		protected.Post("/api/system/backup", a.backup)
+		protected.With(a.auth.RequireAdmin).Post("/api/system/backup", a.backup)
 		protected.Get("/api/settings", a.getSettings)
-		protected.Get("/api/settings/telegram", a.telegram.Settings)
-		protected.Put("/api/settings/telegram", a.telegram.SaveSettings)
-		protected.Post("/api/settings/telegram/test", a.telegram.TestSettings)
-		protected.Put("/api/settings/ai", a.saveAISettings)
-		protected.Post("/api/settings/ai/test", a.testAISettings)
+		protected.With(a.auth.RequireAdmin).Get("/api/settings/telegram", a.telegram.Settings)
+		protected.With(a.auth.RequireAdmin).Put("/api/settings/telegram", a.telegram.SaveSettings)
+		protected.With(a.auth.RequireAdmin).Post("/api/settings/telegram/test", a.telegram.TestSettings)
+		protected.Get("/api/settings/telegram/recipient", a.telegram.RecipientSettings)
+		protected.Put("/api/settings/telegram/recipient", a.telegram.SaveRecipientSettings)
+		protected.Post("/api/settings/telegram/recipient/test", a.telegram.TestRecipientSettings)
+		protected.With(a.auth.RequireAdmin).Get("/api/settings/telegram/recipients/{userID}", a.telegram.RecipientMappingSettings)
+		protected.With(a.auth.RequireAdmin).Put("/api/settings/telegram/recipients/{userID}", a.telegram.SaveRecipientMapping)
+		protected.With(a.auth.RequireAdmin).Put("/api/settings/ai", a.saveAISettings)
+		protected.With(a.auth.RequireAdmin).Post("/api/settings/ai/test", a.testAISettings)
 		protected.Put("/api/settings/appearance", a.saveAppearance)
-		protected.Put("/api/settings/logging", a.saveLoggingSettings)
+		protected.With(a.auth.RequireAdmin).Put("/api/settings/logging", a.saveLoggingSettings)
 		protected.Put("/api/settings/password", a.auth.ChangePasswordHandler)
 		// widgetData serves the read-only card data routes embedded by
 		// GET /api/dashboard?include=data; it runs inside this authenticated request.
@@ -398,9 +425,13 @@ func bindBuiltinModules(definitions []contracts.Module) []builtinBinding {
 	return bindings
 }
 
-func (a *App) listModules(w http.ResponseWriter, _ *http.Request) {
+func (a *App) listModules(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	httpapi.Write(w, http.StatusOK, map[string]any{"items": a.registry.List()})
+	items := a.registry.List()
+	if !contracts.IsAdmin(r.Context()) {
+		items = slices.DeleteFunc(items, func(item modules.ListedModule) bool { return item.Kind == modules.KindExternal })
+	}
+	httpapi.Write(w, http.StatusOK, map[string]any{"items": items})
 }
 
 func (a *App) setModuleEnabled(w http.ResponseWriter, r *http.Request) {
@@ -458,6 +489,10 @@ func (a *App) refreshExternal(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) getModuleStatus(w http.ResponseWriter, r *http.Request) {
+	if a.registry.IsExternal(contracts.ModuleID(r.PathValue("id"))) && !contracts.IsAdmin(r.Context()) {
+		httpapi.Error(w, http.StatusForbidden, "admin_required", "需要管理员权限")
+		return
+	}
 	listed, ok := a.registry.GetListed(contracts.ModuleID(r.PathValue("id")))
 	if !ok {
 		httpapi.Error(w, http.StatusNotFound, "module_not_found", "模块不存在")

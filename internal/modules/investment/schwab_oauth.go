@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"workbench/internal/contracts"
 	"workbench/internal/foundation/httpapi"
 )
 
@@ -160,6 +161,21 @@ func (m *Module) supersedeMobileOAuth(state string) {
 }
 
 func (m *Module) oauthCallback(w http.ResponseWriter, r *http.Request) {
+	if m.root == nil {
+		state := strings.TrimSpace(r.URL.Query().Get("state"))
+		id, err := m.queries.FindSchwabOAuthOwner(r.Context(), state)
+		if err != nil || id == "" {
+			writeHTML(w, 400, "授权状态无效或已过期，请重新登录。")
+			return
+		}
+		ctx := contracts.WithPrincipal(r.Context(), contracts.Principal{UserID: id, Role: contracts.RoleUser})
+		if _, err := m.requireUser(ctx); err != nil {
+			writeHTML(w, 403, "用户不可用")
+			return
+		}
+		m.userModule(id).oauthCallback(w, r.WithContext(ctx))
+		return
+	}
 	code := strings.TrimSpace(r.URL.Query().Get("code"))
 	state := strings.TrimSpace(r.URL.Query().Get("state"))
 	if state == "" {
@@ -185,6 +201,8 @@ func (m *Module) oauthCallback(w http.ResponseWriter, r *http.Request) {
 		writeHTML(w, http.StatusInternalServerError, "无法消费授权状态")
 		return
 	}
+	// The consumed state write advances the optimistic connection version.
+	rec.ConnectionVersion++
 	if expired {
 		m.finishMobileOAuth(state, mobileOAuthFailed, "授权状态无效或已过期，请重新发起")
 		writeHTML(w, http.StatusBadRequest, "授权状态无效或已过期，请重新登录。")
@@ -279,7 +297,7 @@ func (m *Module) oauthRefreshHTTP(w http.ResponseWriter, r *http.Request) {
 		httpapi.Error(w, http.StatusInternalServerError, "schwab_settings_failed", "无法读取 Schwab 配置")
 		return
 	}
-	httpapi.Write(w, http.StatusOK, rec.view())
+	httpapi.Write(w, http.StatusOK, rec.viewFor(r.Context()))
 }
 
 func writeHTML(w http.ResponseWriter, status int, body string) {

@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"workbench/internal/contracts"
 
 	"github.com/go-chi/chi/v5"
 	"workbench/internal/foundation/httpapi"
@@ -82,11 +83,15 @@ func writeMonitorError(w http.ResponseWriter, err error) {
 }
 
 func (m *Module) priceMonitor(ctx context.Context) (map[string]any, error) {
-	rows, err := m.queries.ListPriceRules(ctx)
+	rows, err := m.queries.ListPriceRules(ctx, contracts.UserID(ctx))
 	if err != nil {
 		return nil, &monitorOperationError{status: 500, code: "monitor_failed", message: "无法读取监控规则"}
 	}
-	state, err := m.queries.GetPriceMonitor(ctx)
+	state, err := m.queries.GetPriceMonitor(ctx, contracts.UserID(ctx))
+	if errors.Is(err, sql.ErrNoRows) {
+		state.Status = "waiting"
+		err = nil
+	}
 	if err != nil {
 		return nil, &monitorOperationError{status: 500, code: "monitor_failed", message: "无法读取监控状态"}
 	}
@@ -117,6 +122,9 @@ func (m *Module) getPriceMonitor(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) savePriceRuleValue(ctx context.Context, id string, input priceRuleInput, create bool) (priceRuleView, int, error) {
+	if _, err := m.requireUser(ctx); err != nil {
+		return priceRuleView{}, 0, err
+	}
 	input.Symbol = strings.ToUpper(strings.TrimSpace(input.Symbol))
 	bps := math.Round(input.ThresholdPercent * 100)
 	if !stockSymbol.MatchString(input.Symbol) || (input.Direction != "up" && input.Direction != "down") || input.Enabled == nil ||
@@ -132,7 +140,7 @@ func (m *Module) savePriceRuleValue(ctx context.Context, id string, input priceR
 	now := m.now().UTC().UnixMilli()
 	status := http.StatusOK
 	if create {
-		count, err := m.queries.CountPriceRules(ctx)
+		count, err := m.queries.CountPriceRules(ctx, contracts.UserID(ctx))
 		if err != nil {
 			return priceRuleView{}, 0, &monitorOperationError{status: 500, code: "rule_failed", message: "无法读取规则数量"}
 		}
@@ -141,14 +149,14 @@ func (m *Module) savePriceRuleValue(ctx context.Context, id string, input priceR
 		}
 		id, err = identity.New()
 		if err == nil {
-			err = m.queries.CreatePriceRule(ctx, investmentsqlc.CreatePriceRuleParams{ID: id, Symbol: input.Symbol, Direction: input.Direction, ThresholdBps: int64(bps), Enabled: enabled, CreatedAt: now, UpdatedAt: now})
+			err = m.queries.CreatePriceRule(ctx, investmentsqlc.CreatePriceRuleParams{UserID: contracts.UserID(ctx), ID: id, Symbol: input.Symbol, Direction: input.Direction, ThresholdBps: int64(bps), Enabled: enabled, CreatedAt: now, UpdatedAt: now})
 		}
 		if err != nil {
 			return priceRuleView{}, 0, &monitorOperationError{status: 500, code: "rule_failed", message: "无法创建监控规则"}
 		}
 		status = http.StatusCreated
 	} else {
-		count, err := m.queries.UpdatePriceRule(ctx, investmentsqlc.UpdatePriceRuleParams{ID: id, Symbol: input.Symbol, Direction: input.Direction, ThresholdBps: int64(bps), Enabled: enabled, UpdatedAt: now})
+		count, err := m.queries.UpdatePriceRule(ctx, investmentsqlc.UpdatePriceRuleParams{UserID: contracts.UserID(ctx), ID: id, Symbol: input.Symbol, Direction: input.Direction, ThresholdBps: int64(bps), Enabled: enabled, UpdatedAt: now})
 		if err != nil {
 			return priceRuleView{}, 0, &monitorOperationError{status: 500, code: "rule_failed", message: "无法更新监控规则"}
 		}
@@ -156,7 +164,7 @@ func (m *Module) savePriceRuleValue(ctx context.Context, id string, input priceR
 			return priceRuleView{}, 0, &monitorOperationError{status: 404, code: "rule_not_found", message: "监控规则不存在"}
 		}
 	}
-	row, err := m.queries.GetPriceRule(ctx, id)
+	row, err := m.queries.GetPriceRule(ctx, investmentsqlc.GetPriceRuleParams{UserID: contracts.UserID(ctx), ID: id})
 	if err != nil {
 		return priceRuleView{}, 0, &monitorOperationError{status: 500, code: "rule_failed", message: "无法读取监控规则"}
 	}
@@ -180,7 +188,7 @@ func (m *Module) savePriceRule(w http.ResponseWriter, r *http.Request) {
 func (m *Module) deletePriceRule(w http.ResponseWriter, r *http.Request) {
 	m.monitorMu.Lock()
 	defer m.monitorMu.Unlock()
-	count, err := m.queries.DeletePriceRule(r.Context(), chi.URLParam(r, "id"))
+	count, err := m.queries.DeletePriceRule(r.Context(), investmentsqlc.DeletePriceRuleParams{UserID: contracts.UserID(r.Context()), ID: chi.URLParam(r, "id")})
 	if err != nil {
 		httpapi.Error(w, 500, "rule_failed", "无法删除监控规则")
 		return
@@ -220,7 +228,7 @@ func (m *Module) getPriceHistory(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	rows, err := m.queries.ListPriceTriggers(r.Context(), investmentsqlc.ListPriceTriggersParams{BeforeTime: position.Time, BeforeID: position.ID, PageLimit: 51})
+	rows, err := m.queries.ListPriceTriggers(r.Context(), investmentsqlc.ListPriceTriggersParams{UserID: contracts.UserID(r.Context()), BeforeTime: position.Time, BeforeID: position.ID, PageLimit: 51})
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		httpapi.Error(w, 500, "history_failed", "无法读取触发记录")
 		return

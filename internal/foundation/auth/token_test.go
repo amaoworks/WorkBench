@@ -27,6 +27,10 @@ func tokenService(t *testing.T, initial bool) (*Service, http.Handler) {
 		markInitialPasswordChanged(t, db)
 	}
 	mux := http.NewServeMux()
+	mux.Handle("GET /api/admin/users", s.RequireAdmin(http.HandlerFunc(s.ListUsersHandler)))
+	mux.Handle("POST /api/admin/users", s.RequireAdmin(http.HandlerFunc(s.CreateUserHandler)))
+	mux.Handle("PATCH /api/admin/users/{id}", s.RequireAdmin(http.HandlerFunc(s.UpdateUserHandler)))
+	mux.Handle("POST /api/admin/users/{id}/password", s.RequireAdmin(http.HandlerFunc(s.ResetUserPasswordHandler)))
 	mux.HandleFunc("POST /api/auth/token", s.TokenHandler)
 	mux.HandleFunc("POST /api/auth/token/refresh", s.RefreshHandler)
 	mux.HandleFunc("POST /api/auth/login", s.LoginHandler)
@@ -60,7 +64,7 @@ func nativeRequest(h http.Handler, method, path string, body any, token string) 
 
 func nativeLogin(t *testing.T, h http.Handler) tokenResponse {
 	t.Helper()
-	w := nativeRequest(h, "POST", "/api/auth/token", map[string]string{"password": testPassword, "deviceName": "Test iPhone", "platform": "ios"}, "")
+	w := nativeRequest(h, "POST", "/api/auth/token", map[string]string{"username": "admin", "password": testPassword, "deviceName": "Test iPhone", "platform": "ios"}, "")
 	if w.Code != 200 {
 		t.Fatalf("native login: %d %s", w.Code, w.Body)
 	}
@@ -235,7 +239,7 @@ func TestBrowserLoginRejectsAuthorization(t *testing.T) {
 	s, h := tokenService(t, false)
 	login := nativeLogin(t, h)
 	for _, authorization := range []string{"Bearer " + login.AccessToken, "Bearer invalid", ""} {
-		r := httptest.NewRequest("POST", "http://127.0.0.1:8080/api/auth/login", strings.NewReader(`{"password":"`+testPassword+`"}`))
+		r := httptest.NewRequest("POST", "http://127.0.0.1:8080/api/auth/login", strings.NewReader(`{"username":"admin","password":"`+testPassword+`"}`))
 		r.Header.Set("Content-Type", "application/json")
 		r.Header.Set("Authorization", authorization)
 		w := httptest.NewRecorder()
@@ -279,7 +283,7 @@ func TestTokenSecurityDoesNotBypassBrowserCSRF(t *testing.T) {
 		{"Authorization": "Bearer " + login.AccessToken},
 		{"Origin": "https://evil.invalid"},
 	} {
-		r := httptest.NewRequest("POST", "http://127.0.0.1:8080/api/auth/token", strings.NewReader(`{"password":"`+testPassword+`","deviceName":"x","platform":"ios"}`))
+		r := httptest.NewRequest("POST", "http://127.0.0.1:8080/api/auth/token", strings.NewReader(`{"username":"admin","password":"`+testPassword+`","deviceName":"x","platform":"ios"}`))
 		r.Header.Set("Content-Type", "application/json")
 		for k, v := range headers {
 			r.Header.Set(k, v)
@@ -290,7 +294,7 @@ func TestTokenSecurityDoesNotBypassBrowserCSRF(t *testing.T) {
 			t.Fatalf("unsafe token request accepted: %v", headers)
 		}
 	}
-	if w := nativeRequest(h, "POST", "/api/auth/login", map[string]string{"password": testPassword}, ""); w.Code != 400 {
+	if w := nativeRequest(h, "POST", "/api/auth/login", map[string]string{"username": "admin", "password": testPassword}, ""); w.Code != 400 {
 		t.Fatal("browser login skipped CSRF")
 	}
 	if w := nativeRequest(h, "POST", "/api/auth/logout-all", nil, "invalid"); w.Code != 401 {

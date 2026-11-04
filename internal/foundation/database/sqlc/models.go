@@ -14,6 +14,7 @@ type AiConversation struct {
 	CreatedAt  int64         `json:"created_at"`
 	UpdatedAt  int64         `json:"updated_at"`
 	ArchivedAt sql.NullInt64 `json:"archived_at"`
+	UserID     string        `json:"user_id"`
 }
 
 type AiMessage struct {
@@ -41,6 +42,7 @@ type AiToolCall struct {
 	Error          sql.NullString `json:"error"`
 	CreatedAt      int64          `json:"created_at"`
 	CompletedAt    sql.NullInt64  `json:"completed_at"`
+	UserID         string         `json:"user_id"`
 }
 
 type AuthBrowserGrant struct {
@@ -57,13 +59,7 @@ type AuthBrowserSession struct {
 	CreatedAt       int64          `json:"created_at"`
 	LastSeenAt      int64          `json:"last_seen_at"`
 	RevokedAt       sql.NullInt64  `json:"revoked_at"`
-}
-
-type AuthCredential struct {
-	ID                 int64  `json:"id"`
-	PasswordHash       string `json:"password_hash"`
-	UpdatedAt          int64  `json:"updated_at"`
-	MustChangePassword int64  `json:"must_change_password"`
+	UserID          string         `json:"user_id"`
 }
 
 type AuthDeviceSession struct {
@@ -75,6 +71,7 @@ type AuthDeviceSession struct {
 	LastSeenAt        int64         `json:"last_seen_at"`
 	ExpiresAt         int64         `json:"expires_at"`
 	RevokedAt         sql.NullInt64 `json:"revoked_at"`
+	UserID            string        `json:"user_id"`
 }
 
 type AuthRefreshToken struct {
@@ -89,6 +86,19 @@ type AuthSigningKey struct {
 	PrivateKey []byte        `json:"private_key"`
 	CreatedAt  int64         `json:"created_at"`
 	RetiredAt  sql.NullInt64 `json:"retired_at"`
+}
+
+type AuthUser struct {
+	ID                 string `json:"id"`
+	Username           string `json:"username"`
+	DisplayName        string `json:"display_name"`
+	PasswordHash       string `json:"password_hash"`
+	Role               string `json:"role"`
+	Status             string `json:"status"`
+	CredentialVersion  int64  `json:"credential_version"`
+	MustChangePassword int64  `json:"must_change_password"`
+	CreatedAt          int64  `json:"created_at"`
+	UpdatedAt          int64  `json:"updated_at"`
 }
 
 type EventConsumerTopic struct {
@@ -119,6 +129,7 @@ type EventsLog struct {
 	OccurredAt    int64          `json:"occurred_at"`
 	AvailableAt   int64          `json:"available_at"`
 	CreatedAt     int64          `json:"created_at"`
+	UserID        string         `json:"user_id"`
 }
 
 type ExternalModule struct {
@@ -165,7 +176,9 @@ type Module struct {
 
 type Notification struct {
 	ID             string         `json:"id"`
+	RecipientID    string         `json:"recipient_id"`
 	SourceModule   string         `json:"source_module"`
+	External       int64          `json:"external"`
 	Severity       string         `json:"severity"`
 	Title          string         `json:"title"`
 	Content        string         `json:"content"`
@@ -177,7 +190,6 @@ type Notification struct {
 	ReadAt         sql.NullInt64  `json:"read_at"`
 	ArchivedAt     sql.NullInt64  `json:"archived_at"`
 	ExpiresAt      sql.NullInt64  `json:"expires_at"`
-	External       int64          `json:"external"`
 }
 
 type ScheduledJob struct {
@@ -212,6 +224,22 @@ type Session struct {
 	Token  string `json:"token"`
 	Data   []byte `json:"data"`
 	Expiry int64  `json:"expiry"`
+	UserID string `json:"user_id"`
+}
+
+type TelegramRecipient struct {
+	UserID        string `json:"user_id"`
+	Enabled       int64  `json:"enabled"`
+	ChatID        string `json:"chat_id"`
+	ActivatedAt   int64  `json:"activated_at"`
+	BotGeneration int64  `json:"bot_generation"`
+	StatusJson    string `json:"status_json"`
+}
+
+type UserSetting struct {
+	UserID  string `json:"user_id"`
+	Section string `json:"section"`
+	Value   string `json:"value"`
 }
 
 type WorkspaceSetting struct {

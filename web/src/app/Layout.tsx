@@ -5,6 +5,7 @@ import { Route, Routes, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { apiValidated } from "../shared/api";
 import { ThemeContext } from "../shared/theme";
+import { useCurrentUser, userStorageKey } from "../shared/auth";
 import { Button, ButtonLink } from "../components/ui/Button";
 import { Notice } from "../components/ui/Notice";
 import { Skeleton } from "../components/ui/States";
@@ -29,10 +30,9 @@ const moduleNavStatus = (item: WorkbenchModule): NavEntry["status"] =>
   available(item) ? undefined : item.lastError ? "error" : "starting";
 
 type CachedNav = { pageKey: string; label: string; route: string; icon: string; moduleId: string; order: number };
-const NAV_CACHE_KEY = "workbench.nav.v1";
-function readNavCache(): CachedNav[] | null {
+function readNavCache(key: string): CachedNav[] | null {
   try {
-    const value: unknown = JSON.parse(localStorage.getItem(NAV_CACHE_KEY) ?? "null");
+    const value: unknown = JSON.parse(localStorage.getItem(key) ?? "null");
     if (!Array.isArray(value)) return null;
     return value.filter(
       (item): item is CachedNav =>
@@ -42,15 +42,17 @@ function readNavCache(): CachedNav[] | null {
     return null;
   }
 }
-function writeNavCache(items: CachedNav[]) {
+function writeNavCache(key: string, items: CachedNav[]) {
   try {
-    localStorage.setItem(NAV_CACHE_KEY, JSON.stringify(items));
+    localStorage.setItem(key, JSON.stringify(items));
   } catch {
     /* Private mode or a full quota only loses the first-paint hint. */
   }
 }
 
 export function Layout() {
+  const user = useCurrentUser();
+  const navCacheKey = userStorageKey(user.id, `nav.${user.role}.v1`);
   const modules = useModules();
   const [aiOpen, setAIOpen] = useState(false);
   const settings = useSettings();
@@ -99,7 +101,7 @@ export function Layout() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
-  const [navCache] = useState(readNavCache);
+  const [navCache] = useState(() => readNavCache(navCacheKey));
   // Every enabled module keeps its slot; only the ready ones get routes.
   const moduleNav = useMemo(
     () =>
@@ -114,8 +116,8 @@ export function Layout() {
   const navigation = useMemo(() => moduleNav.filter((item) => !item.status), [moduleNav]);
   useEffect(() => {
     if (!modules.data) return;
-    writeNavCache(moduleNav.map(({ pageKey, label, route, icon, moduleId, order }) => ({ pageKey, label, route, icon, moduleId, order })));
-  }, [modules.data, moduleNav]);
+    writeNavCache(navCacheKey, moduleNav.map(({ pageKey, label, route, icon, moduleId, order }) => ({ pageKey, label, route, icon, moduleId, order })));
+  }, [modules.data, moduleNav, navCacheKey]);
   const entries = useMemo<NavEntry[]>(() => {
     const moduleEntries: NavEntry[] = modules.data
       ? moduleNav.map((item) => ({

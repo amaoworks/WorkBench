@@ -38,6 +38,10 @@ func decodeNewsTool(arguments json.RawMessage, target any) error {
 }
 
 func (m *Module) listArticlesTool(ctx context.Context, call contracts.ToolCall) (contracts.ToolResult, error) {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return contracts.ToolResult{}, err
+	}
+
 	var args struct {
 		Query    string  `json:"query"`
 		SourceID string  `json:"sourceId"`
@@ -68,6 +72,10 @@ func (m *Module) listArticlesTool(ctx context.Context, call contracts.ToolCall) 
 }
 
 func (m *Module) getArticleTool(ctx context.Context, call contracts.ToolCall) (contracts.ToolResult, error) {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return contracts.ToolResult{}, err
+	}
+
 	var args struct {
 		ArticleID string `json:"articleId"`
 	}
@@ -84,6 +92,10 @@ func (m *Module) getArticleTool(ctx context.Context, call contracts.ToolCall) (c
 }
 
 func (m *Module) createDigestTool(ctx context.Context, call contracts.ToolCall) (contracts.ToolResult, error) {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return contracts.ToolResult{}, err
+	}
+
 	var args struct {
 		Topic       string `json:"topic"`
 		PeriodHours int64  `json:"periodHours"`
@@ -92,7 +104,11 @@ func (m *Module) createDigestTool(ctx context.Context, call contracts.ToolCall) 
 	if err := decodeNewsTool(call.Arguments, &args); err != nil {
 		return contracts.ToolResult{}, err
 	}
-	digest, err := m.CreateDigest(ctx, DigestInput{Topic: args.Topic, PeriodHours: args.PeriodHours, MaxItems: args.MaxItems, Push: false}, "")
+	slot := ""
+	if call.IdempotencyKey != "" {
+		slot = "tool:" + hash(call.IdempotencyKey)
+	}
+	digest, err := m.CreateDigest(ctx, DigestInput{Topic: args.Topic, PeriodHours: args.PeriodHours, MaxItems: args.MaxItems, Push: false}, slot)
 	if err != nil {
 		return contracts.ToolResult{}, err
 	}

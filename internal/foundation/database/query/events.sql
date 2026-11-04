@@ -1,9 +1,9 @@
 -- name: InsertEvent :exec
 INSERT INTO events_log(
-    id, topic, schema_version, source_module, aggregate_id,
+    id, user_id, topic, schema_version, source_module, aggregate_id,
     payload_json, occurred_at, available_at, created_at
 ) VALUES (
-    sqlc.arg(id), sqlc.arg(topic), sqlc.arg(schema_version), sqlc.arg(source_module),
+    sqlc.arg(id), sqlc.arg(user_id), sqlc.arg(topic), sqlc.arg(schema_version), sqlc.arg(source_module),
     NULLIF(sqlc.arg(aggregate_id), ''), sqlc.arg(payload_json), sqlc.arg(occurred_at),
     sqlc.arg(available_at), sqlc.arg(created_at)
 );
@@ -45,7 +45,7 @@ SELECT EXISTS (
 );
 
 -- name: GetClaimableDelivery :one
-SELECT e.id AS event_id, e.topic, e.schema_version, e.source_module,
+SELECT e.id AS event_id, e.user_id, e.topic, e.schema_version, e.source_module,
        COALESCE(e.aggregate_id, '') AS aggregate_id, e.occurred_at,
        e.payload_json, d.attempts
 FROM event_deliveries d

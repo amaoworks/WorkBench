@@ -46,6 +46,10 @@ func (m *Module) createTaskTool(ctx context.Context, call contracts.ToolCall) (c
 }
 
 func (m *Module) listTasksTool(ctx context.Context, call contracts.ToolCall) (contracts.ToolResult, error) {
+	userID, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return contracts.ToolResult{}, err
+	}
 	var input struct {
 		View     string `json:"view"`
 		TimeZone string `json:"timeZone"`
@@ -64,7 +68,8 @@ func (m *Module) listTasksTool(ctx context.Context, call contracts.ToolCall) (co
 		return contracts.ToolResult{}, err
 	}
 	rows, err := m.queries.ListTasksPage(ctx, todosqlc.ListTasksPageParams{
-		View: view, NowMs: now.UnixMilli(), EndToday: endToday.UnixMilli(), EndWeek: endWeek.UnixMilli(),
+		UserID: userID,
+		View:   view, NowMs: now.UnixMilli(), EndToday: endToday.UnixMilli(), EndWeek: endWeek.UnixMilli(),
 		Due: math.MaxInt64, PageLimit: input.Limit,
 	})
 	if err != nil {
@@ -122,6 +127,10 @@ func (m *Module) updateTaskTool(ctx context.Context, call contracts.ToolCall) (c
 }
 
 func (m *Module) completeTaskTool(ctx context.Context, call contracts.ToolCall) (contracts.ToolResult, error) {
+	userID, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return contracts.ToolResult{}, err
+	}
 	var input struct {
 		TaskID string `json:"taskId"`
 	}
@@ -131,7 +140,7 @@ func (m *Module) completeTaskTool(ctx context.Context, call contracts.ToolCall) 
 	if !cursorID.MatchString(input.TaskID) {
 		return contracts.ToolResult{}, errors.New("invalid taskId")
 	}
-	row, err := m.queries.GetTask(ctx, input.TaskID)
+	row, err := m.queries.GetTask(ctx, todosqlc.GetTaskParams{ID: input.TaskID, UserID: userID})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return contracts.ToolResult{}, errors.New("task not found")

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"workbench/internal/contracts"
 	"workbench/internal/modules/news/sqlc"
 )
 
@@ -34,13 +35,21 @@ func settingsDTO(raw string) (Settings, error) {
 	return s, err
 }
 func (m *Module) Settings(ctx context.Context) (Settings, error) {
-	v, err := m.q.GetSettings(ctx)
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return Settings{}, err
+	}
+
+	v, err := m.settingsState(ctx, m.q)
 	if err != nil {
 		return Settings{}, err
 	}
 	return settingsDTO(v.SettingsJson)
 }
 func (m *Module) SaveSettings(ctx context.Context, s Settings) (Settings, error) {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return Settings{}, err
+	}
+
 	s.TargetLanguage = strings.TrimSpace(s.TargetLanguage)
 	s.TimeZone = strings.TrimSpace(s.TimeZone)
 	s.DigestTopic = strings.TrimSpace(s.DigestTopic)
@@ -54,7 +63,7 @@ func (m *Module) SaveSettings(ctx context.Context, s Settings) (Settings, error)
 	defer m.settingsMu.Unlock()
 	raw, _ := json.Marshal(s)
 	err := m.mutate(ctx, "news.settings.changed", "settings", func(q *newssqlc.Queries) error {
-		old, err := q.GetSettings(ctx)
+		old, err := m.settingsState(ctx, q)
 		if err != nil {
 			return err
 		}
@@ -63,11 +72,11 @@ func (m *Module) SaveSettings(ctx context.Context, s Settings) (Settings, error)
 			return err
 		}
 		if before.TargetLanguage != s.TargetLanguage {
-			if err = q.ResetArticleAI(ctx); err != nil {
+			if err = q.ResetArticleAI(ctx, contracts.UserID(ctx)); err != nil {
 				return err
 			}
 		}
-		return q.SaveSettings(ctx, string(raw))
+		return q.SaveSettings(ctx, newssqlc.SaveSettingsParams{UserID: contracts.UserID(ctx), SettingsJson: string(raw)})
 	})
 	return s, err
 }
@@ -84,15 +93,19 @@ type Stats struct {
 }
 
 func (m *Module) Stats(ctx context.Context) (Stats, error) {
-	row, err := m.q.NewsStats(ctx)
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return Stats{}, err
+	}
+
+	row, err := m.q.NewsStats(ctx, contracts.UserID(ctx))
 	if err != nil {
 		return Stats{}, err
 	}
-	sources, err := m.q.CountSources(ctx)
+	sources, err := m.q.CountSources(ctx, contracts.UserID(ctx))
 	if err != nil {
 		return Stats{}, err
 	}
-	state, err := m.q.GetSettings(ctx)
+	state, err := m.settingsState(ctx, m.q)
 	if err != nil {
 		return Stats{}, err
 	}
@@ -100,12 +113,23 @@ func (m *Module) Stats(ctx context.Context) (Stats, error) {
 	if err != nil {
 		return Stats{}, err
 	}
-	calls, err := m.q.GetAIUsage(ctx, m.usageDay(s))
+	calls, err := m.q.GetAIUsage(ctx, newssqlc.GetAIUsageParams{UserID: contracts.UserID(ctx), Day: m.usageDay(s)})
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return Stats{}, err
 	}
 	return Stats{Sources: sources, Articles: row.Articles, Unread: row.Unread, Starred: row.Starred, AICallsToday: calls, AILimit: s.DailyAILimit, LastDigestAt: optionalTime(state.LastDigestAt), LastDigestError: state.LastDigestError}, nil
 }
+func (m *Module) settingsState(ctx context.Context, q *newssqlc.Queries) (newssqlc.NewsSetting, error) {
+	id, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return newssqlc.NewsSetting{}, err
+	}
+	if err := q.EnsureSettings(ctx, id); err != nil {
+		return newssqlc.NewsSetting{}, err
+	}
+	return q.GetSettings(ctx, id)
+}
+
 func (m *Module) usageDay(s Settings) string {
 	loc, _ := time.LoadLocation(s.TimeZone)
 	if loc == nil {

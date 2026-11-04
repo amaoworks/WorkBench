@@ -19,6 +19,7 @@ export type PriceRule = z.infer<typeof priceRuleSchema>;
 export type PriceRuleInput = Pick<PriceRule, "symbol" | "direction" | "thresholdPercent" | "enabled">;
 
 export const schwabSettingsSchema = z.object({
+  configured: z.boolean(),
   appKey: z.string(),
   callbackUrl: z.string(),
   hasAppSecret: z.boolean(),

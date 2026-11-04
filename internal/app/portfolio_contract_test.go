@@ -37,12 +37,15 @@ func capturePortfolioContracts(t *testing.T, a *App, capture func(string, string
 	http.DefaultTransport = portfolioContractTransport{fallback: original}
 	defer func() { http.DefaultTransport = original }()
 	now := time.Now()
-	if _, err := a.DB().Exec(`UPDATE investment_schwab SET access_token='contract-access',refresh_token='contract-refresh',token_expires_at=?,authorized_at=? WHERE id=1`,
+	if _, err := a.DB().Exec(`INSERT INTO investment_schwab_connections(user_id,app_version) SELECT 'owner',version FROM investment_schwab_app WHERE id=1 ON CONFLICT(user_id) DO NOTHING`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.DB().Exec(`UPDATE investment_schwab_connections SET access_token='contract-access',refresh_token='contract-refresh',token_expires_at=?,authorized_at=? WHERE user_id='owner'`,
 		now.Add(time.Hour).UnixMilli(), now.UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
-		if _, err := a.DB().Exec(`UPDATE investment_schwab SET access_token='',refresh_token='',token_expires_at=0,authorized_at=0 WHERE id=1`); err != nil {
+		if _, err := a.DB().Exec(`UPDATE investment_schwab_connections SET access_token='',refresh_token='',token_expires_at=0,authorized_at=0 WHERE user_id='owner'`); err != nil {
 			t.Error(err)
 		}
 	}()
@@ -59,10 +62,10 @@ func capturePortfolioContracts(t *testing.T, a *App, capture func(string, string
 		t.Fatal(err)
 	}
 	day := now.In(location).Format("2006-01-02")
-	if _, err := a.DB().Exec(`INSERT INTO investment_networth_account_scopes(authorized_at,account_hash) VALUES(?,'contract-account')`, now.UnixMilli()); err != nil {
+	if _, err := a.DB().Exec(`INSERT INTO investment_networth_account_scopes(user_id,authorized_at,account_hash) VALUES('owner',?,'contract-account')`, now.UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.DB().Exec(`INSERT INTO investment_networth_snapshots(account_hash,day,net_worth,cash,invested,day_pnl,captured_at) VALUES('contract-account',?,1200,100,1100,20,?)`, day, now.UnixMilli()); err != nil {
+	if _, err := a.DB().Exec(`INSERT INTO investment_networth_snapshots(user_id,account_hash,day,net_worth,cash,invested,day_pnl,captured_at) VALUES('owner','contract-account',?,1200,100,1100,20,?)`, day, now.UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
 	capture("networth.ready", "investmentNetworth", "GET", "/api/modules/investment/networth?range=1m", "", 200)

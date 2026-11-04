@@ -32,16 +32,18 @@ PostgreSQL 另外保留一个连接会话，以 advisory lock 限制同一数据
 | 可靠事件 | `events_log` | 领域事件、JSON 载荷、可投递时间 |
 | 可靠事件 | `event_deliveries` | 事件/消费者唯一记录、租约、尝试次数和结果 |
 | 可靠事件 | `event_consumer_topics` | 已注册消费者的订阅主题映射，供事务内扇出投递 |
-| 鉴权 | `auth_credentials`、`sessions` | 单用户密码哈希、凭据版本、首次改密状态、会话数据与到期时间 |
+| 鉴权 | `auth_users`、`sessions`、`auth_device_sessions`、`auth_browser_sessions` | 用户、角色、状态、密码哈希、凭据版本、首次改密状态与按用户归属的登录会话 |
 | 调度 | `scheduled_jobs`、`scheduled_job_runs` | 代码定义的持久化状态、执行次数、结果和错误 |
 | 通知 | `notifications` | 提醒内容、幂等键、读取/归档/过期状态、来源和显式外发标志 |
 | 对话 | `ai_conversations`、`ai_messages` | 对话元数据和消息 |
 | 工具运行时 | `ai_tool_calls` | 工具执行、参数审计、幂等键和结果 |
-| 工作空间设置 | `workspace_settings` | 按 section 存储 JSON：`ai`、`appearance`、`dashboard`、`logging`、`telegram`、`telegram_status`；日志内容写入 stderr |
+| 工作空间设置 | `workspace_settings` | AI、日志、Telegram 服务等平台共享配置；日志内容写入 stderr |
+| 个人设置 | `user_settings` | `(user_id, section)` 范围内的外观、总览布局和接收偏好 |
 | Todo | `todo_tasks` | 标题、说明、提醒时间、优先级、分类、完成状态和创建/更新时间 |
 | Todo / Wallos | `todo_wallos_settings` | 联动配置、密钥、最近成功同步和错误 |
 | Todo / Wallos | `todo_wallos_occurrences` | 外部来源、订阅 ID、付款日期与待办映射 |
-| Investment | `investment_schwab` | App Key/Secret、回调、访问/刷新令牌、streamer 缓存和 OAuth state |
+| Investment | `investment_schwab_app`、`investment_schwab_connections` | 平台 App Key/Secret、回调及配置版本；各用户独立的令牌、streamer 缓存、OAuth state 与授权状态 |
+| Investment | `investment_trade_audit` | 按用户与账户记录交易代理操作及结果 |
 | Investment | `investment_futu` | 富途账号、登录密码 MD5 摘要、富途与夜盘开关和最近错误；历史地址及许可字段不再控制连接，连接由部署配置管理 |
 | Investment | `investment_futu_bars` | 夜盘 K 线本地缓存（避免重复消耗富途历史额度） |
 | Investment | `investment_price_rules` | 标的、阈值、启停、规则版本及最近有效报价/错误 |
@@ -54,7 +56,7 @@ PostgreSQL 另外保留一个连接会话，以 advisory lock 限制同一数据
 | News | `news_articles`、`news_rules` | 文章、阅读状态、匹配规则、翻译摘要及缓存 |
 | News | `news_settings`、`news_digests`、`news_ai_usage` | 处理与简报配置、简报快照和通知 ID、每日调用额度 |
 
-平台设置可供通用能力使用。例如总览布局由 Dashboard 能力管理，但保存在平台 `workspace_settings`；业务配置使用模块自己的表。
+平台共享设置可供通用能力使用。总览布局由 Dashboard 能力管理，外观和布局保存于 `user_settings`；业务配置使用模块自己的表。个人业务根实体保存 `user_id`，通知保存 `recipient_id`，事件保存用户归属；子实体通过所属根实体验证归属。详情、统计、关联和幂等键同样限定用户。旧数据迁给 `owner`，登录名为 `admin`，见[用户与权限](multi-user.md)。
 
 ## 迁移和查询
 
@@ -68,10 +70,10 @@ PostgreSQL 另外保留一个连接会话，以 advisory lock 限制同一数据
 
 - Todo 写入、Wallos 待办映射与对应领域事件使用同一 `*sql.Tx`。投资触发快照、站内通知与通知创建事件也原子提交。外部请求在写事务外完成。PostgreSQL 显式事务默认使用 Serializable，冲突时整体回滚。
 - 事件投递以 `(event_id, consumer_id)` 唯一。启动时 `ResetConsumers` 清空 `event_consumer_topics`，`Dispatcher.Register` 登记当前消费者主题并一次性补齐历史投递；运行期 `PublishTx` 在写入 `events_log` 的同一事务内按 `event_consumer_topics` 扇出 `event_deliveries`。Dispatcher 领取后写入租约，失败重试，次数耗尽为 `dead`；处理中断可能再次投递，消费者须幂等。
-- 通知的 `idempotency_key` 全局唯一；通过通知服务创建时连同通知变更事件一起提交。
+- 通知的幂等键在收件人范围内唯一；通过通知服务创建时连同通知变更事件一起提交。
 - Job 执行记录以 `(job_id, scheduled_at, attempt)` 唯一，定义由代码装配；数据库保存恢复和审计状态。
-- AI 写工具以工具名和幂等键查重。运行时审计与业务 Handler 不共用一个原子事务，不能视为任意副作用的严格一次执行保证。
-- Wallos 以 `(source, subscription_id, payment_date)` 去重，其中 source 是配置地址的哈希。任务被删除后允许下次同步重建；完成状态会保留。
+- AI 写工具以用户、工具名和幂等键查重。运行时审计与业务 Handler 不共用一个原子事务，不能视为任意副作用的严格一次执行保证。
+- Wallos 在用户范围内以 `(source, subscription_id, payment_date)` 去重，其中 source 是配置地址的哈希。任务被删除后允许下次同步重建；完成状态会保留。
 - Investment 按规则和美东交易日去重；规则版本校验阻止在 HTTP 查询期间被修改、暂停或删除的规则产生迟到提醒。
 
 时间通常以 UTC Unix 毫秒持久化，HTTP 中的业务时间使用 RFC3339。实体 ID 使用 `foundation/identity`；业务自然键、模块 ID 和资源 ID 沿用各自语义。Wallos 的付款日期保留远端日历日期，并按配置时区计算提醒时间。

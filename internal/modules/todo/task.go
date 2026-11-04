@@ -57,6 +57,10 @@ var (
 )
 
 func (m *Module) Create(ctx context.Context, input CreateTask) (Task, error) {
+	userID, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return Task{}, err
+	}
 	requestHash, err := createRequestHash(input)
 	if err != nil {
 		return Task{}, err
@@ -69,7 +73,7 @@ func (m *Module) Create(ctx context.Context, input CreateTask) (Task, error) {
 	defer tx.Rollback()
 	queries := m.queries.WithTx(tx)
 	if input.IdempotencyKey != "" {
-		stored, lookupErr := queries.GetCreateRequest(ctx, input.IdempotencyKey)
+		stored, lookupErr := queries.GetCreateRequest(ctx, todosqlc.GetCreateRequestParams{RequestKey: input.IdempotencyKey, UserID: userID})
 		if lookupErr == nil {
 			if stored.RequestHash != requestHash {
 				return Task{}, ErrIdempotencyConflict
@@ -95,7 +99,7 @@ func (m *Module) Create(ctx context.Context, input CreateTask) (Task, error) {
 	if input.IdempotencyKey != "" {
 		response, _ := json.Marshal(task)
 		if err := queries.InsertCreateRequest(ctx, todosqlc.InsertCreateRequestParams{
-			RequestKey: input.IdempotencyKey, RequestHash: requestHash, ResponseJson: string(response),
+			RequestKey: input.IdempotencyKey, RequestHash: requestHash, ResponseJson: string(response), UserID: userID,
 		}); err != nil {
 			return Task{}, fmt.Errorf("save idempotent task response: %w", err)
 		}
@@ -145,6 +149,10 @@ func normalizeTaskMetadata(priority, category string) (string, string, error) {
 }
 
 func (m *Module) createTaskTx(ctx context.Context, tx *sql.Tx, id string, input CreateTask, now time.Time) (Task, error) {
+	userID, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return Task{}, err
+	}
 	title, err := validateTaskContent(input.Title, input.Description)
 	if err != nil {
 		return Task{}, err
@@ -156,7 +164,7 @@ func (m *Module) createTaskTx(ctx context.Context, tx *sql.Tx, id string, input 
 	err = m.queries.WithTx(tx).CreateTask(ctx, todosqlc.CreateTaskParams{
 		ID: id, Title: title, Description: input.Description,
 		DueAt: toNullTime(input.DueAt), Priority: priority, Category: toNullString(category),
-		CreatedAt: now.UnixMilli(), UpdatedAt: now.UnixMilli(),
+		CreatedAt: now.UnixMilli(), UpdatedAt: now.UnixMilli(), UserID: userID,
 	})
 	if err != nil {
 		return Task{}, fmt.Errorf("insert task: %w", err)
@@ -172,12 +180,16 @@ func (m *Module) createTaskTx(ctx context.Context, tx *sql.Tx, id string, input 
 }
 
 func (m *Module) update(ctx context.Context, id string, input UpdateTask) (Task, error) {
+	userID, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return Task{}, err
+	}
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Task{}, err
 	}
 	defer tx.Rollback()
-	row, err := m.queries.WithTx(tx).GetTask(ctx, id)
+	row, err := m.queries.WithTx(tx).GetTask(ctx, todosqlc.GetTaskParams{ID: id, UserID: userID})
 	if err != nil {
 		return Task{}, err
 	}
@@ -227,6 +239,10 @@ func (m *Module) update(ctx context.Context, id string, input UpdateTask) (Task,
 }
 
 func (m *Module) updateTaskTx(ctx context.Context, tx *sql.Tx, task Task, topic string) (Task, error) {
+	userID, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return Task{}, err
+	}
 	title, err := validateTaskContent(task.Title, task.Description)
 	if err != nil {
 		return Task{}, err
@@ -240,7 +256,7 @@ func (m *Module) updateTaskTx(ctx context.Context, tx *sql.Tx, task Task, topic 
 	rows, err := m.queries.WithTx(tx).UpdateTask(ctx, todosqlc.UpdateTaskParams{
 		Title: task.Title, Description: task.Description, DueAt: toNullTime(task.DueAt),
 		CompletedAt: toNullTime(task.CompletedAt), Priority: task.Priority, Category: toNullString(task.Category),
-		UpdatedAt: task.UpdatedAt.UnixMilli(), ID: task.ID, Revision: expectedRevision,
+		UpdatedAt: task.UpdatedAt.UnixMilli(), ID: task.ID, Revision: expectedRevision, UserID: userID,
 	})
 	if err != nil {
 		return Task{}, err
@@ -256,13 +272,17 @@ func (m *Module) updateTaskTx(ctx context.Context, tx *sql.Tx, task Task, topic 
 }
 
 func (m *Module) publishTaskTx(ctx context.Context, tx *sql.Tx, task Task, topic string) error {
+	userID, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return err
+	}
 	data := map[string]string{"taskId": task.ID}
 	if topic == "todo.task.created" {
 		data["title"] = task.Title
 	}
 	payload, _ := json.Marshal(data)
-	_, err := m.events.PublishTx(ctx, tx, contracts.NewEvent{
-		Topic: topic, SchemaVersion: 1, SourceModule: "todo", AggregateID: task.ID, Payload: payload,
+	_, err = m.events.PublishTx(ctx, tx, contracts.NewEvent{
+		UserID: userID, Topic: topic, SchemaVersion: 1, SourceModule: "todo", AggregateID: task.ID, Payload: payload,
 	})
 	return err
 }

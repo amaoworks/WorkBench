@@ -22,6 +22,9 @@ func (s *TextService) SetProvider(provider contracts.AIProvider) {
 	s.provider = provider
 }
 func (s *TextService) GenerateText(ctx context.Context, input contracts.TextRequest) (string, error) {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return "", err
+	}
 	s.mu.RLock()
 	provider := s.provider
 	s.mu.RUnlock()

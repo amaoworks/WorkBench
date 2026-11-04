@@ -16,6 +16,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
+	"workbench/internal/contracts"
 	dbsqlc "workbench/internal/foundation/database/sqlc"
 	"workbench/internal/foundation/httpapi"
 )
@@ -92,7 +93,7 @@ func (s *Service) issueTokens(ctx context.Context, q *dbsqlc.Queries, session db
 	}
 	expires := min(now.Add(accessLifetime).Unix(), session.ExpiresAt/1000)
 	claims := accessClaims{SessionID: session.ID, Version: session.CredentialVersion, RegisteredClaims: jwt.RegisteredClaims{
-		Issuer: "workbench", Subject: "owner", Audience: jwt.ClaimStrings{"workbench-api"},
+		Issuer: "workbench", Subject: session.UserID, Audience: jwt.ClaimStrings{"workbench-api"},
 		ExpiresAt: jwt.NewNumericDate(time.Unix(expires, 0)), IssuedAt: jwt.NewNumericDate(now), ID: uuid.NewString(),
 	}}
 	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
@@ -127,8 +128,8 @@ func (s *Service) validateAccess(ctx context.Context, raw string) (*accessClaims
 			return nil, errInvalidToken
 		}
 		return ed25519.PrivateKey(key.PrivateKey).Public(), nil
-	}, jwt.WithValidMethods([]string{"EdDSA"}), jwt.WithIssuer("workbench"), jwt.WithAudience("workbench-api"), jwt.WithSubject("owner"), jwt.WithExpirationRequired(), jwt.WithIssuedAt(), jwt.WithTimeFunc(s.now))
-	if err != nil || !token.Valid || claims.SessionID == "" || claims.IssuedAt == nil || claims.ID == "" {
+	}, jwt.WithValidMethods([]string{"EdDSA"}), jwt.WithIssuer("workbench"), jwt.WithAudience("workbench-api"), jwt.WithExpirationRequired(), jwt.WithIssuedAt(), jwt.WithTimeFunc(s.now))
+	if err != nil || !token.Valid || claims.SessionID == "" || claims.Subject == "" || claims.IssuedAt == nil || claims.ID == "" {
 		return nil, errInvalidToken
 	}
 	if err := s.checkDevice(ctx, claims); err != nil {
@@ -145,11 +146,11 @@ func (s *Service) checkDevice(ctx context.Context, claims *accessClaims) error {
 	if err != nil {
 		return err
 	}
-	credential, err := s.queries.GetAuthCredential(ctx)
+	credential, err := s.queries.GetAuthUser(ctx, session.UserID)
 	if err != nil {
 		return err
 	}
-	if session.RevokedAt.Valid || session.ExpiresAt <= s.now().UnixMilli() || session.CredentialVersion != claims.Version || credential.UpdatedAt != claims.Version {
+	if session.RevokedAt.Valid || session.ExpiresAt <= s.now().UnixMilli() || session.UserID != claims.Subject || session.CredentialVersion != claims.Version || credential.CredentialVersion != claims.Version || credential.Status != "active" {
 		return errInvalidToken
 	}
 	if s.now().UnixMilli()-session.LastSeenAt >= time.Minute.Milliseconds() {
@@ -165,6 +166,7 @@ func (s *Service) TokenHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
+		Username   string `json:"username"`
 		Password   string `json:"password"`
 		DeviceName string `json:"deviceName"`
 		Platform   string `json:"platform"`
@@ -178,23 +180,18 @@ func (s *Service) TokenHandler(w http.ResponseWriter, r *http.Request) {
 		httpapi.Error(w, 400, "invalid_device", "请提供设备名称和平台")
 		return
 	}
-	if retry, err := s.passwordLimit.acquire(true); err != nil {
+	if retry, err := s.acquireLogin(r, input.Username); err != nil {
 		writePasswordLimit(w, retry, err)
 		return
 	}
 	defer s.passwordLimit.release()
-	credential, err := s.queries.GetAuthCredential(r.Context())
-	if err != nil {
-		httpapi.Error(w, 500, "authentication_failed", "无法读取凭据")
-		return
-	}
-	valid, err := verifyPassword(input.Password, credential.PasswordHash)
+	credential, valid, err := s.verifyLogin(r.Context(), input.Username, input.Password)
 	if err != nil {
 		httpapi.Error(w, 500, "authentication_failed", "无法验证密码")
 		return
 	}
 	if !valid {
-		httpapi.Error(w, 401, "invalid_credentials", "密码不正确")
+		httpapi.Error(w, 401, "invalid_credentials", "用户名或密码不正确")
 		return
 	}
 	tx, err := s.db.BeginTx(r.Context(), nil)
@@ -205,14 +202,16 @@ func (s *Service) TokenHandler(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 	q := s.queries.WithTx(tx)
 	now := s.now().UnixMilli()
-	session := dbsqlc.AuthDeviceSession{ID: uuid.NewString(), DeviceName: input.DeviceName, Platform: input.Platform, CredentialVersion: credential.UpdatedAt, CreatedAt: now, LastSeenAt: now, ExpiresAt: s.now().Add(deviceLifetime).UnixMilli()}
-	err = q.InsertDeviceSession(r.Context(), dbsqlc.InsertDeviceSessionParams{ID: session.ID, DeviceName: session.DeviceName, Platform: session.Platform, CredentialVersion: session.CredentialVersion, CreatedAt: now, LastSeenAt: now, ExpiresAt: session.ExpiresAt})
+	session := dbsqlc.AuthDeviceSession{ID: uuid.NewString(), UserID: credential.ID, DeviceName: input.DeviceName, Platform: input.Platform, CredentialVersion: credential.CredentialVersion, CreatedAt: now, LastSeenAt: now, ExpiresAt: s.now().Add(deviceLifetime).UnixMilli()}
+	err = q.InsertDeviceSession(r.Context(), dbsqlc.InsertDeviceSessionParams{ID: session.ID, UserID: session.UserID, DeviceName: session.DeviceName, Platform: session.Platform, CredentialVersion: session.CredentialVersion, CreatedAt: now, LastSeenAt: now, ExpiresAt: session.ExpiresAt})
 	if err != nil {
+		_ = tx.Rollback()
 		tokenFailed(w)
 		return
 	}
 	result, err := s.issueTokens(r.Context(), q, session, credential.MustChangePassword != 0)
 	if err != nil {
+		_ = tx.Rollback()
 		tokenFailed(w)
 		return
 	}
@@ -255,16 +254,19 @@ func (s *Service) RefreshHandler(w http.ResponseWriter, r *http.Request) {
 	q := s.queries.WithTx(tx)
 	old, err := q.GetRefreshToken(r.Context(), tokenHash(input.RefreshToken))
 	if errors.Is(err, sql.ErrNoRows) {
+		_ = tx.Rollback()
 		invalidToken(w)
 		return
 	}
 	if err != nil {
+		_ = tx.Rollback()
 		tokenFailed(w)
 		return
 	}
 	now := s.now().UnixMilli()
 	if old.UsedAt.Valid {
 		if _, err := q.RevokeDeviceSession(r.Context(), dbsqlc.RevokeDeviceSessionParams{ID: old.SessionID, RevokedAt: sql.NullInt64{Int64: now, Valid: true}}); err != nil {
+			_ = tx.Rollback()
 			tokenFailed(w)
 			return
 		}
@@ -277,33 +279,40 @@ func (s *Service) RefreshHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	session, err := q.GetDeviceSession(r.Context(), old.SessionID)
 	if err != nil {
+		_ = tx.Rollback()
 		tokenFailed(w)
 		return
 	}
-	credential, err := q.GetAuthCredential(r.Context())
+	credential, err := q.GetAuthUser(r.Context(), session.UserID)
 	if err != nil {
+		_ = tx.Rollback()
 		tokenFailed(w)
 		return
 	}
-	if session.RevokedAt.Valid || session.ExpiresAt <= now || session.CredentialVersion != credential.UpdatedAt {
+	if session.RevokedAt.Valid || session.ExpiresAt <= now || session.CredentialVersion != credential.CredentialVersion || credential.Status != "active" {
+		_ = tx.Rollback()
 		invalidToken(w)
 		return
 	}
 	count, err := q.ConsumeRefreshToken(r.Context(), dbsqlc.ConsumeRefreshTokenParams{TokenHash: old.TokenHash, UsedAt: sql.NullInt64{Int64: now, Valid: true}})
 	if err != nil {
+		_ = tx.Rollback()
 		tokenFailed(w)
 		return
 	}
 	if count != 1 {
+		_ = tx.Rollback()
 		invalidToken(w)
 		return
 	}
 	if q.TouchDeviceSession(r.Context(), dbsqlc.TouchDeviceSessionParams{ID: session.ID, LastSeenAt: now}) != nil {
+		_ = tx.Rollback()
 		tokenFailed(w)
 		return
 	}
 	result, err := s.issueTokens(r.Context(), q, session, credential.MustChangePassword != 0)
 	if err != nil {
+		_ = tx.Rollback()
 		tokenFailed(w)
 		return
 	}
@@ -317,6 +326,11 @@ func (s *Service) RefreshHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Service) RevokeTokenHandler(w http.ResponseWriter, r *http.Request) {
 	if DeviceSessionID(r) == "" {
 		httpapi.Error(w, 400, "bearer_required", "请使用设备登录凭据")
+		return
+	}
+	device, err := s.queries.GetDeviceSession(r.Context(), DeviceSessionID(r))
+	if err != nil || contracts.UserID(r.Context()) == "" || device.UserID != contracts.UserID(r.Context()) {
+		invalidToken(w)
 		return
 	}
 	if _, err := s.queries.RevokeDeviceSession(r.Context(), dbsqlc.RevokeDeviceSessionParams{ID: DeviceSessionID(r), RevokedAt: sql.NullInt64{Int64: s.now().UnixMilli(), Valid: true}}); err != nil {
@@ -338,7 +352,12 @@ type sessionView struct {
 
 func (s *Service) SessionsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	devices, err := s.queries.ListDeviceSessions(r.Context(), s.now().UnixMilli())
+	userID, err := contracts.RequireUserID(r.Context())
+	if err != nil {
+		invalidToken(w)
+		return
+	}
+	devices, err := s.queries.ListDeviceSessions(r.Context(), dbsqlc.ListDeviceSessionsParams{ExpiresAt: s.now().UnixMilli(), UserID: userID})
 	if err != nil {
 		tokenFailed(w)
 		return
@@ -347,7 +366,7 @@ func (s *Service) SessionsHandler(w http.ResponseWriter, r *http.Request) {
 	for _, d := range devices {
 		items = append(items, sessionView{ID: d.ID, DeviceName: d.DeviceName, Platform: d.Platform, CreatedAt: time.UnixMilli(d.CreatedAt).UTC(), LastSeenAt: time.UnixMilli(d.LastSeenAt).UTC(), ExpiresAt: time.UnixMilli(d.ExpiresAt).UTC(), Current: d.ID == DeviceSessionID(r)})
 	}
-	browsers, err := s.queries.ListBrowserSessions(r.Context(), s.now().UnixMilli())
+	browsers, err := s.queries.ListBrowserSessions(r.Context(), dbsqlc.ListBrowserSessionsParams{Now: s.now().UnixMilli(), UserID: userID})
 	if err != nil {
 		tokenFailed(w)
 		return
@@ -364,12 +383,26 @@ func (s *Service) SessionsHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) DeleteSessionHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	count, err := s.queries.RevokeDeviceSession(r.Context(), dbsqlc.RevokeDeviceSessionParams{ID: id, RevokedAt: sql.NullInt64{Int64: s.now().UnixMilli(), Valid: true}})
+	userID, err := contracts.RequireUserID(r.Context())
 	if err != nil {
+		invalidToken(w)
+		return
+	}
+	device, err := s.queries.GetDeviceSession(r.Context(), id)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		tokenFailed(w)
 		return
 	}
-	if count == 0 {
+	if err == nil {
+		if device.UserID != userID {
+			httpapi.Error(w, 404, "session_not_found", "登录设备不存在")
+			return
+		}
+		if _, err := s.queries.RevokeDeviceSession(r.Context(), dbsqlc.RevokeDeviceSessionParams{ID: id, RevokedAt: sql.NullInt64{Int64: s.now().UnixMilli(), Valid: true}}); err != nil {
+			tokenFailed(w)
+			return
+		}
+	} else {
 		browser, err := s.queries.GetBrowserSession(r.Context(), id)
 		if errors.Is(err, sql.ErrNoRows) {
 			httpapi.Error(w, 404, "session_not_found", "登录设备不存在")
@@ -377,6 +410,10 @@ func (s *Service) DeleteSessionHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			tokenFailed(w)
+			return
+		}
+		if browser.UserID != userID {
+			httpapi.Error(w, 404, "session_not_found", "登录设备不存在")
 			return
 		}
 		if s.queries.DeleteSession(r.Context(), browser.TokenHash) != nil {
@@ -405,7 +442,14 @@ func (s *Service) LogoutAllHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 	q := s.queries.WithTx(tx)
-	if q.DeleteAllSessions(r.Context()) != nil || q.RevokeAllBrowserSessions(r.Context(), sql.NullInt64{Int64: s.now().UnixMilli(), Valid: true}) != nil || q.RevokeAllDeviceSessions(r.Context(), sql.NullInt64{Int64: s.now().UnixMilli(), Valid: true}) != nil {
+	userID, err := contracts.RequireUserID(r.Context())
+	if err != nil {
+		_ = tx.Rollback()
+		invalidToken(w)
+		return
+	}
+	if s.revokeUser(r.Context(), q, userID) != nil {
+		_ = tx.Rollback()
 		tokenFailed(w)
 		return
 	}
@@ -439,6 +483,7 @@ func (s *Service) RotateSigningKeyHandler(w http.ResponseWriter, r *http.Request
 	q := s.queries.WithTx(tx)
 	now := s.now().UnixMilli()
 	if q.RetireSigningKeys(r.Context(), sql.NullInt64{Int64: now, Valid: true}) != nil || q.InsertSigningKey(r.Context(), dbsqlc.InsertSigningKeyParams{ID: uuid.NewString(), PrivateKey: key, CreatedAt: now}) != nil {
+		_ = tx.Rollback()
 		tokenFailed(w)
 		return
 	}

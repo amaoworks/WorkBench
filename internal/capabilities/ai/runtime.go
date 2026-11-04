@@ -153,6 +153,10 @@ func (r *ToolRuntime) AvailableTools() []contracts.AITool {
 }
 
 func (r *ToolRuntime) Execute(ctx context.Context, call contracts.ToolCall) (contracts.ToolResult, error) {
+	userID, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return contracts.ToolResult{}, err
+	}
 	tool, exists := r.tools[call.Name]
 	if !exists {
 		return contracts.ToolResult{}, fmt.Errorf("unknown AI tool %q", call.Name)
@@ -163,8 +167,25 @@ func (r *ToolRuntime) Execute(ctx context.Context, call contracts.ToolCall) (con
 	if tool.definition.Risk != contracts.ToolRiskReadOnly && call.IdempotencyKey == "" {
 		return contracts.ToolResult{}, errors.New("write tool requires an idempotency key")
 	}
-	if tool.definition.Risk == contracts.ToolRiskHighWrite && call.ConfirmedBy == "" {
-		return contracts.ToolResult{}, errors.New("high-risk tool requires explicit confirmation")
+	if tool.definition.Risk == contracts.ToolRiskHighWrite && call.ConfirmedBy != userID {
+		return contracts.ToolResult{}, errors.New("high-risk tool requires confirmation by the current user")
+	}
+	if call.ConfirmedBy != "" && call.ConfirmedBy != userID {
+		return contracts.ToolResult{}, errors.New("tool confirmation belongs to another user")
+	}
+	if call.ConversationID == "" && call.MessageID != "" {
+		return contracts.ToolResult{}, sql.ErrNoRows
+	}
+	if call.ConversationID != "" {
+		count, err := r.queries.CheckAIToolConversation(ctx, dbsqlc.CheckAIToolConversationParams{
+			ConversationID: call.ConversationID, MessageID: call.MessageID, UserID: userID,
+		})
+		if err != nil {
+			return contracts.ToolResult{}, err
+		}
+		if count != 1 {
+			return contracts.ToolResult{}, sql.ErrNoRows
+		}
 	}
 	instance, err := jsonschema.UnmarshalJSON(bytes.NewReader(call.Arguments))
 	if err != nil {
@@ -180,7 +201,7 @@ func (r *ToolRuntime) Execute(ctx context.Context, call contracts.ToolCall) (con
 	}
 	redacted := redact(call.Arguments)
 	rows, err := r.queries.InsertAIToolCall(ctx, dbsqlc.InsertAIToolCallParams{
-		ID: auditID, ConversationID: call.ConversationID, MessageID: call.MessageID,
+		ID: auditID, UserID: userID, ConversationID: call.ConversationID, MessageID: call.MessageID,
 		ToolName: call.Name, Module: string(tool.definition.Module), Risk: string(tool.definition.Risk),
 		ArgumentsJson: redacted, IdempotencyKey: call.IdempotencyKey,
 		ConfirmationAt: confirmationTime(call), CreatedAt: r.now().UTC().UnixMilli(),
@@ -213,7 +234,7 @@ func (r *ToolRuntime) Execute(ctx context.Context, call contracts.ToolCall) (con
 	}
 	auditErr := r.queries.FinishAIToolCall(context.WithoutCancel(ctx), dbsqlc.FinishAIToolCallParams{
 		Status: status, ResultJson: resultJSON, Error: errorMessage,
-		CompletedAt: sql.NullInt64{Int64: r.now().UTC().UnixMilli(), Valid: true}, ID: auditID,
+		CompletedAt: sql.NullInt64{Int64: r.now().UTC().UnixMilli(), Valid: true}, ID: auditID, UserID: userID,
 	})
 	if auditErr != nil {
 		return contracts.ToolResult{}, fmt.Errorf("finish tool audit: %w", auditErr)
@@ -222,8 +243,12 @@ func (r *ToolRuntime) Execute(ctx context.Context, call contracts.ToolCall) (con
 }
 
 func (r *ToolRuntime) existingResult(ctx context.Context, name, key string) (contracts.ToolResult, error) {
+	userID, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return contracts.ToolResult{}, err
+	}
 	row, err := r.queries.GetAIToolCallResult(ctx, dbsqlc.GetAIToolCallResultParams{
-		ToolName: name, IdempotencyKey: sql.NullString{String: key, Valid: true},
+		UserID: userID, ToolName: name, IdempotencyKey: sql.NullString{String: key, Valid: true},
 	})
 	if err != nil {
 		return contracts.ToolResult{}, err

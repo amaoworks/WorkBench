@@ -27,7 +27,16 @@ type Dispatcher struct {
 	now        func() time.Time
 	registerMu sync.Mutex
 	registered bool
+	users      contracts.UserDirectory
 }
+
+// SetUserDirectory must be called before Run to enable private event delivery.
+func (d *Dispatcher) SetUserDirectory(users contracts.UserDirectory) { d.users = users }
+
+type inactiveUserError struct{}
+
+func (inactiveUserError) Error() string   { return "event owner is inactive" }
+func (inactiveUserError) Permanent() bool { return true }
 
 func NewDispatcher(
 	db *sql.DB,
@@ -185,7 +194,7 @@ func (d *Dispatcher) claim(ctx context.Context, consumer contracts.EventConsumer
 	}
 	delivery := claimedDelivery{
 		event: contracts.Event{
-			ID: contracts.EventID(row.EventID), Topic: row.Topic, SchemaVersion: int(row.SchemaVersion),
+			ID: contracts.EventID(row.EventID), UserID: row.UserID, Topic: row.Topic, SchemaVersion: int(row.SchemaVersion),
 			SourceModule: contracts.ModuleID(row.SourceModule), AggregateID: row.AggregateID,
 			OccurredAt: time.UnixMilli(row.OccurredAt).UTC(), Payload: json.RawMessage(row.PayloadJson),
 		},
@@ -208,7 +217,26 @@ func (d *Dispatcher) claim(ctx context.Context, consumer contracts.EventConsumer
 func (d *Dispatcher) handle(parent context.Context, consumer contracts.EventConsumer, delivery claimedDelivery) {
 	d.logger.Debug("event delivery started", "eventId", delivery.event.ID, "consumerId", consumer.ID, "attempt", delivery.attempts)
 	ctx, cancel := context.WithTimeout(parent, consumer.Timeout)
-	err := consumer.Handler(ctx, delivery.event)
+	// Never inherit the dispatch loop caller's identity for a persisted event.
+	ctx = contracts.WithPrincipal(ctx, contracts.Principal{})
+	var err error
+	if delivery.event.UserID != "" {
+		if d.users == nil {
+			err = errors.New("event user directory is unavailable")
+		} else {
+			var active bool
+			active, err = d.users.IsUserActive(ctx, delivery.event.UserID)
+			if err == nil && !active {
+				err = inactiveUserError{}
+			}
+			if err == nil {
+				ctx = contracts.WithPrincipal(ctx, contracts.Principal{UserID: delivery.event.UserID, Role: contracts.RoleUser})
+			}
+		}
+	}
+	if err == nil {
+		err = consumer.Handler(ctx, delivery.event)
+	}
 	cancel()
 
 	updateCtx, updateCancel := context.WithTimeout(context.WithoutCancel(parent), 3*time.Second)

@@ -1,7 +1,6 @@
 package news
 
 import (
-	"context"
 	"net/http"
 	"slices"
 	"testing"
@@ -22,7 +21,7 @@ func TestParseBriefSymbols(t *testing.T) {
 
 func TestBriefHidesWithoutSourcesAndFindsHoldingMentions(t *testing.T) {
 	m, _, _ := openModule(t)
-	ctx := context.Background()
+	ctx := testContext()
 	empty, err := m.Brief(ctx, []string{"AAPL"})
 	if err != nil || empty.Sources != 0 || len(empty.Latest) != 0 || empty.Digest != nil {
 		t.Fatalf("empty brief %+v %v", empty, err)

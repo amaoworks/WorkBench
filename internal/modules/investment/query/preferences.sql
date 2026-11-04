@@ -1,17 +1,17 @@
 -- name: ListPreferences :many
-SELECT name, content, revision FROM investment_preferences ORDER BY name;
+SELECT name, content, revision FROM investment_preferences WHERE user_id=sqlc.arg(user_id) ORDER BY name;
 
 -- name: GetPreference :one
 SELECT name, content, revision, writer, base_revision, sequence
-FROM investment_preferences WHERE name = ?;
+FROM investment_preferences WHERE user_id=sqlc.arg(user_id) AND name = sqlc.arg(name);
 
 -- name: SavePreference :one
-INSERT INTO investment_preferences(name, content, revision, writer, base_revision, sequence)
-SELECT sqlc.arg(name), sqlc.arg(content), 1, sqlc.arg(writer), sqlc.arg(base_revision), sqlc.arg(sequence)
-WHERE sqlc.arg(base_revision) = CAST(0 AS BIGINT) OR EXISTS (
-    SELECT 1 FROM investment_preferences WHERE name = sqlc.arg(name)
+INSERT INTO investment_preferences(user_id,name, content, revision, writer, base_revision, sequence)
+SELECT sqlc.arg(user_id), sqlc.arg(name), sqlc.arg(content), 1, sqlc.arg(writer), CAST(sqlc.arg(base_revision) AS BIGINT), CAST(sqlc.arg(sequence) AS BIGINT)
+WHERE CAST(sqlc.arg(base_revision) AS BIGINT) = CAST(0 AS BIGINT) OR EXISTS (
+    SELECT 1 FROM investment_preferences WHERE user_id=sqlc.arg(user_id) AND name = sqlc.arg(name)
 )
-ON CONFLICT(name) DO UPDATE SET
+ON CONFLICT(user_id,name) DO UPDATE SET
     content = excluded.content,
     revision = investment_preferences.revision + 1,
     writer = excluded.writer,

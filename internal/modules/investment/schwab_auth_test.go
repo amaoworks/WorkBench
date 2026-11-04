@@ -44,11 +44,11 @@ func TestSchwabRefreshFailuresRequireAuthorizationOnlyForInvalidTokens(t *testin
 			module := openInvestmentModule(t)
 			module.schwabAPI = upstream.URL
 			seedSchwab(t, module, schwabRecord{AppKey: "key", AppSecret: "secret", CallbackURL: "https://127.0.0.1/oauth/schwab", AccessToken: "old-access", RefreshToken: "private-refresh-token", TokenExpiresAt: time.Now().Add(-time.Minute)})
-			_, err := module.ensureAccessToken(context.Background())
+			_, err := module.ensureAccessToken(testContext(context.Background()))
 			if err == nil || errors.Is(err, errSchwabReauthorizationRequired) != tc.reauthorize {
 				t.Fatalf("unexpected refresh error: %v", err)
 			}
-			rec, err := module.loadSchwab(context.Background())
+			rec, err := module.loadSchwab(testContext(context.Background()))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -62,14 +62,14 @@ func TestSchwabRefreshFailuresRequireAuthorizationOnlyForInvalidTokens(t *testin
 				if rec.AccessToken != "" || rec.RefreshToken != "" || !rec.TokenExpiresAt.IsZero() {
 					t.Fatal("invalid tokens were retained")
 				}
-				if _, err := module.ensureAccessToken(context.Background()); !errors.Is(err, errSchwabReauthorizationRequired) {
+				if _, err := module.ensureAccessToken(testContext(context.Background())); !errors.Is(err, errSchwabReauthorizationRequired) {
 					t.Fatal(err)
 				}
 				if calls.Load() != 1 {
 					t.Fatal("retried a refresh token already known to be invalid")
 				}
 				response := httptest.NewRecorder()
-				module.oauthRefreshHTTP(response, httptest.NewRequest("POST", "/", strings.NewReader(`{}`)))
+				module.oauthRefreshHTTP(response, testRequest("POST", "/", strings.NewReader(`{}`)))
 				if response.Code != 409 || !strings.Contains(response.Body.String(), "schwab_reauthorization_required") {
 					t.Fatal(response.Body.String())
 				}
@@ -93,13 +93,13 @@ func TestSchwabTemporaryFailureCanRecoverWithoutLogin(t *testing.T) {
 	module := openInvestmentModule(t)
 	module.schwabAPI = upstream.URL
 	seedSchwab(t, module, schwabRecord{AppKey: "key", AppSecret: "secret", AccessToken: "old-access", RefreshToken: "refresh"})
-	if _, err := module.ensureAccessToken(context.Background()); err == nil {
+	if _, err := module.ensureAccessToken(testContext(context.Background())); err == nil {
 		t.Fatal("expected temporary error")
 	}
-	if token, err := module.ensureAccessToken(context.Background()); err != nil || token != "new-access" {
+	if token, err := module.ensureAccessToken(testContext(context.Background())); err != nil || token != "new-access" {
 		t.Fatalf("recovery: %s %v", token, err)
 	}
-	rec, err := module.loadSchwab(context.Background())
+	rec, err := module.loadSchwab(testContext(context.Background()))
 	if err != nil || rec.LastError != "" || rec.ReauthorizationRequired || rec.RefreshToken != "refresh" {
 		t.Fatalf("recovered state: %+v %v", rec.view(), err)
 	}
@@ -114,12 +114,12 @@ func TestSchwabReauthorizationStateSurvivesSaveAndClearsAfterCallback(t *testing
 	module.schwabAPI = upstream.URL
 	seedSchwab(t, module, schwabRecord{AppKey: "key", AppSecret: "secret", CallbackURL: "https://127.0.0.1/oauth/schwab", ReauthorizationRequired: true})
 	save := httptest.NewRecorder()
-	module.saveSchwab(save, httptest.NewRequest("PUT", "/", strings.NewReader(`{"appKey":"key","appSecret":"","callbackUrl":"https://127.0.0.1/oauth/schwab"}`)))
+	module.saveSchwab(save, testRequest("PUT", "/", strings.NewReader(`{"appKey":"key","appSecret":"","callbackUrl":"https://127.0.0.1/oauth/schwab"}`)))
 	if save.Code != 200 || !strings.Contains(save.Body.String(), `"reauthorizationRequired":true`) {
 		t.Fatal(save.Body.String())
 	}
 	login := httptest.NewRecorder()
-	module.oauthLogin(login, httptest.NewRequest("GET", "/", nil))
+	module.oauthLogin(login, testRequest("GET", "/", nil))
 	if login.Code != 302 {
 		t.Fatal(login.Body.String())
 	}
@@ -127,16 +127,16 @@ func TestSchwabReauthorizationStateSurvivesSaveAndClearsAfterCallback(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec, err := module.loadSchwab(context.Background())
+	rec, err := module.loadSchwab(testContext(context.Background()))
 	if err != nil || !rec.ReauthorizationRequired {
 		t.Fatal("starting authorization must not mark it successful")
 	}
 	callback := httptest.NewRecorder()
-	module.oauthCallback(callback, httptest.NewRequest("GET", "/oauth/schwab?code=new-code&state="+target.Query().Get("state"), nil))
+	module.oauthCallback(callback, testRequest("GET", "/oauth/schwab?code=new-code&state="+target.Query().Get("state"), nil))
 	if callback.Code != 200 || !strings.Contains(callback.Body.String(), "url=/investment") {
 		t.Fatal(callback.Body.String())
 	}
-	rec, err = module.loadSchwab(context.Background())
+	rec, err = module.loadSchwab(testContext(context.Background()))
 	if err != nil || rec.ReauthorizationRequired || !rec.view().Connected || rec.LastError != "" {
 		t.Fatalf("reauthorization did not restore connection: %+v %v", rec.view(), err)
 	}
@@ -147,6 +147,10 @@ func TestSchwabRejectedAccessChecksRefreshWithoutReplayingOrder(t *testing.T) {
 		t.Run(map[bool]string{false: "access refreshed", true: "reauthorization required"}[invalidRefresh], func(t *testing.T) {
 			var orderCalls, refreshCalls atomic.Int32
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/trader/v1/accounts/accountNumbers" {
+					_, _ = w.Write([]byte(`[{"accountNumber":"123","hashValue":"A"}]`))
+					return
+				}
 				if r.URL.Path == "/v1/oauth/token" {
 					refreshCalls.Add(1)
 					if invalidRefresh {
@@ -167,11 +171,11 @@ func TestSchwabRejectedAccessChecksRefreshWithoutReplayingOrder(t *testing.T) {
 			router := chi.NewRouter()
 			router.Post("/trader/*", module.proxySchwab("/trader/v1"))
 			response := httptest.NewRecorder()
-			router.ServeHTTP(response, httptest.NewRequest("POST", "/trader/accounts/A/orders", strings.NewReader(`{}`)))
+			router.ServeHTTP(response, testRequest("POST", "/trader/accounts/A/orders", strings.NewReader(`{}`)))
 			if orderCalls.Load() != 1 || refreshCalls.Load() != 1 {
 				t.Fatal("order replayed or rejected access token not refreshed")
 			}
-			rec, err := module.loadSchwab(context.Background())
+			rec, err := module.loadSchwab(testContext(context.Background()))
 			if err != nil || rec.ReauthorizationRequired != invalidRefresh {
 				t.Fatalf("wrong state: %+v %v", rec.view(), err)
 			}
@@ -185,10 +189,10 @@ func TestSchwabRejectedAccessChecksRefreshWithoutReplayingOrder(t *testing.T) {
 func TestSchwabLateUnauthorizedResponseCannotInvalidateNewAuthorization(t *testing.T) {
 	module := openInvestmentModule(t)
 	seedSchwab(t, module, schwabRecord{AccessToken: "new-access", RefreshToken: "new-refresh", TokenExpiresAt: time.Now().Add(time.Hour)})
-	if err := module.refreshRejectedAccessToken(context.Background(), "old-access"); err != nil {
+	if err := module.refreshRejectedAccessToken(testContext(context.Background()), "old-access"); err != nil {
 		t.Fatal(err)
 	}
-	rec, err := module.loadSchwab(context.Background())
+	rec, err := module.loadSchwab(testContext(context.Background()))
 	if err != nil || rec.AccessToken != "new-access" || rec.RefreshToken != "new-refresh" || rec.ReauthorizationRequired || rec.TokenExpiresAt.Before(time.Now()) {
 		t.Fatal("old request damaged new authorization")
 	}

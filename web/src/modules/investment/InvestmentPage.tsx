@@ -35,7 +35,7 @@ function InvestmentChart() {
   const connected = schwab.data?.connected === true;
   const reauthorizationRequired = schwab.data?.reauthorizationRequired === true;
 
-  const login = schwab.data?.hasAppSecret && schwab.data.callbackUrl.startsWith("https://") && (
+  const login = schwab.data?.configured && (
     <Button
       onClick={() => {
         window.location.href = "/api/modules/investment/schwab/oauth/login";

@@ -66,7 +66,21 @@ export const notificationSchema = z.object({
 export type Notification = z.infer<typeof notificationSchema>;
 export const notificationsPageSchema = z.object({ items: z.array(notificationSchema), nextCursor: z.string().optional() });
 
-export const authStatusSchema = z.object({ authenticated: z.boolean(), mode: z.enum(["local", "password"]), mustChangePassword: z.boolean() });
+export const authUserSchema = z.object({
+  id: z.string().min(1), username: z.string().min(1), displayName: z.string(),
+  role: z.enum(["admin", "user"]), status: z.enum(["active", "disabled"]),
+  mustChangePassword: z.boolean(), createdAt: z.iso.datetime({ offset: true }), updatedAt: z.iso.datetime({ offset: true }),
+});
+export const authStatusSchema = z.object({
+  authenticated: z.boolean(), mode: z.enum(["local", "password"]), mustChangePassword: z.boolean(),
+  user: authUserSchema.nullable().optional(),
+}).superRefine((value, context) => {
+  if (value.authenticated && !value.user) context.addIssue({ code: "custom", path: ["user"], message: "缺少用户身份" });
+});
+export type AuthStatus = z.infer<typeof authStatusSchema>;
+export const loginResponseSchema = z.object({
+  authenticated: z.literal(true), mustChangePassword: z.boolean(), user: authUserSchema,
+});
 export const unreadCountSchema = z.object({ count: z.number() });
 export const aiStatusSchema = z.object({ available: z.boolean() });
 export const conversationMessageSchema = z.object({ role: z.enum(["user", "assistant"]), content: z.string() });

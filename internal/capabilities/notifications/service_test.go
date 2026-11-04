@@ -11,6 +11,19 @@ import (
 	"workbench/internal/foundation/events"
 )
 
+func testContext() context.Context {
+	return contracts.WithPrincipal(context.Background(), contracts.Principal{UserID: contracts.LegacyUserID, Role: contracts.RoleAdmin})
+}
+
+type activeUsers struct{}
+
+func (activeUsers) ActiveUserIDs(context.Context) ([]string, error) {
+	return []string{"owner", "alice", "bob"}, nil
+}
+func (activeUsers) IsUserActive(_ context.Context, id string) (bool, error) {
+	return id == "owner" || id == "alice" || id == "bob", nil
+}
+
 func openService(t *testing.T) (*Service, *workbenchdb.Database) {
 	t.Helper()
 	ctx := context.Background()
@@ -36,11 +49,11 @@ func TestCreateIsIdempotentAndPublishesOnce(t *testing.T) {
 		Title: "Task due", Content: "A task is due", ActionRoute: "/todo",
 		IdempotencyKey: "todo:due:one",
 	}
-	first, err := service.Create(context.Background(), input)
+	first, err := service.Create(testContext(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := service.Create(context.Background(), input)
+	second, err := service.Create(testContext(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,33 +77,33 @@ func TestCreateIsIdempotentAndPublishesOnce(t *testing.T) {
 
 func TestNotificationLifecycle(t *testing.T) {
 	service, _ := openService(t)
-	created, err := service.Create(context.Background(), contracts.NewNotification{
+	created, err := service.Create(testContext(), contracts.NewNotification{
 		SourceModule: "todo", Severity: contracts.NotificationWarning,
 		Title: "Due", Content: "Review", IdempotencyKey: "todo:due:two",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count, err := service.UnreadCount(context.Background()); err != nil || count != 1 {
+	if count, err := service.UnreadCount(testContext()); err != nil || count != 1 {
 		t.Fatalf("UnreadCount() = %d, %v", count, err)
 	}
-	if err := service.MarkRead(context.Background(), []string{created.ID}); err != nil {
+	if err := service.MarkRead(testContext(), []string{created.ID}); err != nil {
 		t.Fatal(err)
 	}
-	if count, err := service.UnreadCount(context.Background()); err != nil || count != 0 {
+	if count, err := service.UnreadCount(testContext()); err != nil || count != 0 {
 		t.Fatalf("UnreadCount() after read = %d, %v", count, err)
 	}
-	page, err := service.List(context.Background(), contracts.NotificationQuery{Limit: 10})
+	page, err := service.List(testContext(), contracts.NotificationQuery{Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(page.Items) != 1 || page.Items[0].ReadAt == nil {
 		t.Fatalf("read notification not returned correctly: %+v", page.Items)
 	}
-	if err := service.Archive(context.Background(), []string{created.ID}); err != nil {
+	if err := service.Archive(testContext(), []string{created.ID}); err != nil {
 		t.Fatal(err)
 	}
-	page, err = service.List(context.Background(), contracts.NotificationQuery{Limit: 10})
+	page, err = service.List(testContext(), contracts.NotificationQuery{Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +114,7 @@ func TestNotificationLifecycle(t *testing.T) {
 
 func TestCreateRejectsExternalActionRoute(t *testing.T) {
 	service, _ := openService(t)
-	_, err := service.Create(context.Background(), contracts.NewNotification{
+	_, err := service.Create(testContext(), contracts.NewNotification{
 		SourceModule: "todo", Severity: contracts.NotificationInfo,
 		Title: "Unsafe", Content: "Unsafe route", ActionRoute: "https://example.com",
 		IdempotencyKey: "unsafe",
@@ -116,21 +129,21 @@ func TestListUsesStableCursorPagination(t *testing.T) {
 	base := time.Unix(1_000, 0).UTC()
 	for index, title := range []string{"first", "second", "third"} {
 		service.now = func() time.Time { return base.Add(time.Duration(index) * time.Millisecond) }
-		if _, err := service.Create(context.Background(), contracts.NewNotification{
+		if _, err := service.Create(testContext(), contracts.NewNotification{
 			SourceModule: "todo", Severity: contracts.NotificationInfo, Title: title,
 			Content: title, IdempotencyKey: "page:" + title,
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	first, err := service.List(context.Background(), contracts.NotificationQuery{Limit: 2})
+	first, err := service.List(testContext(), contracts.NotificationQuery{Limit: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(first.Items) != 2 || first.NextCursor == "" || first.Items[0].Title != "third" || first.Items[1].Title != "second" {
 		t.Fatalf("first page = %+v", first)
 	}
-	second, err := service.List(context.Background(), contracts.NotificationQuery{Limit: 2, Cursor: first.NextCursor})
+	second, err := service.List(testContext(), contracts.NotificationQuery{Limit: 2, Cursor: first.NextCursor})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +167,7 @@ func TestListAndUnreadCountFilterBySource(t *testing.T) {
 		{source: "todo", title: "todo-new"},
 	} {
 		service.now = func() time.Time { return base.Add(time.Duration(index) * time.Millisecond) }
-		notification, err := service.Create(context.Background(), contracts.NewNotification{
+		notification, err := service.Create(testContext(), contracts.NewNotification{
 			SourceModule: fixture.source, Severity: contracts.NotificationInfo, Title: fixture.title,
 			Content: fixture.title, IdempotencyKey: "source:" + fixture.title,
 		})
@@ -163,11 +176,11 @@ func TestListAndUnreadCountFilterBySource(t *testing.T) {
 		}
 		created[fixture.title] = notification
 	}
-	if err := service.MarkRead(context.Background(), []string{created["todo-new"].ID}); err != nil {
+	if err := service.MarkRead(testContext(), []string{created["todo-new"].ID}); err != nil {
 		t.Fatal(err)
 	}
 
-	first, err := service.List(context.Background(), contracts.NotificationQuery{
+	first, err := service.List(testContext(), contracts.NotificationQuery{
 		UnreadOnly: true, SourceModule: "todo", Limit: 1,
 	})
 	if err != nil {
@@ -176,7 +189,7 @@ func TestListAndUnreadCountFilterBySource(t *testing.T) {
 	if len(first.Items) != 1 || first.Items[0].Title != "todo-middle" || first.NextCursor == "" {
 		t.Fatalf("first filtered page = %+v", first)
 	}
-	second, err := service.List(context.Background(), contracts.NotificationQuery{
+	second, err := service.List(testContext(), contracts.NotificationQuery{
 		UnreadOnly: true, SourceModule: "todo", Limit: 1, Cursor: first.NextCursor,
 	})
 	if err != nil {
@@ -185,10 +198,10 @@ func TestListAndUnreadCountFilterBySource(t *testing.T) {
 	if len(second.Items) != 1 || second.Items[0].Title != "todo-old" || second.NextCursor != "" {
 		t.Fatalf("second filtered page = %+v", second)
 	}
-	if count, err := service.UnreadCountBySource(context.Background(), "todo"); err != nil || count != 2 {
+	if count, err := service.UnreadCountBySource(testContext(), "todo"); err != nil || count != 2 {
 		t.Fatalf("UnreadCountBySource(todo) = %d, %v", count, err)
 	}
-	if count, err := service.UnreadCountBySource(context.Background(), "news"); err != nil || count != 2 {
+	if count, err := service.UnreadCountBySource(testContext(), "news"); err != nil || count != 2 {
 		t.Fatalf("UnreadCountBySource(news) = %d, %v", count, err)
 	}
 }

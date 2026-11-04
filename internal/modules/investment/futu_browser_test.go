@@ -31,7 +31,7 @@ func newFutuBrowserFixture(t *testing.T) (*Module, *fakeOpenD) {
 	fake := startFakeOpenD(t)
 	module := openInvestmentModule(t)
 	module.deps.FutuOpenDAddress = fake.addr()
-	if err := module.storeFutu(context.Background(), futuRecord{Enabled: true, OvernightEnabled: true}); err != nil {
+	if err := module.storeFutu(testContext(context.Background()), futuRecord{Enabled: true, OvernightEnabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	return module, fake
@@ -39,7 +39,7 @@ func newFutuBrowserFixture(t *testing.T) (*Module, *fakeOpenD) {
 
 func openFutuBrowser(t *testing.T, module *Module) futuBrowser {
 	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(module.serveFutuStream))
+	server := httptest.NewServer(testAuthenticated(module.serveFutuStream))
 	t.Cleanup(server.Close)
 	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
 	if err != nil {
@@ -70,7 +70,7 @@ func futuBrowserCommand(t *testing.T, module *Module, browser futuBrowser, comma
 		t.Fatal(err)
 	}
 	recorder := httptest.NewRecorder()
-	module.futuCommand(recorder, httptest.NewRequest(http.MethodPost, "/api/modules/investment/futu/quote/ws/command", strings.NewReader(string(encoded))))
+	module.futuCommand(recorder, testRequest(http.MethodPost, "/api/modules/investment/futu/quote/ws/command", strings.NewReader(string(encoded))))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("%s: %d %s", command, recorder.Code, recorder.Body.String())
 	}
@@ -139,7 +139,7 @@ func TestFutuBrowserOwnersAreIdempotentAndDisconnectIndependently(t *testing.T) 
 	module.futu.mu.Lock()
 	opend := module.futu.client
 	module.futu.mu.Unlock()
-	if err := module.futu.hold(context.Background(), opend, "AAPL", subTypeBasic, true); err != nil {
+	if err := module.futu.hold(testContext(context.Background()), opend, "AAPL", subTypeBasic, true); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
@@ -172,7 +172,7 @@ func TestFutuBrowserOwnersAreIdempotentAndDisconnectIndependently(t *testing.T) 
 	}
 	_ = c.conn.Close()
 	waitFutuBrowserRemoved(t, module.futu, c.owner, 1, 0)
-	if err := module.futu.release(context.Background(), opend, "AAPL", subTypeBasic); err != nil {
+	if err := module.futu.release(testContext(context.Background()), opend, "AAPL", subTypeBasic); err != nil {
 		t.Fatal(err)
 	}
 	assertFutuBrowserCounts(t, module.futu, 0, 0)
@@ -185,7 +185,7 @@ func TestFutuBrowserConcurrentDuplicateCommands(t *testing.T) {
 		var wg sync.WaitGroup
 		for range 16 {
 			wg.Go(func() {
-				_, applied, err := module.futu.browserCommand(context.Background(), command, browser.owner, browser.generation, "AAPL", "5")
+				_, applied, err := module.futu.browserCommand(testContext(context.Background()), command, browser.owner, browser.generation, "AAPL", "5")
 				if err != nil || !applied {
 					t.Errorf("%s: applied=%v err=%v", command, applied, err)
 				}
@@ -208,7 +208,7 @@ func TestFutuBrowserDisconnectSerializesInFlightAdd(t *testing.T) {
 	release := func() { once.Do(func() { close(fake.releaseSub) }) }
 	defer release()
 	browser := openFutuBrowser(t, module)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(testContext(context.Background()), 3*time.Second)
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
@@ -307,7 +307,7 @@ func TestFutuHTTPRequiresBrowserOwner(t *testing.T) {
 	module, _ := newFutuBrowserFixture(t)
 	for _, command := range []string{"ADD", "UNSUB"} {
 		recorder := httptest.NewRecorder()
-		module.futuCommand(recorder, httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"command":"`+command+`","symbol":"AAPL","resolution":"5"}`)))
+		module.futuCommand(recorder, testRequest(http.MethodPost, "/", strings.NewReader(`{"command":"`+command+`","symbol":"AAPL","resolution":"5"}`)))
 		if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), `"futu_client_required"`) {
 			t.Fatalf("missing owner: %d %s", recorder.Code, recorder.Body.String())
 		}

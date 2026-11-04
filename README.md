@@ -1,11 +1,12 @@
 # Workbench
 
-Workbench 是本地优先、单用户的个人工作台，采用 Go 模块化单体、React 前端和共享数据库工作空间。二进制默认使用 SQLite，Docker Compose 默认配套 PostgreSQL。前端资源嵌入可执行文件，平台统一提供鉴权、事件、调度、AI、通知、总览和设置。
+Workbench 是本地优先、支持多用户的个人工作台，采用 Go 模块化单体、React 前端和共享数据库工作空间。个人业务数据按用户隔离，管理员管理系统与共享服务配置。二进制默认使用 SQLite，Docker Compose 默认配套 PostgreSQL。前端资源嵌入可执行文件，平台统一提供鉴权、事件、调度、AI、通知、总览和设置。
 
 当前业务包括待办及 Wallos 订阅提醒、投资（Schwab 行情、账户和 TradingView 终端）、资讯（RSS、翻译摘要和简报推送）。业务可在设置中启停，数据和总览布局偏好会保留。新增业务按模块扩展，前后端使用对应的模块目录。
 
 ## 核心特性
 
+- **用户与权限**：管理员创建和禁用用户，个人数据、登录设备、通知及 AI 对话独立；富途共享行情，Schwab 各自授权和交易。
 - **个人待办**：支持待办管理、到期提醒，以及与 Wallos 订阅账期的自动联动。
 - **投资终端**：对接 Charles Schwab API，集成 TradingView 图表，支持实时行情、持仓与订单管理。
 - **价格预警**：美股/ETF 分钟级价格监控，支持站内通知与 Telegram 自动推送。
@@ -28,7 +29,7 @@ docker compose up -d --build
 docker compose logs workbench
 ```
 
-应用只提供 HTTP，Compose 默认将端口发布到宿主机 `127.0.0.1:8080`。首次启动自动生成初始密码并写入 `workbench` 容器日志；用该密码登录后必须立即设置新密码。`.env.example` 默认使用内置 PostgreSQL，开发环境应先替换其中的数据库密码。切换 SQLite 只需把 `WORKBENCH_DB_DRIVER` 改为 `sqlite`，PostgreSQL 容器仍会启动。
+应用只提供 HTTP，Compose 默认将端口发布到宿主机 `127.0.0.1:8080`。首次启动自动生成管理员初始密码并写入 `workbench` 容器日志；使用用户名 `admin` 和该密码登录后设置新密码，再在「设置 → 用户管理」创建用户。`.env.example` 默认使用内置 PostgreSQL，开发环境应先替换其中的数据库密码。切换 SQLite 只需把 `WORKBENCH_DB_DRIVER` 改为 `sqlite`，PostgreSQL 容器仍会启动。
 
 PostgreSQL 数据保存在 `postgres_data` 卷。应用的 `/data` 卷仍保存图表缓存和 OpenD 运行内容；SQLite 模式也把数据库及备份保存在该卷。`docker compose down` 保留两个数据卷，`docker compose down --volumes` 会删除它们。
 
@@ -90,6 +91,7 @@ git push origin v0.1.1
 - [部署与发布](doc/deployment.md)：二进制、Docker Compose、反向代理与 GitHub Actions
 - [配置与运行](doc/configuration.md)
 - [安全边界](doc/security.md)
+- [用户与权限](doc/multi-user.md)：个人数据、管理员配置与旧工作空间升级
 - [文案与文档规范](doc/copywriting-guidelines.md)
 - [Todo](doc/modules/todo.md)、[Wallos 联动](doc/modules/todo-wallos.md)、[Investment](doc/modules/investment.md)、[资讯](doc/modules/news.md)
 - [AI 协作指南](AGENTS.md)：面向 AI 编程助手的架构红线与开发工作流
@@ -134,7 +136,7 @@ npm ci --prefix web
 
 默认访问 `http://127.0.0.1:8080`，SQLite 数据库保存在 `~/.workbench/data.db`。可通过 `-listen` 和 `-data` 修改地址和工作空间；PostgreSQL 通过 `WORKBENCH_DB_DRIVER` 和 `WORKBENCH_DATABASE_URL` 选择。
 
-默认 local 模式仅允许本机监听。反向代理部署使用 `-auth password -public-url https://实际域名`；密码模式首次启动会在日志中生成初始密码，首次登录后必须修改。应用自动允许外部地址的 Host，并为浏览器启用 Secure Cookie。监听、数据路径、认证与外部地址均支持环境变量。详细参数和前端开发方式见[配置与运行](doc/configuration.md)。
+默认 local 模式仅允许本机监听和原始管理员单用户；多用户使用密码模式。反向代理部署使用 `-auth password -public-url https://实际域名`；密码模式首次启动会在日志中生成初始密码，首次登录后必须修改。应用自动允许外部地址的 Host，并为浏览器启用 Secure Cookie。监听、数据路径、认证与外部地址均支持环境变量。详细参数和前端开发方式见[配置与运行](doc/configuration.md)。
 
 ## 日常使用
 
@@ -146,7 +148,7 @@ npm ci --prefix web
 - 投资价格监控每分钟检查美股/ETF 常规时段涨跌阈值，保存站内提醒，可通过 Telegram 推送；关闭网页仍由服务器执行。
 - 点击右上角「问 AI」或按 `Ctrl+J`（macOS 上是 `⌘J`）打开 AI 面板，面板提供对话和已注册的业务工具；未启用 AI 不影响普通业务操作。
 - 通知按 今天/昨天/更早 分组，支持全部/未读和按来源筛选。
-- 设置是单页，左侧分类导航，依次为外观、业务模块、AI、通知推送、账户安全、数据与运行；TG 配置见 [Telegram 通知](doc/notifications.md)。
+- 设置是单页，个人设置包括外观、业务、通知推送和账户安全；管理员额外管理 AI、用户和数据与运行。TG 配置见 [Telegram 通知](doc/notifications.md)。
 - SQLite 数据备份保存到工作空间的 `backups/` 目录；PostgreSQL 备份由数据库服务管理。备份包含业务内容与保存的凭据。
 
 ## 验证

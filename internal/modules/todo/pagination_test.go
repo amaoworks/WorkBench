@@ -1,7 +1,6 @@
 package todo
 
 import (
-	"context"
 	"encoding/json"
 	"net/http/httptest"
 	"net/url"
@@ -19,13 +18,13 @@ func TestTaskCursorTraversesTiesAndRejectsInvalidInput(t *testing.T) {
 		if i < 4 {
 			input.DueAt = &due
 		}
-		created, err := module.Create(context.Background(), input)
+		created, err := module.Create(todoContext(), input)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if i%3 == 0 {
 			done := true
-			if _, err := module.update(context.Background(), created.ID, UpdateTask{Completed: &done}); err != nil {
+			if _, err := module.update(todoContext(), created.ID, UpdateTask{Completed: &done}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -34,7 +33,7 @@ func TestTaskCursorTraversesTiesAndRejectsInvalidInput(t *testing.T) {
 	cursor := ""
 	for page := 0; page < 5; page++ {
 		rec := httptest.NewRecorder()
-		module.listTasks(rec, httptest.NewRequest("GET", "/?limit=2&cursor="+url.QueryEscape(cursor), nil))
+		module.listTasks(rec, todoRequest("GET", "/?limit=2&cursor="+url.QueryEscape(cursor), nil))
 		if rec.Code != 200 {
 			t.Fatal(rec.Body.String())
 		}
@@ -64,7 +63,7 @@ func TestTaskCursorTraversesTiesAndRejectsInvalidInput(t *testing.T) {
 	}
 	for _, query := range []string{"limit=0", "limit=abc", "cursor=garbage", "cursor=e30"} {
 		rec := httptest.NewRecorder()
-		module.listTasks(rec, httptest.NewRequest("GET", "/?"+query, nil))
+		module.listTasks(rec, todoRequest("GET", "/?"+query, nil))
 		if rec.Code != 400 {
 			t.Fatalf("accepted %s", query)
 		}

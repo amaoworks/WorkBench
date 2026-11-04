@@ -3,6 +3,7 @@ package news
 import (
 	"context"
 	"sync"
+	"workbench/internal/contracts"
 )
 
 // workLocks serialize work for one entity without making unrelated operations
@@ -18,6 +19,11 @@ type workLock struct {
 }
 
 func (w *workLocks) acquire(ctx context.Context, key string) (func(), error) {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return func() {}, err
+	}
+
+	key = contracts.UserID(ctx) + ":" + key
 	w.mu.Lock()
 	if w.entries == nil {
 		w.entries = make(map[string]*workLock)

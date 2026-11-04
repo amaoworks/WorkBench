@@ -4,19 +4,19 @@
 
 ## 认证和请求
 
-- local 模式仅允许 loopback 监听，免登录但保留 Host、Origin、CSRF 校验。
+- local 模式仅允许 loopback 监听，只代表原始管理员，免登录但保留 Host、Origin、CSRF 校验。存在多个用户（包括禁用账号）时拒绝启动；该模式不能创建用户。
 - 应用仅提供 HTTP。password 模式持久化密码哈希；反代部署显式配置 HTTPS 外部地址。password 模式默认拒绝非 loopback 的纯 HTTP 监听，`WORKBENCH_ALLOW_INSECURE_HTTP=true` 可为受控网络显式放行；Compose 默认启用该开关，但宿主机端口仅绑定 `127.0.0.1`。配置外部地址时禁止 local 免登录模式。
-- 密码使用 Argon2id；新密码至少 8 个 Unicode 字符，且大小写、数字、特殊符号四类中至少包含三类。
+- 网页和原生端均使用用户名和密码登录。初始管理员登录名为 `admin`，管理员创建其他用户。密码使用 Argon2id；新密码至少 8 个 Unicode 字符，且大小写、数字、特殊符号四类中至少包含三类。
 - 新建密码凭据使用 `crypto/rand` 自动生成初始密码，也兼容通过 `WORKBENCH_PASSWORD` 显式提供，并保存 `must_change_password=1`。自动生成的凭据成功保存后，`auth` 日志器以 `warn` 等级输出 `initialPassword` 一次，不受日志等级过滤；显式提供的密码不打印，非首次启动不生成、不打印。已有数据库迁移新增列默认为 `0`，沿用当前密码且不要求改密。
-- 自动生成或显式提供初始密码后，首次登录只允许 `/api/auth/status`、浏览器登录/退出/CSRF、设备登录/刷新/当前设备注销和 `PUT /api/settings/password`；其他受保护接口返回 `403 password_change_required`。新密码必须与初始密码不同。改密在事务中清除强制改密状态，删除全部网页 Session，并撤销全部设备会话。
+- 自动生成或显式提供初始密码后，首次登录只允许 `/api/auth/status`、浏览器登录/退出/CSRF、设备登录/刷新/当前设备注销和 `PUT /api/settings/password`；其他受保护接口返回 `403 password_change_required`。新密码必须与初始密码不同。改密在事务中清除强制改密状态，提升本人凭据版本，删除本人的网页 Session 并撤销本人的设备会话。
 - 网页认证使用保存在 SQLite 或 PostgreSQL 中的服务端 Session。Cookie 使用 HttpOnly；默认 `SameSite=Strict`，配置 HTTPS 外部地址及 CORS 白名单时使用 `SameSite=None`，配置 HTTPS 外部地址时使用 Secure。网页会话最长 7 天，空闲期限 24 小时，数据库只保存哈希后的 Session token。浏览器写请求继续使用 CSRF token；`POST /api/auth/login` 拒绝携带 Authorization，返回 `400 invalid_token_request`。
 - 原生认证使用设备会话、15 分钟 access token 和一次性 refresh token。`POST /api/auth/token` 与 `/api/auth/token/refresh` 只接受无 Cookie、无 Authorization 的 JSON；其他请求同时携带 Bearer 与 Cookie 时返回 `400 ambiguous_credentials`。设备会话从登录起绝对有效 30 天，刷新不延长该期限。
-- access token 使用 Ed25519/EdDSA 签名，JOSE header 为 `typ=at+jwt` 和持久化签名密钥的 `kid`；claims 固定校验 `iss=workbench`、`aud=workbench-api`、`sub=owner`，并包含设备会话 `sid`、凭据版本 `ver`、`iat`、`exp` 和唯一 `jti`。服务端每次 Bearer 请求同时检查设备未撤销、绝对期限与当前凭据版本，不只依赖 JWT 签名。
+- access token 使用 Ed25519/EdDSA 签名，JOSE header 为 `typ=at+jwt` 和持久化签名密钥的 `kid`；claims 校验 `iss=workbench`、`aud=workbench-api` 和 `sub` 对应的真实用户身份，并包含设备会话 `sid`、凭据版本 `ver`、`iat`、`exp` 和唯一 `jti`。服务端每次 Bearer 请求同时检查设备未撤销、绝对期限与当前凭据版本，不只依赖 JWT 签名。
 - refresh token 在数据库中以 SHA-256 哈希保存，每次刷新原子消费旧 token 并签发新 token。已消费 refresh token 被再次使用时，服务端撤销整个设备会话；并发刷新同一旧 token 时只允许一个成功。
 - 原生设备可用 Bearer 创建 60 秒一次性 browser grant，在同域 WebView 中消费后建立 HttpOnly Cookie Session，并固定跳转 `/investment/terminal`。grant ticket 是短时登录凭据，只在响应的 `urlPath` 中返回，数据库仅保存 SHA-256 哈希；ticket 单次消费，消费时重新检查父设备、凭据版本和强制改密状态。消费 GET 拒绝 Authorization，access/refresh token 不进入 URL。
 - 签名密钥轮换立即使用新 key 签发；旧 key 在退休后继续验签 15 分钟，使已签发 access token 自然到期。密钥和设备状态持久化，进程重启不会恢复已撤销的登录。
-- 网页登录更新 Session token。WebView Session 保存父设备 ID，每次受保护请求同时检查父设备仍有效；父设备注销或到期也会使子会话失效并从设备列表过滤。密码变更检查当前密码，在事务中更新凭据版本并注销所有网页与原生设备；`POST /api/auth/logout-all` 具有相同的全设备注销范围。单设备撤销会同时影响该原生设备绑定的 WebView Session。
-- 密码哈希计算全局上限为 2 并发，由登录、密码修改和 `Authenticate` 共享；登录另设突发 5 次、每 3 秒恢复 1 次的令牌限速（密码修改与 `Authenticate` 不消耗登录令牌）。计算并发或登录令牌超限均返回 HTTP 429 并附带 `Retry-After`。
+- 网页登录更新 Session token。WebView Session 保存父设备 ID，每次受保护请求同时检查父设备仍有效；父设备注销或到期也会使子会话失效并从设备列表过滤。密码变更检查当前密码，在事务中更新本人凭据版本并注销本人的所有网页与原生设备；`POST /api/auth/logout-all` 具有相同的个人全设备注销范围。单设备撤销会同时影响该原生设备绑定的 WebView Session。
+- 密码哈希计算全局上限为 2 并发，由登录、用户密码管理和 `Authenticate` 共享；登录分别按账号和来源设置突发 5 次、每 3 秒恢复 1 次的令牌限速。计算并发或登录令牌超限均返回 HTTP 429 并附带 `Retry-After`。
 - Host 必须匹配允许列表。写请求提供 Origin 时校验同源或 `WORKBENCH_CORS_ALLOW_ORIGIN` 白名单；白名单只接受完整 HTTP/HTTPS origin，不接受 `*`，HTTPS 部署只接受 HTTPS 白名单。CORS 中间件处理预检和凭据响应，允许的 origin 同时加入 nosurf 白名单。纯 HTTP 跨站点访问可能无法携带 Cookie；同站点不同端口不受该限制。写请求另由 CSRF token 保护。
 
 应用以固定的 `WORKBENCH_PUBLIC_URL` 确定浏览器来源；该值必须是 HTTPS origin，Host 自动加入允许列表。CSRF 中间件按该配置判断外部 HTTPS，不依赖后端 TLS 状态或客户端可伪造的 `Forwarded` / `X-Forwarded-*`。应用的 HTTP 端口仅供本机代理或专用容器网络访问：二进制默认监听 loopback，Compose 默认只向宿主机 `127.0.0.1` 发布端口。代理保留原始 Host，并提供实际的 HTTPS 入口。网页使用服务端 Session，原生客户端使用上述 Bearer 令牌，两种凭据不在同一请求中混用。
@@ -45,6 +45,6 @@ AI Tool 只从已注册且启用的模块中选择，服务端校验 JSON schema
 
 内置模块随可信应用代码一起编译，共享进程、数据库连接和服务依赖；模块边界不提供第三方代码沙箱。已保存的外部模块是用户管理的独立 HTTP 服务，当前不开放通过网址新增。兼容页面使用同源 iframe 嵌入，与宿主共享浏览器信任边界，不能当作不可信插件隔离。同源代理会去掉浏览器 Cookie 和客户端 Authorization，注入该模块专用服务凭据，屏蔽上游 `Set-Cookie`，并拒绝路径穿越、`/_workbench/*` 业务代理、不安全重定向和未许可的非本机拨号。默认只连接 loopback。模块开关检查后续入口；外部模块停用会立即关闭宿主业务门控并在约 1 秒内关闭本机代理 WebSocket，但不保证远端任务已经停止。
 
-应用当前是单用户工作空间，没有多租户权限模型。
+应用按用户隔离个人业务数据，管理员管理用户、模块启停、共享服务、备份和运行配置。角色在请求时读取，禁用或撤销凭据后既有登录失效。管理员角色不自动绕过个人数据归属；外部模块的历史协议不提供用户隔离，因此普通用户不能访问其页面和代理。私有服务缺失身份时返回错误，AI 工具继承调用者身份，事件、后台任务及通知保留用户归属，见[用户与权限](multi-user.md)。
 
 投资更换 Key、Secret、回调或重新完成 OAuth 时，会关闭已有 Streamer 与客户端连接；连接建立过程校验配置版本，避免旧身份的 LOGIN 在配置变更后生效。停用模块及进程关闭也会清理长连接。WebSocket 只接收事件，行情订阅使用受保护的 HTTP ADD 命令，无法通过该接口发送 ADMIN/LOGIN。SSE 与 WebSocket 握手后每秒重新检查网页 Session 或设备会话，撤销、改密或全部注销会关闭连接。夜盘覆盖开关关闭时，OpenD WebSocket 返回 409 且不升级；OpenD 不可用时在已升级连接上发出 TryAgainLater，避免把失败当成覆盖已关闭。

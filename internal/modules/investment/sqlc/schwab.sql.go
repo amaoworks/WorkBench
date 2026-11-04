@@ -9,16 +9,29 @@ import (
 	"context"
 )
 
+const findSchwabOAuthOwner = `-- name: FindSchwabOAuthOwner :one
+SELECT user_id FROM investment_schwab_connections c JOIN investment_schwab_app a ON c.app_version=a.version
+WHERE c.oauth_state=? AND c.oauth_state<>''
+`
+
+func (q *Queries) FindSchwabOAuthOwner(ctx context.Context, oauthState string) (string, error) {
+	row := q.db.QueryRowContext(ctx, findSchwabOAuthOwner, oauthState)
+	var user_id string
+	err := row.Scan(&user_id)
+	return user_id, err
+}
+
 const getSchwab = `-- name: GetSchwab :one
-SELECT app_key, app_secret, callback_url, access_token, refresh_token, token_expires_at,
-    streamer_info, oauth_state, oauth_state_expires_at, last_error, updated_at, reauthorization_required, authorized_at
-FROM investment_schwab WHERE id = 1
+SELECT app_key,app_secret,callback_url,version, c.user_id, c.access_token, c.refresh_token, c.token_expires_at, c.streamer_info, c.oauth_state, c.oauth_state_expires_at, c.last_error, c.updated_at, c.reauthorization_required, c.authorized_at, c.app_version, c.connection_version FROM investment_schwab_app a
+JOIN investment_schwab_connections c ON c.app_version = a.version WHERE a.id=1 AND c.user_id=?
 `
 
 type GetSchwabRow struct {
 	AppKey                  string `json:"app_key"`
 	AppSecret               string `json:"app_secret"`
 	CallbackUrl             string `json:"callback_url"`
+	Version                 int64  `json:"version"`
+	UserID                  string `json:"user_id"`
 	AccessToken             string `json:"access_token"`
 	RefreshToken            string `json:"refresh_token"`
 	TokenExpiresAt          int64  `json:"token_expires_at"`
@@ -29,15 +42,19 @@ type GetSchwabRow struct {
 	UpdatedAt               int64  `json:"updated_at"`
 	ReauthorizationRequired int64  `json:"reauthorization_required"`
 	AuthorizedAt            int64  `json:"authorized_at"`
+	AppVersion              int64  `json:"app_version"`
+	ConnectionVersion       int64  `json:"connection_version"`
 }
 
-func (q *Queries) GetSchwab(ctx context.Context) (GetSchwabRow, error) {
-	row := q.db.QueryRowContext(ctx, getSchwab)
+func (q *Queries) GetSchwab(ctx context.Context, userID string) (GetSchwabRow, error) {
+	row := q.db.QueryRowContext(ctx, getSchwab, userID)
 	var i GetSchwabRow
 	err := row.Scan(
 		&i.AppKey,
 		&i.AppSecret,
 		&i.CallbackUrl,
+		&i.Version,
+		&i.UserID,
 		&i.AccessToken,
 		&i.RefreshToken,
 		&i.TokenExpiresAt,
@@ -48,35 +65,72 @@ func (q *Queries) GetSchwab(ctx context.Context) (GetSchwabRow, error) {
 		&i.UpdatedAt,
 		&i.ReauthorizationRequired,
 		&i.AuthorizedAt,
+		&i.AppVersion,
+		&i.ConnectionVersion,
 	)
 	return i, err
 }
 
-const upsertSchwab = `-- name: UpsertSchwab :exec
-INSERT INTO investment_schwab(
-    id, app_key, app_secret, callback_url, access_token, refresh_token, token_expires_at,
-    streamer_info, oauth_state, oauth_state_expires_at, last_error, updated_at, reauthorization_required, authorized_at
-) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET
-    app_key = excluded.app_key,
-    app_secret = excluded.app_secret,
-    callback_url = excluded.callback_url,
-    access_token = excluded.access_token,
-    refresh_token = excluded.refresh_token,
-    token_expires_at = excluded.token_expires_at,
-    streamer_info = excluded.streamer_info,
-    oauth_state = excluded.oauth_state,
-    oauth_state_expires_at = excluded.oauth_state_expires_at,
-    last_error = excluded.last_error,
-    updated_at = excluded.updated_at,
-    reauthorization_required = excluded.reauthorization_required,
-    authorized_at = excluded.authorized_at
+const getSchwabApp = `-- name: GetSchwabApp :one
+SELECT id, app_key, app_secret, callback_url, version FROM investment_schwab_app WHERE id = 1
+`
+
+func (q *Queries) GetSchwabApp(ctx context.Context) (InvestmentSchwabApp, error) {
+	row := q.db.QueryRowContext(ctx, getSchwabApp)
+	var i InvestmentSchwabApp
+	err := row.Scan(
+		&i.ID,
+		&i.AppKey,
+		&i.AppSecret,
+		&i.CallbackUrl,
+		&i.Version,
+	)
+	return i, err
+}
+
+const invalidateSchwabOAuth = `-- name: InvalidateSchwabOAuth :exec
+UPDATE investment_schwab_connections
+SET oauth_state='', oauth_state_expires_at=0, connection_version=connection_version+1
+WHERE user_id=?
+`
+
+func (q *Queries) InvalidateSchwabOAuth(ctx context.Context, userID string) error {
+	_, err := q.db.ExecContext(ctx, invalidateSchwabOAuth, userID)
+	return err
+}
+
+const saveSchwabApp = `-- name: SaveSchwabApp :exec
+INSERT INTO investment_schwab_app(id,app_key,app_secret,callback_url,version)
+VALUES(1,?,?,?,1)
+ON CONFLICT(id) DO UPDATE SET app_key=excluded.app_key,app_secret=excluded.app_secret,callback_url=excluded.callback_url,version=investment_schwab_app.version+1
+`
+
+type SaveSchwabAppParams struct {
+	AppKey      string `json:"app_key"`
+	AppSecret   string `json:"app_secret"`
+	CallbackUrl string `json:"callback_url"`
+}
+
+func (q *Queries) SaveSchwabApp(ctx context.Context, arg SaveSchwabAppParams) error {
+	_, err := q.db.ExecContext(ctx, saveSchwabApp, arg.AppKey, arg.AppSecret, arg.CallbackUrl)
+	return err
+}
+
+const upsertSchwab = `-- name: UpsertSchwab :execrows
+INSERT INTO investment_schwab_connections(user_id,access_token,refresh_token,token_expires_at,streamer_info,oauth_state,oauth_state_expires_at,last_error,updated_at,reauthorization_required,authorized_at,app_version,connection_version)
+SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,CAST(?13 AS BIGINT)+1
+WHERE EXISTS(SELECT 1 FROM investment_schwab_app WHERE version=?12)
+ON CONFLICT(user_id) DO UPDATE SET access_token=excluded.access_token,refresh_token=excluded.refresh_token,
+token_expires_at=excluded.token_expires_at,streamer_info=excluded.streamer_info,oauth_state=excluded.oauth_state,
+oauth_state_expires_at=excluded.oauth_state_expires_at,last_error=excluded.last_error,updated_at=excluded.updated_at,
+reauthorization_required=excluded.reauthorization_required,authorized_at=excluded.authorized_at,app_version=excluded.app_version,
+connection_version=excluded.connection_version
+WHERE investment_schwab_connections.connection_version=excluded.connection_version-1
+OR investment_schwab_connections.app_version<>excluded.app_version
 `
 
 type UpsertSchwabParams struct {
-	AppKey                  string `json:"app_key"`
-	AppSecret               string `json:"app_secret"`
-	CallbackUrl             string `json:"callback_url"`
+	UserID                  string `json:"user_id"`
 	AccessToken             string `json:"access_token"`
 	RefreshToken            string `json:"refresh_token"`
 	TokenExpiresAt          int64  `json:"token_expires_at"`
@@ -87,13 +141,13 @@ type UpsertSchwabParams struct {
 	UpdatedAt               int64  `json:"updated_at"`
 	ReauthorizationRequired int64  `json:"reauthorization_required"`
 	AuthorizedAt            int64  `json:"authorized_at"`
+	AppVersion              int64  `json:"app_version"`
+	ConnectionVersion       int64  `json:"connection_version"`
 }
 
-func (q *Queries) UpsertSchwab(ctx context.Context, arg UpsertSchwabParams) error {
-	_, err := q.db.ExecContext(ctx, upsertSchwab,
-		arg.AppKey,
-		arg.AppSecret,
-		arg.CallbackUrl,
+func (q *Queries) UpsertSchwab(ctx context.Context, arg UpsertSchwabParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, upsertSchwab,
+		arg.UserID,
 		arg.AccessToken,
 		arg.RefreshToken,
 		arg.TokenExpiresAt,
@@ -104,6 +158,11 @@ func (q *Queries) UpsertSchwab(ctx context.Context, arg UpsertSchwabParams) erro
 		arg.UpdatedAt,
 		arg.ReauthorizationRequired,
 		arg.AuthorizedAt,
+		arg.AppVersion,
+		arg.ConnectionVersion,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

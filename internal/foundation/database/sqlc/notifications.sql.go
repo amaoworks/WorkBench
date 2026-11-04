@@ -12,12 +12,17 @@ import (
 
 const countUnreadNotifications = `-- name: CountUnreadNotifications :one
 SELECT COUNT(*) FROM notifications
-WHERE read_at IS NULL AND archived_at IS NULL
-  AND (expires_at IS NULL OR expires_at > ?)
+WHERE recipient_id = ?1 AND read_at IS NULL AND archived_at IS NULL
+  AND (expires_at IS NULL OR expires_at > ?2)
 `
 
-func (q *Queries) CountUnreadNotifications(ctx context.Context, expiresAt sql.NullInt64) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countUnreadNotifications, expiresAt)
+type CountUnreadNotificationsParams struct {
+	RecipientID string        `json:"recipient_id"`
+	ExpiresAt   sql.NullInt64 `json:"expires_at"`
+}
+
+func (q *Queries) CountUnreadNotifications(ctx context.Context, arg CountUnreadNotificationsParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countUnreadNotifications, arg.RecipientID, arg.ExpiresAt)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -25,18 +30,19 @@ func (q *Queries) CountUnreadNotifications(ctx context.Context, expiresAt sql.Nu
 
 const countUnreadNotificationsBySource = `-- name: CountUnreadNotificationsBySource :one
 SELECT COUNT(*) FROM notifications
-WHERE read_at IS NULL AND archived_at IS NULL
-  AND (expires_at IS NULL OR expires_at > ?1)
-  AND (?2 = '' OR source_module = ?2)
+WHERE recipient_id = ?1 AND read_at IS NULL AND archived_at IS NULL
+  AND (expires_at IS NULL OR expires_at > ?2)
+  AND (?3 = '' OR source_module = ?3)
 `
 
 type CountUnreadNotificationsBySourceParams struct {
+	RecipientID  string        `json:"recipient_id"`
 	ExpiresAt    sql.NullInt64 `json:"expires_at"`
 	SourceModule interface{}   `json:"source_module"`
 }
 
 func (q *Queries) CountUnreadNotificationsBySource(ctx context.Context, arg CountUnreadNotificationsBySourceParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countUnreadNotificationsBySource, arg.ExpiresAt, arg.SourceModule)
+	row := q.db.QueryRowContext(ctx, countUnreadNotificationsBySource, arg.RecipientID, arg.ExpiresAt, arg.SourceModule)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -62,16 +68,22 @@ func (q *Queries) DeleteOldHandledNotifications(ctx context.Context, createdAt i
 }
 
 const getNotificationByID = `-- name: GetNotificationByID :one
-SELECT id, source_module, external, severity, title, content,
+SELECT id, recipient_id, source_module, external, severity, title, content,
        COALESCE(action_label, '') AS action_label,
        COALESCE(action_route, '') AS action_route,
        idempotency_key, COALESCE(source_event_id, '') AS source_event_id,
        created_at, read_at, archived_at, expires_at
-FROM notifications WHERE id = ?
+FROM notifications WHERE id = ?1 AND recipient_id = ?2
 `
+
+type GetNotificationByIDParams struct {
+	ID          string `json:"id"`
+	RecipientID string `json:"recipient_id"`
+}
 
 type GetNotificationByIDRow struct {
 	ID             string        `json:"id"`
+	RecipientID    string        `json:"recipient_id"`
 	SourceModule   string        `json:"source_module"`
 	External       int64         `json:"external"`
 	Severity       string        `json:"severity"`
@@ -87,11 +99,12 @@ type GetNotificationByIDRow struct {
 	ExpiresAt      sql.NullInt64 `json:"expires_at"`
 }
 
-func (q *Queries) GetNotificationByID(ctx context.Context, id string) (GetNotificationByIDRow, error) {
-	row := q.db.QueryRowContext(ctx, getNotificationByID, id)
+func (q *Queries) GetNotificationByID(ctx context.Context, arg GetNotificationByIDParams) (GetNotificationByIDRow, error) {
+	row := q.db.QueryRowContext(ctx, getNotificationByID, arg.ID, arg.RecipientID)
 	var i GetNotificationByIDRow
 	err := row.Scan(
 		&i.ID,
+		&i.RecipientID,
 		&i.SourceModule,
 		&i.External,
 		&i.Severity,
@@ -110,16 +123,22 @@ func (q *Queries) GetNotificationByID(ctx context.Context, id string) (GetNotifi
 }
 
 const getNotificationByIdempotencyKey = `-- name: GetNotificationByIdempotencyKey :one
-SELECT id, source_module, external, severity, title, content,
+SELECT id, recipient_id, source_module, external, severity, title, content,
        COALESCE(action_label, '') AS action_label,
        COALESCE(action_route, '') AS action_route,
        idempotency_key, COALESCE(source_event_id, '') AS source_event_id,
        created_at, read_at, archived_at, expires_at
-FROM notifications WHERE idempotency_key = ?
+FROM notifications WHERE idempotency_key = ?1 AND recipient_id = ?2
 `
+
+type GetNotificationByIdempotencyKeyParams struct {
+	IdempotencyKey string `json:"idempotency_key"`
+	RecipientID    string `json:"recipient_id"`
+}
 
 type GetNotificationByIdempotencyKeyRow struct {
 	ID             string        `json:"id"`
+	RecipientID    string        `json:"recipient_id"`
 	SourceModule   string        `json:"source_module"`
 	External       int64         `json:"external"`
 	Severity       string        `json:"severity"`
@@ -135,11 +154,12 @@ type GetNotificationByIdempotencyKeyRow struct {
 	ExpiresAt      sql.NullInt64 `json:"expires_at"`
 }
 
-func (q *Queries) GetNotificationByIdempotencyKey(ctx context.Context, idempotencyKey string) (GetNotificationByIdempotencyKeyRow, error) {
-	row := q.db.QueryRowContext(ctx, getNotificationByIdempotencyKey, idempotencyKey)
+func (q *Queries) GetNotificationByIdempotencyKey(ctx context.Context, arg GetNotificationByIdempotencyKeyParams) (GetNotificationByIdempotencyKeyRow, error) {
+	row := q.db.QueryRowContext(ctx, getNotificationByIdempotencyKey, arg.IdempotencyKey, arg.RecipientID)
 	var i GetNotificationByIdempotencyKeyRow
 	err := row.Scan(
 		&i.ID,
+		&i.RecipientID,
 		&i.SourceModule,
 		&i.External,
 		&i.Severity,
@@ -157,21 +177,41 @@ func (q *Queries) GetNotificationByIdempotencyKey(ctx context.Context, idempoten
 	return i, err
 }
 
+const getTelegramRecipient = `-- name: GetTelegramRecipient :one
+SELECT user_id, enabled, chat_id, activated_at, bot_generation, status_json
+FROM telegram_recipients WHERE user_id = ?
+`
+
+func (q *Queries) GetTelegramRecipient(ctx context.Context, userID string) (TelegramRecipient, error) {
+	row := q.db.QueryRowContext(ctx, getTelegramRecipient, userID)
+	var i TelegramRecipient
+	err := row.Scan(
+		&i.UserID,
+		&i.Enabled,
+		&i.ChatID,
+		&i.ActivatedAt,
+		&i.BotGeneration,
+		&i.StatusJson,
+	)
+	return i, err
+}
+
 const insertNotification = `-- name: InsertNotification :execrows
 INSERT INTO notifications(
-    id, source_module, external, severity, title, content, action_label,
+    id, recipient_id, source_module, external, severity, title, content, action_label,
     action_route, idempotency_key, source_event_id, created_at, expires_at
 ) VALUES (
-    ?1, ?2, ?3, ?4,
-    ?5, ?6, NULLIF(?7, ''), NULLIF(?8, ''),
-    ?9, NULLIF(?10, ''),
-    ?11, ?12
+    ?1, ?2, ?3, ?4, ?5,
+    ?6, ?7, NULLIF(?8, ''), NULLIF(?9, ''),
+    ?10, NULLIF(?11, ''),
+    ?12, ?13
 )
-ON CONFLICT(idempotency_key) DO NOTHING
+ON CONFLICT(recipient_id, idempotency_key) DO NOTHING
 `
 
 type InsertNotificationParams struct {
 	ID             string        `json:"id"`
+	RecipientID    string        `json:"recipient_id"`
 	SourceModule   string        `json:"source_module"`
 	External       int64         `json:"external"`
 	Severity       string        `json:"severity"`
@@ -188,6 +228,7 @@ type InsertNotificationParams struct {
 func (q *Queries) InsertNotification(ctx context.Context, arg InsertNotificationParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, insertNotification,
 		arg.ID,
+		arg.RecipientID,
 		arg.SourceModule,
 		arg.External,
 		arg.Severity,
@@ -207,22 +248,23 @@ func (q *Queries) InsertNotification(ctx context.Context, arg InsertNotification
 }
 
 const listNotifications = `-- name: ListNotifications :many
-SELECT id, source_module, external, severity, title, content,
+SELECT id, recipient_id, source_module, external, severity, title, content,
        COALESCE(action_label, '') AS action_label,
        COALESCE(action_route, '') AS action_route,
        idempotency_key, COALESCE(source_event_id, '') AS source_event_id,
        created_at, read_at, archived_at, expires_at
 FROM notifications
-WHERE archived_at IS NULL
-  AND (created_at < ?1
-       OR (created_at = ?1 AND id < ?2))
-  AND (?3 = 0 OR read_at IS NULL)
-  AND (?4 = '' OR source_module = ?4)
+WHERE recipient_id = ?1 AND archived_at IS NULL
+  AND (created_at < ?2
+       OR (created_at = ?2 AND id < ?3))
+  AND (?4 = 0 OR read_at IS NULL)
+  AND (?5 = '' OR source_module = ?5)
 ORDER BY created_at DESC, id DESC
-LIMIT ?5
+LIMIT ?6
 `
 
 type ListNotificationsParams struct {
+	RecipientID     string      `json:"recipient_id"`
 	CursorCreatedAt int64       `json:"cursor_created_at"`
 	CursorID        string      `json:"cursor_id"`
 	UnreadOnly      interface{} `json:"unread_only"`
@@ -232,6 +274,7 @@ type ListNotificationsParams struct {
 
 type ListNotificationsRow struct {
 	ID             string        `json:"id"`
+	RecipientID    string        `json:"recipient_id"`
 	SourceModule   string        `json:"source_module"`
 	External       int64         `json:"external"`
 	Severity       string        `json:"severity"`
@@ -249,6 +292,7 @@ type ListNotificationsRow struct {
 
 func (q *Queries) ListNotifications(ctx context.Context, arg ListNotificationsParams) ([]ListNotificationsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listNotifications,
+		arg.RecipientID,
 		arg.CursorCreatedAt,
 		arg.CursorID,
 		arg.UnreadOnly,
@@ -264,6 +308,7 @@ func (q *Queries) ListNotifications(ctx context.Context, arg ListNotificationsPa
 		var i ListNotificationsRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.RecipientID,
 			&i.SourceModule,
 			&i.External,
 			&i.Severity,
@@ -292,16 +337,57 @@ func (q *Queries) ListNotifications(ctx context.Context, arg ListNotificationsPa
 }
 
 const markAllNotificationsRead = `-- name: MarkAllNotificationsRead :exec
-UPDATE notifications SET read_at = ?
-WHERE read_at IS NULL AND archived_at IS NULL AND created_at <= ?
+UPDATE notifications SET read_at = ?1
+WHERE recipient_id = ?2 AND read_at IS NULL AND archived_at IS NULL AND created_at <= ?3
 `
 
 type MarkAllNotificationsReadParams struct {
-	ReadAt    sql.NullInt64 `json:"read_at"`
-	CreatedAt int64         `json:"created_at"`
+	ReadAt      sql.NullInt64 `json:"read_at"`
+	RecipientID string        `json:"recipient_id"`
+	CreatedAt   int64         `json:"created_at"`
 }
 
 func (q *Queries) MarkAllNotificationsRead(ctx context.Context, arg MarkAllNotificationsReadParams) error {
-	_, err := q.db.ExecContext(ctx, markAllNotificationsRead, arg.ReadAt, arg.CreatedAt)
+	_, err := q.db.ExecContext(ctx, markAllNotificationsRead, arg.ReadAt, arg.RecipientID, arg.CreatedAt)
+	return err
+}
+
+const saveTelegramRecipient = `-- name: SaveTelegramRecipient :exec
+INSERT INTO telegram_recipients(user_id, enabled, chat_id, activated_at, bot_generation)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(user_id) DO UPDATE SET enabled=excluded.enabled, chat_id=excluded.chat_id,
+    activated_at=excluded.activated_at, bot_generation=excluded.bot_generation
+`
+
+type SaveTelegramRecipientParams struct {
+	UserID        string `json:"user_id"`
+	Enabled       int64  `json:"enabled"`
+	ChatID        string `json:"chat_id"`
+	ActivatedAt   int64  `json:"activated_at"`
+	BotGeneration int64  `json:"bot_generation"`
+}
+
+func (q *Queries) SaveTelegramRecipient(ctx context.Context, arg SaveTelegramRecipientParams) error {
+	_, err := q.db.ExecContext(ctx, saveTelegramRecipient,
+		arg.UserID,
+		arg.Enabled,
+		arg.ChatID,
+		arg.ActivatedAt,
+		arg.BotGeneration,
+	)
+	return err
+}
+
+const saveTelegramRecipientStatus = `-- name: SaveTelegramRecipientStatus :exec
+UPDATE telegram_recipients SET status_json = ? WHERE user_id = ?
+`
+
+type SaveTelegramRecipientStatusParams struct {
+	StatusJson string `json:"status_json"`
+	UserID     string `json:"user_id"`
+}
+
+func (q *Queries) SaveTelegramRecipientStatus(ctx context.Context, arg SaveTelegramRecipientStatusParams) error {
+	_, err := q.db.ExecContext(ctx, saveTelegramRecipientStatus, arg.StatusJson, arg.UserID)
 	return err
 }

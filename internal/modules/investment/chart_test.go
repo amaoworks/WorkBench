@@ -53,7 +53,7 @@ func TestChartingLibraryEntryPreservesCompressionAndRevalidatesInBrowser(t *test
 			}))
 			defer upstream.Close()
 			proxy := newTVProxy(upstream.URL, "")
-			req := httptest.NewRequest(http.MethodGet, "/charting_library/charting_library.esm.js", nil)
+			req := testRequest(http.MethodGet, "/charting_library/charting_library.esm.js", nil)
 			req.Header.Set("Accept-Encoding", encoding)
 			got := httptest.NewRecorder()
 			proxy.ServeHTTP(got, req)
@@ -134,7 +134,7 @@ func TestChartingLibraryProxyCachesBundles(t *testing.T) {
 	defer upstream.Close()
 	proxy := newTVProxy(upstream.URL, "")
 	get := func(path, encoding, validators string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req := testRequest(http.MethodGet, path, nil)
 		req.Header.Set("Accept-Encoding", encoding)
 		req.Header.Set("Cookie", "workbench_session=secret")
 		req.Header.Set("Authorization", "Bearer nope")
@@ -250,13 +250,13 @@ func TestTerminalScriptsRevalidateByContent(t *testing.T) {
 	module := &Module{}
 	const asset = "/investment/terminal/datafeed.js"
 	initial := httptest.NewRecorder()
-	module.serveTerminal(initial, httptest.NewRequest(http.MethodGet, asset, nil))
+	module.serveTerminal(initial, testRequest(http.MethodGet, asset, nil))
 	etag := initial.Header().Get("ETag")
 	if initial.Code != http.StatusOK || initial.Body.Len() == 0 || etag == "" || initial.Header().Get("Cache-Control") != "no-cache" {
 		t.Fatalf("initial asset: %d %v", initial.Code, initial.Header())
 	}
 	for _, match := range []string{etag, "W/" + etag, `"previous-version"`} {
-		req := httptest.NewRequest(http.MethodGet, asset, nil)
+		req := testRequest(http.MethodGet, asset, nil)
 		req.Header.Set("If-None-Match", match)
 		got := httptest.NewRecorder()
 		module.serveTerminal(got, req)
@@ -269,12 +269,12 @@ func TestTerminalScriptsRevalidateByContent(t *testing.T) {
 		}
 	}
 	head := httptest.NewRecorder()
-	module.serveTerminal(head, httptest.NewRequest(http.MethodHead, asset, nil))
+	module.serveTerminal(head, testRequest(http.MethodHead, asset, nil))
 	if head.Code != http.StatusOK || head.Body.Len() != 0 || head.Header().Get("Content-Length") != strconv.Itoa(initial.Body.Len()) {
 		t.Fatalf("HEAD: %d %v", head.Code, head.Header())
 	}
 	html := httptest.NewRecorder()
-	module.serveTerminal(html, httptest.NewRequest(http.MethodGet, "/investment/terminal", nil))
+	module.serveTerminal(html, testRequest(http.MethodGet, "/investment/terminal", nil))
 	if html.Header().Get("Cache-Control") != "no-store" || html.Header().Get("ETag") != "" {
 		t.Fatal("terminal document must stay uncached")
 	}
@@ -335,14 +335,14 @@ func TestChartLibraryWarmupServesLaterEncodingsFromCache(t *testing.T) {
 	defer upstream.Close()
 	dir := t.TempDir()
 	proxy := newTVProxy(upstream.URL, dir)
-	if _, err := warmChartLibrary(context.Background(), proxy); err != nil {
+	if _, err := warmChartLibrary(testContext(context.Background()), proxy); err != nil {
 		t.Fatal(err)
 	}
 	warmHits := hits.Load()
 	if warmHits != 4 {
 		t.Fatalf("warmup must fetch two entry points and two core bundles, got %d requests", warmHits)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/charting_library/bundles/library.9a20d761e34f8c5b0127.js", nil)
+	req := testRequest(http.MethodGet, "/charting_library/bundles/library.9a20d761e34f8c5b0127.js", nil)
 	req.Header.Set("Accept-Encoding", "gzip, deflate, br")
 	got := httptest.NewRecorder()
 	proxy.ServeHTTP(got, req)
@@ -402,7 +402,7 @@ func TestChartLibrarySingleflightSharesOneUpstreamFetch(t *testing.T) {
 		group.Add(1)
 		go func(i int) {
 			defer group.Done()
-			req := httptest.NewRequest(http.MethodGet, "/charting_library/bundles/library.8f4c2b1a0937e6d5c012.js", nil)
+			req := testRequest(http.MethodGet, "/charting_library/bundles/library.8f4c2b1a0937e6d5c012.js", nil)
 			req.Header.Set("Accept-Encoding", "gzip, deflate, br, zstd")
 			got := httptest.NewRecorder()
 			proxy.ServeHTTP(got, req)
@@ -439,7 +439,7 @@ func TestChartFetchSurvivesClosingTheFirstPage(t *testing.T) {
 	defer close(release)
 	transport := newTVProxy(upstream.URL, "").Transport
 	address := upstream.URL + "/charting_library/bundles/library.02a5618b954328b298b8.js"
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(testContext(context.Background()))
 	first, _ := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	firstDone := make(chan error, 1)
 	go func() {
@@ -460,7 +460,7 @@ func TestChartFetchSurvivesClosingTheFirstPage(t *testing.T) {
 		t.Fatal("closing a page did not release its waiter")
 	}
 	// A replacement page and a cancelled waiting page share the same fetch.
-	waitCtx, waitCancel := context.WithCancel(context.Background())
+	waitCtx, waitCancel := context.WithCancel(testContext(context.Background()))
 	waitCancel()
 	waiter, _ := http.NewRequestWithContext(waitCtx, http.MethodGet, address, nil)
 	if _, err := transport.RoundTrip(waiter); err != context.Canceled {
@@ -492,7 +492,7 @@ func TestChartCacheMissDoesNotShareAConditionalEmptyBody(t *testing.T) {
 	}))
 	defer upstream.Close()
 	proxy := newTVProxy(upstream.URL, "")
-	req := httptest.NewRequest(http.MethodGet, "/charting_library/bundles/library.02a5618b954328b298b8.js", nil)
+	req := testRequest(http.MethodGet, "/charting_library/bundles/library.02a5618b954328b298b8.js", nil)
 	req.Header.Set("If-None-Match", `"current"`)
 	req.Header.Set("If-Modified-Since", time.Now().Format(http.TimeFormat))
 	conditional := httptest.NewRecorder()
@@ -538,7 +538,7 @@ func TestChartCacheSharesGzipAcrossBrowserEncodingLists(t *testing.T) {
 	defer upstream.Close()
 	proxy := newTVProxy(upstream.URL, "")
 	for _, accept := range []string{"gzip, deflate, br, zstd", "br, gzip;q=0.5", "gzip"} {
-		req := httptest.NewRequest(http.MethodGet, "/charting_library/bundles/library.02a5618b954328b298b8.js", nil)
+		req := testRequest(http.MethodGet, "/charting_library/bundles/library.02a5618b954328b298b8.js", nil)
 		req.Header.Set("Accept-Encoding", accept)
 		got := httptest.NewRecorder()
 		proxy.ServeHTTP(got, req)
@@ -579,7 +579,7 @@ func TestChartWarmupReportsUpstreamFailure(t *testing.T) {
 		http.Error(w, "unavailable", http.StatusServiceUnavailable)
 	}))
 	defer upstream.Close()
-	files, err := warmChartLibrary(context.Background(), newTVProxy(upstream.URL, ""))
+	files, err := warmChartLibrary(testContext(context.Background()), newTVProxy(upstream.URL, ""))
 	if files != 0 || err == nil || !strings.Contains(err.Error(), "503") {
 		t.Fatalf("warmup: files=%d, error=%v", files, err)
 	}
@@ -622,7 +622,7 @@ func TestHashedChartResponseDropsSessionCookiesOnSuccess(t *testing.T) {
 	})
 
 	success := httptest.NewRecorder()
-	wrapped.ServeHTTP(success, httptest.NewRequest(http.MethodGet, "/charting_library/bundles/library.02a5618b954328b298b8.js", nil))
+	wrapped.ServeHTTP(success, testRequest(http.MethodGet, "/charting_library/bundles/library.02a5618b954328b298b8.js", nil))
 	if success.Code != http.StatusOK || success.Body.String() != "bundle" {
 		t.Fatalf("success: %d %q", success.Code, success.Body.String())
 	}
@@ -641,7 +641,7 @@ func TestHashedChartResponseDropsSessionCookiesOnSuccess(t *testing.T) {
 		w.WriteHeader(http.StatusBadGateway)
 	})
 	failed := httptest.NewRecorder()
-	failing.ServeHTTP(WrapHashedChartResponse(failed), httptest.NewRequest(http.MethodGet, "/charting_library/bundles/library.02a5618b954328b298b8.js", nil))
+	failing.ServeHTTP(WrapHashedChartResponse(failed), testRequest(http.MethodGet, "/charting_library/bundles/library.02a5618b954328b298b8.js", nil))
 	if failed.Code != http.StatusBadGateway || failed.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("failure was cached: %d %q", failed.Code, failed.Header().Get("Cache-Control"))
 	}

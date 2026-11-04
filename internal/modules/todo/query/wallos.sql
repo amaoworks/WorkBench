@@ -1,27 +1,27 @@
 -- name: GetWallosSettings :one
-SELECT config, last_sync, last_error FROM todo_wallos_settings WHERE id = 1;
+SELECT config, last_sync, last_error FROM todo_wallos_settings WHERE user_id = ?;
 
 -- name: SaveWallosSettings :exec
-INSERT INTO todo_wallos_settings(id, config) VALUES (1, ?)
-ON CONFLICT(id) DO UPDATE SET config = excluded.config, last_sync = NULL, last_error = '';
+INSERT INTO todo_wallos_settings(user_id, config) VALUES (?, ?)
+ON CONFLICT(user_id) DO UPDATE SET config = excluded.config, last_sync = NULL, last_error = '';
 
 -- name: SetWallosSyncStatus :exec
-UPDATE todo_wallos_settings SET last_sync = ?, last_error = ? WHERE id = 1;
+UPDATE todo_wallos_settings SET last_sync = ?, last_error = ? WHERE user_id = ?;
 
 -- name: ClaimWallosOccurrence :execrows
-INSERT INTO todo_wallos_occurrences(source, subscription_id, payment_date, task_id)
-VALUES (?, ?, ?, ?) ON CONFLICT(source, subscription_id, payment_date)
+INSERT INTO todo_wallos_occurrences(source, subscription_id, payment_date, task_id, user_id)
+VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, source, subscription_id, payment_date)
 DO UPDATE SET task_id = excluded.task_id
-WHERE NOT EXISTS (SELECT 1 FROM todo_tasks WHERE id = todo_wallos_occurrences.task_id);
+WHERE NOT EXISTS (SELECT 1 FROM todo_tasks WHERE id = todo_wallos_occurrences.task_id AND user_id = todo_wallos_occurrences.user_id);
 
 -- name: GetWallosOccurrenceTask :one
 SELECT task_id FROM todo_wallos_occurrences
-WHERE source = ? AND subscription_id = ? AND payment_date = ?;
+WHERE source = ? AND subscription_id = ? AND payment_date = ? AND user_id = ?;
 
 -- name: ListUpcomingWallos :many
 SELECT o.payment_date, t.id, t.title, t.description, t.due_at
 FROM todo_wallos_occurrences o
-JOIN todo_tasks t ON t.id = o.task_id
-WHERE t.completed_at IS NULL AND o.payment_date >= CAST(sqlc.arg(from_date) AS TEXT)
+JOIN todo_tasks t ON t.id = o.task_id AND t.user_id = o.user_id
+WHERE o.user_id = sqlc.arg(user_id) AND t.completed_at IS NULL AND o.payment_date >= CAST(sqlc.arg(from_date) AS TEXT)
 ORDER BY o.payment_date, t.id
 LIMIT sqlc.arg(row_limit);

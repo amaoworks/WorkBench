@@ -151,6 +151,7 @@ async function verifyInvestmentChart(page) {
     };
     browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH || undefined, args: ["--no-sandbox", "--no-proxy-server", `--host-resolver-rules=MAP ${hostname} 127.0.0.1`] });
     const login = async (page, password) => {
+      await page.getByLabel("用户名", { exact: true }).fill("admin");
       await page.getByLabel("密码", { exact: true }).fill(password);
       const response = page.waitForResponse(res => res.url().endsWith("/api/auth/login") && res.request().method() === "POST");
       await page.getByRole("button", { name: "登录", exact: true }).click();

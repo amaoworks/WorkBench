@@ -11,6 +11,7 @@ import { Notice } from "../../components/ui/Notice";
 import { Skeleton } from "../../components/ui/States";
 import { Select } from "../../components/ui/Select";
 import { cn } from "../../shared/cn";
+import { useCurrentUser, userStorageKey } from "../../shared/auth";
 import { aiShortcut } from "../../shared/keyboard";
 import { useConversationMessages, useConversations } from "./queries";
 import * as Dialog from "@radix-ui/react-dialog";
@@ -75,9 +76,11 @@ async function streamChat(
 const suggestions = ["帮我创建明天上午 10 点开周会的待办", "今天下午 5 点前提醒我提交报销", "你能帮我做哪些事？"];
 
 export function AIPanel({ open, onClose, context }: { open: boolean; onClose: () => void; context?: AIPageContext }) {
+  const user = useCurrentUser();
+  const conversationKey = userStorageKey(user.id, "conversation-id");
   const [input, setInput] = useState("");
   const [attachContext, setAttachContext] = useState(true);
-  const [conversationId, setConversationId] = useState(() => localStorage.getItem("workbench-conversation-id") ?? "");
+  const [conversationId, setConversationId] = useState(() => localStorage.getItem(conversationKey) ?? "");
   const [messages, setMessages] = useState<Message[]>([]);
   const queryClient = useQueryClient();
   const status = useQuery({ queryKey: ["ai", "status"], queryFn: () => apiValidated("/api/ai/status", aiStatusSchema), enabled: open });
@@ -87,8 +90,8 @@ export function AIPanel({ open, onClose, context }: { open: boolean; onClose: ()
   const visibleMessages = [...historyMessages, ...messages];
   const historyReady = !conversationId || messages.length > 0 || (history.isSuccess && !history.isRefetching);
   useEffect(() => {
-    if (conversationId) localStorage.setItem("workbench-conversation-id", conversationId);
-  }, [conversationId]);
+    if (conversationId) localStorage.setItem(conversationKey, conversationId);
+  }, [conversationId, conversationKey]);
   const chat = useMutation({
     mutationFn: ({ message, context: messageContext }: ChatInput) => {
       let receivedDelta = false;
@@ -160,7 +163,7 @@ export function AIPanel({ open, onClose, context }: { open: boolean; onClose: ()
     if (chat.isPending || nextConversationId === conversationId) return;
     setMessages([]);
     setConversationId(nextConversationId);
-    if (!nextConversationId) localStorage.removeItem("workbench-conversation-id");
+    if (!nextConversationId) localStorage.removeItem(conversationKey);
   }
   const conversationOptions = [
     { value: "", label: "新对话" },
@@ -245,11 +248,11 @@ export function AIPanel({ open, onClose, context }: { open: boolean; onClose: ()
             {status.data && !status.data.available && (
               <Notice
                 title="AI 尚未启用"
-                action={
+                action={user.role === "admin" ? (
                   <ButtonLink variant="secondary" size="sm" to="/settings?tab=ai" onClick={onClose}>
                     打开设置
                   </ButtonLink>
-                }
+                ) : undefined}
               />
             )}
             {Boolean(conversationId) && !historyReady && history.isFetching && <Skeleton className="h-32" />}

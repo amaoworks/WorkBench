@@ -1,10 +1,9 @@
 package auth
 
 import (
-	"database/sql"
 	"net/http"
-	"time"
 
+	"workbench/internal/contracts"
 	"workbench/internal/foundation/database/sqlc"
 	"workbench/internal/foundation/httpapi"
 )
@@ -27,7 +26,12 @@ func (s *Service) ChangePasswordHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer s.passwordLimit.release()
-	credential, err := s.queries.GetAuthCredential(r.Context())
+	userID, err := contracts.RequireUserID(r.Context())
+	if err != nil {
+		invalidToken(w)
+		return
+	}
+	credential, err := s.queries.GetAuthUser(r.Context(), userID)
 	if err != nil {
 		httpapi.Error(w, 500, "password_failed", "无法读取密码")
 		return
@@ -54,20 +58,19 @@ func (s *Service) ChangePasswordHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	defer tx.Rollback()
 	queries := s.queries.WithTx(tx)
-	count, err := queries.UpdatePasswordHashIfCurrent(r.Context(), dbsqlc.UpdatePasswordHashIfCurrentParams{PasswordHash: hash, UpdatedAt: time.Now().UTC().UnixMilli(), PreviousHash: previous})
+	count, err := queries.UpdatePasswordHashIfCurrent(r.Context(), dbsqlc.UpdatePasswordHashIfCurrentParams{UserID: userID, PasswordHash: hash, UpdatedAt: s.now().UnixMilli(), PreviousHash: previous})
 	if err != nil {
+		_ = tx.Rollback()
 		httpapi.Error(w, 500, "password_failed", "无法更新密码")
 		return
 	}
-	if err != nil || count != 1 {
+	if count != 1 {
+		_ = tx.Rollback()
 		httpapi.Error(w, 409, "password_changed", "密码已被修改，请重新登录")
 		return
 	}
-	if err := queries.DeleteAllSessions(r.Context()); err != nil {
-		httpapi.Error(w, 500, "password_failed", "无法注销登录")
-		return
-	}
-	if queries.RevokeAllBrowserSessions(r.Context(), sql.NullInt64{Int64: s.now().UnixMilli(), Valid: true}) != nil || queries.RevokeAllDeviceSessions(r.Context(), sql.NullInt64{Int64: s.now().UnixMilli(), Valid: true}) != nil {
+	if s.revokeUser(r.Context(), queries, userID) != nil {
+		_ = tx.Rollback()
 		httpapi.Error(w, 500, "password_failed", "无法注销登录")
 		return
 	}

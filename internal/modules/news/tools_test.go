@@ -1,12 +1,12 @@
 package news
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
 
 	"workbench/internal/contracts"
+	"workbench/internal/modules/news/sqlc"
 )
 
 type newsToolRegistrar struct {
@@ -47,7 +47,7 @@ func TestNewsAIToolsReuseArticleFiltersAndDigestCreation(t *testing.T) {
 	m, _, _ := openModule(t)
 	ingest(t, m)
 	article := firstArticle(t, m)
-	ctx := context.Background()
+	ctx := testContext()
 
 	listed, err := m.listArticlesTool(ctx, contracts.ToolCall{Arguments: json.RawMessage(`{"query":"earnings","sourceId":"","topic":"","unread":true,"starred":false,"matched":false,"cursor":null,"limit":10}`)})
 	if err != nil {
@@ -75,7 +75,7 @@ func TestNewsAIToolsReuseArticleFiltersAndDigestCreation(t *testing.T) {
 	if err := json.Unmarshal(digestResult.Content, &digest); err != nil || len(digest.Items) != 1 || digest.NotificationID != "" {
 		t.Fatalf("digest=%s err=%v", digestResult.Content, err)
 	}
-	stored, err := m.q.GetDigest(ctx, digest.ID)
+	stored, err := m.q.GetDigest(ctx, newssqlc.GetDigestParams{UserID: contracts.UserID(ctx), ID: digest.ID})
 	if err != nil || stored.NotificationID != "" {
 		t.Fatalf("stored digest=%+v err=%v", stored, err)
 	}
@@ -86,10 +86,10 @@ func TestNewsAIToolsReuseArticleFiltersAndDigestCreation(t *testing.T) {
 
 func TestNewsReadToolHonorsModuleLifecycle(t *testing.T) {
 	m, _, _ := openModule(t)
-	if err := m.OnEnabledChanged(context.Background(), false); err != nil {
+	if err := m.OnEnabledChanged(testContext(), false); err != nil {
 		t.Fatal(err)
 	}
-	_, err := m.listArticlesTool(context.Background(), contracts.ToolCall{Arguments: json.RawMessage(`{"query":"","sourceId":"","topic":"","unread":false,"starred":false,"matched":false,"cursor":null,"limit":10}`)})
+	_, err := m.listArticlesTool(testContext(), contracts.ToolCall{Arguments: json.RawMessage(`{"query":"","sourceId":"","topic":"","unread":false,"starred":false,"matched":false,"cursor":null,"limit":10}`)})
 	if err == nil {
 		t.Fatal("disabled module accepted a read tool operation")
 	}

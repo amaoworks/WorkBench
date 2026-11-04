@@ -24,6 +24,7 @@ POST /api/auth/token
 Content-Type: application/json
 
 {
+  "username": "alice",
   "password": "用户密码",
   "deviceName": "Alice 的 iPhone",
   "platform": "ios"
@@ -42,7 +43,7 @@ Content-Type: application/json
 
 访问令牌最长 15 分钟，设备会话从登录起最长 30 天，不因刷新延长。刷新令牌每次成功使用后立即轮换；再次使用旧刷新令牌会撤销整个设备会话，已签发的访问令牌也随之失效。
 
-access token 使用 EdDSA，header 包含 `typ=at+jwt` 与 `kid`；服务端校验 `iss=workbench`、`aud=workbench-api`、`sub=owner`，并用 `sid` 关联设备会话、用 `ver` 关联密码凭据版本。客户端把 token 当作 opaque credential，不依赖解码后的字段决定权限或有效期。
+access token 使用 EdDSA，header 包含 `typ=at+jwt` 与 `kid`；服务端校验 `iss=workbench`、`aud=workbench-api`、`sub` 对应的真实用户身份，并用 `sid` 关联设备会话、用 `ver` 关联密码凭据版本。客户端把 token 当作 opaque credential，不依赖解码后的字段决定权限或有效期。
 
 ### 刷新
 
@@ -70,11 +71,11 @@ Content-Type: application/json
 |---|---|
 | 400 | 请求格式、Host、CSRF 或凭据混用错误；修正请求，不刷新令牌 |
 | 401 | access/refresh token 无效、过期或设备已撤销；access token 请求可尝试一次刷新，是否重放仍遵守幂等规则；刷新接口 401 直接重新登录 |
-| 403 | `password_change_required` 时只开放改密流程；`invalid_origin` 表示部署来源不匹配 |
+| 403 | `password_change_required` 时只开放改密流程；`admin_required` 表示需要管理员；`invalid_origin` 表示部署来源不匹配 |
 | 429 | 读取 `Retry-After`，到期后再试；不并发撞限 |
 | 503 | 业务停用、启动中或上游能力不可用；保留用户操作并显示服务端消息 |
 
-首次登录返回 `mustChangePassword=true` 时，调用 `PUT /api/settings/password`，也可调用 `POST /api/auth/token/revoke` 退出当前设备。其他业务接口仍不可访问。改密成功会撤销全部网页和设备会话，响应为 `{ "reauthenticate": true }`。
+首次登录返回 `mustChangePassword=true` 时，调用 `PUT /api/settings/password`，也可调用 `POST /api/auth/token/revoke` 退出当前设备。其他业务接口仍不可访问。改密成功会撤销本人的全部网页和设备会话，响应为 `{ "reauthenticate": true }`。
 
 ## AI 历史
 
@@ -95,10 +96,10 @@ Task 的 `revision` 从 1 开始，每次 PATCH 递增。更新时提交最近�
 
 ## 设备管理
 
-- `GET /api/auth/sessions` 同时列出网页与原生设备会话。
-- `DELETE /api/auth/sessions/{id}` 注销指定会话。
-- `POST /api/auth/logout-all` 注销全部网页与原生会话。
-- `POST /api/auth/signing-key/rotate` 轮换访问令牌签名密钥；旧密钥继续验签 15 分钟，使已签发的短期令牌自然到期。
+- `GET /api/auth/sessions` 同时列出本人的网页与原生设备会话。
+- `DELETE /api/auth/sessions/{id}` 注销本人指定会话。
+- `POST /api/auth/logout-all` 注销本人的全部网页与原生会话。
+- `POST /api/auth/signing-key/rotate` 仅管理员可用，轮换访问令牌签名密钥；旧密钥继续验签 15 分钟，使已签发的短期令牌自然到期。
 
 设备撤销、全部注销、改密和 refresh token 重用都会使相应 Bearer 失效。SSE 与 WebSocket 在握手后每秒检查权威登录状态，发现失效后关闭连接。
 
@@ -114,7 +115,7 @@ Task 的 `revision` 从 1 开始，每次 PATCH 递增。更新时提交最近�
 
 ## 通知与推送
 
-原生设备使用 Bearer 调用 `POST` 或 `PUT /api/mobile/push-token` 注册 APNs/FCM token，调用 `DELETE` 删除；成功均返回 204。推送 token 与当前设备会话绑定，网页 Cookie 不能注册移动推送。
+原生设备使用 Bearer 调用 `POST` 或 `PUT /api/mobile/push-token` 注册 APNs/FCM token，调用 `DELETE` 删除；成功均返回 204。通知只投递至收件人的有效设备。推送 token 与当前设备会话绑定，网页 Cookie 不能注册移动推送。
 
 APNs 和 FCM payload 均包含 `notificationId` 与 `actionRoute`。客户端把 `actionRoute` 当作 Workbench 站内路径映射到原生页面：
 
@@ -131,7 +132,7 @@ APNs 和 FCM payload 均包含 `notificationId` 与 `actionRoute`。客户端把
 3. Schwab 返回公开的 `/oauth/schwab`，由 Workbench 服务端校验 state、交换并保存券商令牌；系统浏览器无需 App Bearer。
 4. App 回到前台后，携带 Bearer 查询 `GET /api/modules/investment/schwab/oauth/status/{statusId}`，直到 `succeeded` 或 `failed`。
 
-状态有效期为十分钟，新授权会使旧的 pending 请求失败。状态暂存在进程内；服务重启或状态不存在时重新发起。
+授权和状态查询均属于发起用户。状态有效期为十分钟，同一用户的新授权会使其旧的 pending 请求失败，不影响其他用户。状态暂存在进程内；服务重启或状态不存在时重新发起。
 
 ## WebView
 

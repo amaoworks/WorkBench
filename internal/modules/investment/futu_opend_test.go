@@ -197,7 +197,7 @@ func TestOpendCloseUnblocksPendingCall(t *testing.T) {
 	fake.subStarted = make(chan struct{}, 1)
 	fake.releaseSub = make(chan struct{})
 	defer close(fake.releaseSub)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(testContext(context.Background()), 3*time.Second)
 	defer cancel()
 	client, err := dialOpend(ctx, fake.addr(), "workbench-close-test")
 	if err != nil {
@@ -242,7 +242,7 @@ func TestFutuHistoryRejectsRepeatedPaginationCursor(t *testing.T) {
 	fake.mu.Lock()
 	fake.historyNextKey = "repeated-cursor"
 	fake.mu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(testContext(context.Background()), 3*time.Second)
 	defer cancel()
 	client, err := dialOpend(ctx, fake.addr(), "workbench-history-test")
 	if err != nil {
@@ -265,7 +265,7 @@ func TestFutuHistoryAcceptsOmittedKLList(t *testing.T) {
 	fake.mu.Lock()
 	fake.historyOmitKL = true
 	fake.mu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(testContext(context.Background()), 3*time.Second)
 	defer cancel()
 	client, err := dialOpend(ctx, fake.addr(), "workbench-omitted-history-test")
 	if err != nil {
@@ -283,7 +283,7 @@ func TestFutuHistoryAcceptsSuccessfulEmptyFinalPage(t *testing.T) {
 	fake.mu.Lock()
 	fake.histList = []map[string]any{}
 	fake.mu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(testContext(context.Background()), 3*time.Second)
 	defer cancel()
 	client, err := dialOpend(ctx, fake.addr(), "workbench-empty-history-test")
 	if err != nil {
@@ -298,7 +298,7 @@ func TestFutuHistoryAcceptsSuccessfulEmptyFinalPage(t *testing.T) {
 
 func TestDialInitConnectUsesPlaintextJSONAndSessionAll(t *testing.T) {
 	fake := startFakeOpenD(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(testContext(context.Background()), 3*time.Second)
 	defer cancel()
 	client, err := dialOpend(ctx, fake.addr(), "workbench-test")
 	if err != nil {
@@ -378,7 +378,7 @@ func TestValidateOpenDAddr(t *testing.T) {
 }
 
 func TestWriteOpendPacketRejectedForTrade(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(testContext(context.Background()), time.Second)
 	defer cancel()
 	client := &opendClient{pending: map[uint32]chan opendReply{}, stop: make(chan struct{}), conn: discardConn{}}
 	if _, err := client.call(ctx, 2202, map[string]any{"c2s": map[string]any{}}); err != errFutuTradeForbidden {

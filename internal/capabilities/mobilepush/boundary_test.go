@@ -44,7 +44,7 @@ func (p *blockedInvalidProvider) Send(ctx context.Context, _ contracts.Notificat
 func registerTestToken(t *testing.T, s *Service, token string) {
 	t.Helper()
 	recorder := httptest.NewRecorder()
-	s.RegisterToken(recorder, httptest.NewRequest(http.MethodPut, "/api/mobile/push-token", strings.NewReader(`{"platform":"ios","pushToken":"`+token+`"}`)))
+	s.RegisterToken(recorder, pushRequest(http.MethodPut, "/api/mobile/push-token", strings.NewReader(`{"platform":"ios","pushToken":"`+token+`"}`)))
 	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("register status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -58,7 +58,7 @@ func publishTestNotification(t *testing.T, db *database.Database, store *events.
 		t.Fatal(err)
 	}
 	payload, _ := json.Marshal(map[string]string{"notificationId": id})
-	eventID, err := store.Publish(t.Context(), contracts.NewEvent{Topic: "core.notification.created", SchemaVersion: 1, SourceModule: "core", Payload: payload})
+	eventID, err := store.Publish(pushContext(), contracts.NewEvent{Topic: "core.notification.created", SchemaVersion: 1, SourceModule: "core", Payload: payload})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,6 +71,7 @@ func testDispatcher(t *testing.T, s *Service, db *database.Database, store *even
 	if err != nil {
 		t.Fatal(err)
 	}
+	d.SetUserDirectory(activePushUsers{})
 	return d
 }
 
@@ -114,7 +115,7 @@ func TestInvalidInFlightTokenDoesNotDeleteReplacement(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- s.Deliver(ctx, contracts.Notification{ID: "note", External: true, CreatedAt: base})
+		done <- s.Deliver(ctx, contracts.Notification{RecipientID: contracts.LegacyUserID, ID: "note", External: true, CreatedAt: base})
 	}()
 	select {
 	case token := <-p.started:
@@ -137,7 +138,7 @@ func TestInvalidInFlightTokenDoesNotDeleteReplacement(t *testing.T) {
 	}
 	fresh := &stubProvider{}
 	s.providers["ios"] = fresh
-	if err := s.Deliver(t.Context(), contracts.Notification{ID: "new-note", External: true, CreatedAt: base.Add(2 * time.Second)}); err != nil {
+	if err := s.Deliver(t.Context(), contracts.Notification{RecipientID: contracts.LegacyUserID, ID: "new-note", External: true, CreatedAt: base.Add(2 * time.Second)}); err != nil {
 		t.Fatal(err)
 	}
 	if len(fresh.tokens) != 1 || fresh.tokens[0] != "new-token" {

@@ -1,7 +1,6 @@
 package todo
 
 import (
-	"context"
 	"encoding/json"
 	"net/http/httptest"
 	"testing"
@@ -12,7 +11,7 @@ import (
 
 func TestTaskMetadataOrderingAndClearCategory(t *testing.T) {
 	m, _ := openTodoModule(t)
-	ctx := context.Background()
+	ctx := todoContext()
 	now := time.Date(2026, 3, 6, 12, 0, 0, 0, time.UTC)
 	m.now = func() time.Time { return now }
 	due := now.Add(24 * time.Hour)
@@ -23,7 +22,7 @@ func TestTaskMetadataOrderingAndClearCategory(t *testing.T) {
 		now = now.Add(time.Second)
 	}
 	rec := httptest.NewRecorder()
-	m.listTasks(rec, httptest.NewRequest("GET", "/?limit=10", nil))
+	m.listTasks(rec, todoRequest("GET", "/?limit=10", nil))
 	if rec.Code != 200 {
 		t.Fatal(rec.Body.String())
 	}
@@ -51,7 +50,7 @@ func TestTaskMetadataOrderingAndClearCategory(t *testing.T) {
 
 func TestTaskViewsCountsAndDSTWeekBoundary(t *testing.T) {
 	m, _ := openTodoModule(t)
-	ctx := context.Background()
+	ctx := todoContext()
 	loc, err := time.LoadLocation("America/New_York")
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +81,7 @@ func TestTaskViewsCountsAndDSTWeekBoundary(t *testing.T) {
 
 	for view, want := range map[string]int{"today": 2, "week": 3, "later": 2, "done": 1, "overdue": 1} {
 		rec := httptest.NewRecorder()
-		m.listTasks(rec, httptest.NewRequest("GET", "/?view="+view+"&tz=America%2FNew_York", nil))
+		m.listTasks(rec, todoRequest("GET", "/?view="+view+"&tz=America%2FNew_York", nil))
 		if rec.Code != 200 {
 			t.Fatalf("%s: %s", view, rec.Body.String())
 		}
@@ -94,7 +93,7 @@ func TestTaskViewsCountsAndDSTWeekBoundary(t *testing.T) {
 		}
 	}
 	rec := httptest.NewRecorder()
-	m.taskCounts(rec, httptest.NewRequest("GET", "/?tz=America%2FNew_York", nil))
+	m.taskCounts(rec, todoRequest("GET", "/?tz=America%2FNew_York", nil))
 	var counts TaskCounts
 	if err := json.Unmarshal(rec.Body.Bytes(), &counts); err != nil {
 		t.Fatal(err)
@@ -106,7 +105,7 @@ func TestTaskViewsCountsAndDSTWeekBoundary(t *testing.T) {
 
 func TestAgendaCompletedTodayUsesRequestedTimeZone(t *testing.T) {
 	m, _ := openTodoModule(t)
-	ctx := context.Background()
+	ctx := todoContext()
 	now := time.Date(2026, 3, 7, 4, 30, 0, 0, time.UTC) // March 6 in New York.
 	m.now = func() time.Time { return now }
 	yesterday, err := m.Create(ctx, CreateTask{Title: "yesterday"})
@@ -133,7 +132,7 @@ func TestAgendaCompletedTodayUsesRequestedTimeZone(t *testing.T) {
 
 func TestTodoAIToolsListAndComplete(t *testing.T) {
 	m, db := openTodoModule(t)
-	ctx := context.Background()
+	ctx := todoContext()
 	now := time.Date(2026, 3, 6, 12, 0, 0, 0, time.UTC)
 	m.now = func() time.Time { return now }
 	due := now.Add(time.Hour)
@@ -170,7 +169,7 @@ func TestTodoAIToolsListAndComplete(t *testing.T) {
 
 func TestUpdateTaskToolUpdatesAndClearsDueAt(t *testing.T) {
 	m, _ := openTodoModule(t)
-	ctx := context.Background()
+	ctx := todoContext()
 	due := time.Date(2026, 3, 6, 13, 0, 0, 0, time.UTC)
 	task, err := m.Create(ctx, CreateTask{Title: "Before", Description: "keep", DueAt: &due, Priority: "low", Category: "old"})
 	if err != nil {

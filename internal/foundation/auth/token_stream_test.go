@@ -29,7 +29,7 @@ func newStreamTokenService(t *testing.T) *Service {
 func streamAccessToken(t *testing.T, handler http.Handler, target string) tokenResponse {
 	t.Helper()
 	payload, _ := json.Marshal(map[string]string{
-		"password": testPassword, "deviceName": "Stream test", "platform": "other",
+		"username": "admin", "password": testPassword, "deviceName": "Stream test", "platform": "other",
 	})
 	request := httptest.NewRequest(http.MethodPost, target+"/api/auth/token", bytes.NewReader(payload))
 	request.Header.Set("Content-Type", "application/json")

@@ -1,9 +1,9 @@
 -- name: GetDashboardLayout :one
-SELECT value FROM workspace_settings WHERE section = 'dashboard';
+SELECT value FROM user_settings WHERE user_id = ? AND section = 'dashboard';
 
 -- name: SaveDashboardLayout :exec
-INSERT INTO workspace_settings(section, value) VALUES ('dashboard', ?)
-ON CONFLICT(section) DO UPDATE SET value = excluded.value;
+INSERT INTO user_settings(user_id, section, value) VALUES (?, 'dashboard', ?)
+ON CONFLICT(user_id, section) DO UPDATE SET value = excluded.value;
 
 -- name: ResetDashboardLayout :exec
-DELETE FROM workspace_settings WHERE section = 'dashboard';
+DELETE FROM user_settings WHERE user_id = ? AND section = 'dashboard';

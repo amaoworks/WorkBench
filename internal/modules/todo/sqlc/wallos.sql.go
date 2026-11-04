@@ -11,10 +11,10 @@ import (
 )
 
 const claimWallosOccurrence = `-- name: ClaimWallosOccurrence :execrows
-INSERT INTO todo_wallos_occurrences(source, subscription_id, payment_date, task_id)
-VALUES (?, ?, ?, ?) ON CONFLICT(source, subscription_id, payment_date)
+INSERT INTO todo_wallos_occurrences(source, subscription_id, payment_date, task_id, user_id)
+VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, source, subscription_id, payment_date)
 DO UPDATE SET task_id = excluded.task_id
-WHERE NOT EXISTS (SELECT 1 FROM todo_tasks WHERE id = todo_wallos_occurrences.task_id)
+WHERE NOT EXISTS (SELECT 1 FROM todo_tasks WHERE id = todo_wallos_occurrences.task_id AND user_id = todo_wallos_occurrences.user_id)
 `
 
 type ClaimWallosOccurrenceParams struct {
@@ -22,6 +22,7 @@ type ClaimWallosOccurrenceParams struct {
 	SubscriptionID string `json:"subscription_id"`
 	PaymentDate    string `json:"payment_date"`
 	TaskID         string `json:"task_id"`
+	UserID         string `json:"user_id"`
 }
 
 func (q *Queries) ClaimWallosOccurrence(ctx context.Context, arg ClaimWallosOccurrenceParams) (int64, error) {
@@ -30,6 +31,7 @@ func (q *Queries) ClaimWallosOccurrence(ctx context.Context, arg ClaimWallosOccu
 		arg.SubscriptionID,
 		arg.PaymentDate,
 		arg.TaskID,
+		arg.UserID,
 	)
 	if err != nil {
 		return 0, err
@@ -39,24 +41,30 @@ func (q *Queries) ClaimWallosOccurrence(ctx context.Context, arg ClaimWallosOccu
 
 const getWallosOccurrenceTask = `-- name: GetWallosOccurrenceTask :one
 SELECT task_id FROM todo_wallos_occurrences
-WHERE source = ? AND subscription_id = ? AND payment_date = ?
+WHERE source = ? AND subscription_id = ? AND payment_date = ? AND user_id = ?
 `
 
 type GetWallosOccurrenceTaskParams struct {
 	Source         string `json:"source"`
 	SubscriptionID string `json:"subscription_id"`
 	PaymentDate    string `json:"payment_date"`
+	UserID         string `json:"user_id"`
 }
 
 func (q *Queries) GetWallosOccurrenceTask(ctx context.Context, arg GetWallosOccurrenceTaskParams) (string, error) {
-	row := q.db.QueryRowContext(ctx, getWallosOccurrenceTask, arg.Source, arg.SubscriptionID, arg.PaymentDate)
+	row := q.db.QueryRowContext(ctx, getWallosOccurrenceTask,
+		arg.Source,
+		arg.SubscriptionID,
+		arg.PaymentDate,
+		arg.UserID,
+	)
 	var task_id string
 	err := row.Scan(&task_id)
 	return task_id, err
 }
 
 const getWallosSettings = `-- name: GetWallosSettings :one
-SELECT config, last_sync, last_error FROM todo_wallos_settings WHERE id = 1
+SELECT config, last_sync, last_error FROM todo_wallos_settings WHERE user_id = ?
 `
 
 type GetWallosSettingsRow struct {
@@ -65,8 +73,8 @@ type GetWallosSettingsRow struct {
 	LastError string        `json:"last_error"`
 }
 
-func (q *Queries) GetWallosSettings(ctx context.Context) (GetWallosSettingsRow, error) {
-	row := q.db.QueryRowContext(ctx, getWallosSettings)
+func (q *Queries) GetWallosSettings(ctx context.Context, userID string) (GetWallosSettingsRow, error) {
+	row := q.db.QueryRowContext(ctx, getWallosSettings, userID)
 	var i GetWallosSettingsRow
 	err := row.Scan(&i.Config, &i.LastSync, &i.LastError)
 	return i, err
@@ -75,13 +83,14 @@ func (q *Queries) GetWallosSettings(ctx context.Context) (GetWallosSettingsRow, 
 const listUpcomingWallos = `-- name: ListUpcomingWallos :many
 SELECT o.payment_date, t.id, t.title, t.description, t.due_at
 FROM todo_wallos_occurrences o
-JOIN todo_tasks t ON t.id = o.task_id
-WHERE t.completed_at IS NULL AND o.payment_date >= CAST(?1 AS TEXT)
+JOIN todo_tasks t ON t.id = o.task_id AND t.user_id = o.user_id
+WHERE o.user_id = ?1 AND t.completed_at IS NULL AND o.payment_date >= CAST(?2 AS TEXT)
 ORDER BY o.payment_date, t.id
-LIMIT ?2
+LIMIT ?3
 `
 
 type ListUpcomingWallosParams struct {
+	UserID   string `json:"user_id"`
 	FromDate string `json:"from_date"`
 	RowLimit int64  `json:"row_limit"`
 }
@@ -95,7 +104,7 @@ type ListUpcomingWallosRow struct {
 }
 
 func (q *Queries) ListUpcomingWallos(ctx context.Context, arg ListUpcomingWallosParams) ([]ListUpcomingWallosRow, error) {
-	rows, err := q.db.QueryContext(ctx, listUpcomingWallos, arg.FromDate, arg.RowLimit)
+	rows, err := q.db.QueryContext(ctx, listUpcomingWallos, arg.UserID, arg.FromDate, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -124,25 +133,31 @@ func (q *Queries) ListUpcomingWallos(ctx context.Context, arg ListUpcomingWallos
 }
 
 const saveWallosSettings = `-- name: SaveWallosSettings :exec
-INSERT INTO todo_wallos_settings(id, config) VALUES (1, ?)
-ON CONFLICT(id) DO UPDATE SET config = excluded.config, last_sync = NULL, last_error = ''
+INSERT INTO todo_wallos_settings(user_id, config) VALUES (?, ?)
+ON CONFLICT(user_id) DO UPDATE SET config = excluded.config, last_sync = NULL, last_error = ''
 `
 
-func (q *Queries) SaveWallosSettings(ctx context.Context, config string) error {
-	_, err := q.db.ExecContext(ctx, saveWallosSettings, config)
+type SaveWallosSettingsParams struct {
+	UserID string `json:"user_id"`
+	Config string `json:"config"`
+}
+
+func (q *Queries) SaveWallosSettings(ctx context.Context, arg SaveWallosSettingsParams) error {
+	_, err := q.db.ExecContext(ctx, saveWallosSettings, arg.UserID, arg.Config)
 	return err
 }
 
 const setWallosSyncStatus = `-- name: SetWallosSyncStatus :exec
-UPDATE todo_wallos_settings SET last_sync = ?, last_error = ? WHERE id = 1
+UPDATE todo_wallos_settings SET last_sync = ?, last_error = ? WHERE user_id = ?
 `
 
 type SetWallosSyncStatusParams struct {
 	LastSync  sql.NullInt64 `json:"last_sync"`
 	LastError string        `json:"last_error"`
+	UserID    string        `json:"user_id"`
 }
 
 func (q *Queries) SetWallosSyncStatus(ctx context.Context, arg SetWallosSyncStatusParams) error {
-	_, err := q.db.ExecContext(ctx, setWallosSyncStatus, arg.LastSync, arg.LastError)
+	_, err := q.db.ExecContext(ctx, setWallosSyncStatus, arg.LastSync, arg.LastError, arg.UserID)
 	return err
 }

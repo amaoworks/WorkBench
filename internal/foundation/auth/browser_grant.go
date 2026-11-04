@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"workbench/internal/contracts"
 	dbsqlc "workbench/internal/foundation/database/sqlc"
 	"workbench/internal/foundation/httpapi"
 )
@@ -15,6 +16,12 @@ func (s *Service) BrowserGrantHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if DeviceSessionID(r) == "" {
 		httpapi.Error(w, 400, "bearer_required", "请使用设备登录凭据")
+		return
+	}
+	device, err := s.queries.GetDeviceSession(r.Context(), DeviceSessionID(r))
+	user, userErr := s.queries.GetAuthUser(r.Context(), contracts.UserID(r.Context()))
+	if err != nil || userErr != nil || device.UserID != user.ID || device.RevokedAt.Valid || device.ExpiresAt <= s.now().UnixMilli() || user.Status != "active" || device.CredentialVersion != user.CredentialVersion {
+		invalidToken(w)
 		return
 	}
 	var input struct{}
@@ -54,29 +61,35 @@ func (s *Service) BrowserSessionHandler(w http.ResponseWriter, r *http.Request) 
 	q := s.queries.WithTx(tx)
 	grant, err := q.GetBrowserGrant(r.Context(), tokenHash(ticket))
 	if err != nil || grant.UsedAt.Valid || grant.ExpiresAt <= s.now().UnixMilli() {
+		_ = tx.Rollback()
 		invalidToken(w)
 		return
 	}
 	device, err := q.GetDeviceSession(r.Context(), grant.SessionID)
 	if err != nil || device.RevokedAt.Valid || device.ExpiresAt <= s.now().UnixMilli() {
+		_ = tx.Rollback()
 		invalidToken(w)
 		return
 	}
-	credential, err := q.GetAuthCredential(r.Context())
+	credential, err := q.GetAuthUser(r.Context(), device.UserID)
 	if err != nil {
+		_ = tx.Rollback()
 		tokenFailed(w)
 		return
 	}
-	if credential.UpdatedAt != device.CredentialVersion || credential.MustChangePassword != 0 {
+	if credential.CredentialVersion != device.CredentialVersion || credential.Status != "active" || credential.MustChangePassword != 0 {
+		_ = tx.Rollback()
 		invalidToken(w)
 		return
 	}
 	count, err := q.ConsumeBrowserGrant(r.Context(), dbsqlc.ConsumeBrowserGrantParams{TokenHash: grant.TokenHash, UsedAt: sql.NullInt64{Int64: s.now().UnixMilli(), Valid: true}})
 	if err != nil {
+		_ = tx.Rollback()
 		tokenFailed(w)
 		return
 	}
 	if count != 1 {
+		_ = tx.Rollback()
 		invalidToken(w)
 		return
 	}
@@ -89,7 +102,8 @@ func (s *Service) BrowserSessionHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.sessions.Put(r.Context(), "authenticated", true)
-	s.sessions.Put(r.Context(), "credentialVersion", credential.UpdatedAt)
+	s.sessions.Put(r.Context(), "credentialVersion", credential.CredentialVersion)
+	s.sessions.Put(r.Context(), "userID", credential.ID)
 	s.sessions.Put(r.Context(), "deviceSessionID", grant.SessionID)
 	if s.trackBrowser(r) != nil {
 		_ = s.sessions.Destroy(r.Context())
@@ -105,5 +119,5 @@ func (s *Service) browserDeviceActive(r *http.Request) bool {
 		return true
 	}
 	device, err := s.queries.GetDeviceSession(r.Context(), id)
-	return err == nil && !device.RevokedAt.Valid && device.ExpiresAt > s.now().UnixMilli()
+	return err == nil && device.UserID == s.sessions.GetString(r.Context(), "userID") && device.CredentialVersion == s.sessions.GetInt64(r.Context(), "credentialVersion") && !device.RevokedAt.Valid && device.ExpiresAt > s.now().UnixMilli()
 }

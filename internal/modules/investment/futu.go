@@ -106,6 +106,9 @@ func (m *Module) storeFutu(ctx context.Context, rec futuRecord) error {
 }
 
 func (m *Module) getFutu(w http.ResponseWriter, r *http.Request) {
+	if !requireAdmin(w, r) {
+		return
+	}
 	rec, err := m.loadFutu(r.Context())
 	if err != nil {
 		httpapi.Error(w, http.StatusInternalServerError, "futu_settings_failed", "无法读取富途牛牛配置")
@@ -144,6 +147,9 @@ func (m *Module) getFutu(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) saveFutu(w http.ResponseWriter, r *http.Request) {
+	if !requireAdmin(w, r) {
+		return
+	}
 	var input futuSettingsInput
 	if httpapi.Decode(w, r, &input, maxFutuSettingsBytes) != nil {
 		httpapi.Error(w, http.StatusBadRequest, "invalid_request", "无效的富途牛牛配置")
@@ -183,6 +189,9 @@ func (m *Module) saveFutu(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) disconnectFutu(w http.ResponseWriter, r *http.Request) {
+	if !requireAdmin(w, r) {
+		return
+	}
 	m.futu.connectMu.Lock()
 	defer m.futu.connectMu.Unlock()
 	rec, err := m.loadFutu(r.Context())

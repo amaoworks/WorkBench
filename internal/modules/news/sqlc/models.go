@@ -5,11 +5,13 @@
 package newssqlc
 
 type NewsAiUsage struct {
-	Day   string `json:"day"`
-	Calls int64  `json:"calls"`
+	UserID string `json:"user_id"`
+	Day    string `json:"day"`
+	Calls  int64  `json:"calls"`
 }
 
 type NewsArticle struct {
+	UserID            string `json:"user_id"`
 	ID                string `json:"id"`
 	Title             string `json:"title"`
 	Url               string `json:"url"`
@@ -32,6 +34,7 @@ type NewsArticle struct {
 }
 
 type NewsDigest struct {
+	UserID         string `json:"user_id"`
 	ID             string `json:"id"`
 	Slot           string `json:"slot"`
 	Title          string `json:"title"`
@@ -44,6 +47,7 @@ type NewsDigest struct {
 }
 
 type NewsOrigin struct {
+	UserID     string `json:"user_id"`
 	SourceID   string `json:"source_id"`
 	ItemKey    string `json:"item_key"`
 	ArticleID  string `json:"article_id"`
@@ -52,6 +56,7 @@ type NewsOrigin struct {
 }
 
 type NewsRule struct {
+	UserID      string `json:"user_id"`
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	IncludeJson string `json:"include_json"`
@@ -62,7 +67,7 @@ type NewsRule struct {
 }
 
 type NewsSetting struct {
-	ID                  int64  `json:"id"`
+	UserID              string `json:"user_id"`
 	SettingsJson        string `json:"settings_json"`
 	LastDigestAt        int64  `json:"last_digest_at"`
 	LastDigestError     string `json:"last_digest_error"`
@@ -70,6 +75,7 @@ type NewsSetting struct {
 }
 
 type NewsSource struct {
+	UserID          string `json:"user_id"`
 	ID              string `json:"id"`
 	Name            string `json:"name"`
 	Kind            string `json:"kind"`

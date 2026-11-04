@@ -29,22 +29,22 @@ func (*textProvider) Stream(context.Context, contracts.GenerateRequest) (contrac
 }
 func TestBusinessTextHasNoToolsAndRedactsProviderErrors(t *testing.T) {
 	service := NewTextService()
-	if _, err := service.GenerateText(context.Background(), contracts.TextRequest{}); !errors.Is(err, contracts.ErrAIUnavailable) {
+	if _, err := service.GenerateText(aiUserContext("user"), contracts.TextRequest{}); !errors.Is(err, contracts.ErrAIUnavailable) {
 		t.Fatal(err)
 	}
 	provider := &textProvider{}
 	service.SetProvider(provider)
-	text, err := service.GenerateText(context.Background(), contracts.TextRequest{Instruction: "describe", Input: "data"})
+	text, err := service.GenerateText(aiUserContext("user"), contracts.TextRequest{Instruction: "describe", Input: "data"})
 	if err != nil || text != "summary" || len(provider.request.Tools) != 0 || provider.request.Profile != "default" || len(provider.request.Messages) != 2 {
 		t.Fatalf("request: %+v %v", provider.request, err)
 	}
 	provider.fail = true
-	if _, err := service.GenerateText(context.Background(), contracts.TextRequest{}); err == nil || strings.Contains(err.Error(), "secret") {
+	if _, err := service.GenerateText(aiUserContext("user"), contracts.TextRequest{}); err == nil || strings.Contains(err.Error(), "secret") {
 		t.Fatalf("unredacted error: %v", err)
 	}
 	provider.fail = false
 	provider.tools = true
-	if _, err := service.GenerateText(context.Background(), contracts.TextRequest{}); err == nil {
+	if _, err := service.GenerateText(aiUserContext("user"), contracts.TextRequest{}); err == nil {
 		t.Fatal("accepted unsolicited tool call")
 	}
 }
@@ -55,14 +55,14 @@ func TestBusinessTextSettingChangePreservesInflightCall(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		text, err := service.GenerateText(context.Background(), contracts.TextRequest{})
+		text, err := service.GenerateText(aiUserContext("user"), contracts.TextRequest{})
 		if err != nil || text != "original provider" {
 			t.Errorf("inflight: %s %v", text, err)
 		}
 	}()
 	<-provider.entered
 	service.SetProvider(nil)
-	if _, err := service.GenerateText(context.Background(), contracts.TextRequest{}); !errors.Is(err, contracts.ErrAIUnavailable) {
+	if _, err := service.GenerateText(aiUserContext("user"), contracts.TextRequest{}); !errors.Is(err, contracts.ErrAIUnavailable) {
 		t.Fatal(err)
 	}
 	close(provider.release)

@@ -11,12 +11,26 @@ import (
 
 const getPreference = `-- name: GetPreference :one
 SELECT name, content, revision, writer, base_revision, sequence
-FROM investment_preferences WHERE name = ?
+FROM investment_preferences WHERE user_id=?1 AND name = ?2
 `
 
-func (q *Queries) GetPreference(ctx context.Context, name string) (InvestmentPreference, error) {
-	row := q.db.QueryRowContext(ctx, getPreference, name)
-	var i InvestmentPreference
+type GetPreferenceParams struct {
+	UserID string `json:"user_id"`
+	Name   string `json:"name"`
+}
+
+type GetPreferenceRow struct {
+	Name         string `json:"name"`
+	Content      string `json:"content"`
+	Revision     int64  `json:"revision"`
+	Writer       string `json:"writer"`
+	BaseRevision int64  `json:"base_revision"`
+	Sequence     int64  `json:"sequence"`
+}
+
+func (q *Queries) GetPreference(ctx context.Context, arg GetPreferenceParams) (GetPreferenceRow, error) {
+	row := q.db.QueryRowContext(ctx, getPreference, arg.UserID, arg.Name)
+	var i GetPreferenceRow
 	err := row.Scan(
 		&i.Name,
 		&i.Content,
@@ -29,7 +43,7 @@ func (q *Queries) GetPreference(ctx context.Context, name string) (InvestmentPre
 }
 
 const listPreferences = `-- name: ListPreferences :many
-SELECT name, content, revision FROM investment_preferences ORDER BY name
+SELECT name, content, revision FROM investment_preferences WHERE user_id=?1 ORDER BY name
 `
 
 type ListPreferencesRow struct {
@@ -38,8 +52,8 @@ type ListPreferencesRow struct {
 	Revision int64  `json:"revision"`
 }
 
-func (q *Queries) ListPreferences(ctx context.Context) ([]ListPreferencesRow, error) {
-	rows, err := q.db.QueryContext(ctx, listPreferences)
+func (q *Queries) ListPreferences(ctx context.Context, userID string) ([]ListPreferencesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listPreferences, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -62,12 +76,12 @@ func (q *Queries) ListPreferences(ctx context.Context) ([]ListPreferencesRow, er
 }
 
 const savePreference = `-- name: SavePreference :one
-INSERT INTO investment_preferences(name, content, revision, writer, base_revision, sequence)
-SELECT ?1, ?2, 1, ?3, ?4, ?5
-WHERE ?4 = CAST(0 AS BIGINT) OR EXISTS (
-    SELECT 1 FROM investment_preferences WHERE name = ?1
+INSERT INTO investment_preferences(user_id,name, content, revision, writer, base_revision, sequence)
+SELECT ?1, ?2, ?3, 1, ?4, CAST(?5 AS BIGINT), CAST(?6 AS BIGINT)
+WHERE CAST(?5 AS BIGINT) = CAST(0 AS BIGINT) OR EXISTS (
+    SELECT 1 FROM investment_preferences WHERE user_id=?1 AND name = ?2
 )
-ON CONFLICT(name) DO UPDATE SET
+ON CONFLICT(user_id,name) DO UPDATE SET
     content = excluded.content,
     revision = investment_preferences.revision + 1,
     writer = excluded.writer,
@@ -82,6 +96,7 @@ RETURNING revision, sequence
 `
 
 type SavePreferenceParams struct {
+	UserID       string `json:"user_id"`
 	Name         string `json:"name"`
 	Content      string `json:"content"`
 	Writer       string `json:"writer"`
@@ -96,6 +111,7 @@ type SavePreferenceRow struct {
 
 func (q *Queries) SavePreference(ctx context.Context, arg SavePreferenceParams) (SavePreferenceRow, error) {
 	row := q.db.QueryRowContext(ctx, savePreference,
+		arg.UserID,
 		arg.Name,
 		arg.Content,
 		arg.Writer,

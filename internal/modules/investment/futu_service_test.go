@@ -183,21 +183,21 @@ func TestOpenDModuleDisableWorksWithCancelledRequest(t *testing.T) {
 	m.deps.FutuOpenDAddress = net.JoinHostPort(rec.Host, strconv.Itoa(rec.Port))
 	m.opend = s
 	m.futu.deps.opend = s
-	if err := m.storeFutu(context.Background(), rec); err != nil {
+	if err := m.storeFutu(testContext(context.Background()), rec); err != nil {
 		t.Fatal(err)
 	}
 	s.apply(rec)
 	waitOpenDState(t, s, "running")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(testContext(context.Background()))
 	cancel()
 	if err := m.OnEnabledChanged(ctx, false); err != nil {
 		t.Fatal(err)
 	}
 	waitOpenDState(t, s, "stopped")
-	if _, err := m.futu.ensure(context.Background()); err == nil {
+	if _, err := m.futu.ensure(testContext(context.Background())); err == nil {
 		t.Fatal("disabled module connected to OpenD")
 	}
-	if err := m.OnEnabledChanged(context.Background(), true); err != nil {
+	if err := m.OnEnabledChanged(testContext(context.Background()), true); err != nil {
 		t.Fatal(err)
 	}
 	waitOpenDState(t, s, "running")
@@ -208,19 +208,19 @@ func TestOpenDGatewayDoesNotConnectWhenManagedServiceFailed(t *testing.T) {
 	m.opend = newOpenDService(t.TempDir(), "unused")
 	m.futu.deps.opend = m.opend
 	m.opend.setStatus("error", "fixture startup failure")
-	if _, err := m.futu.ensureOverlay(context.Background()); !errors.Is(err, errOverlayOff) {
+	if _, err := m.futu.ensureOverlay(testContext(context.Background())); !errors.Is(err, errOverlayOff) {
 		t.Fatal("disabled night error contract changed", err)
 	}
-	rec, err := m.loadFutu(context.Background())
+	rec, err := m.loadFutu(testContext(context.Background()))
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec.Enabled, rec.OvernightEnabled = true, true
-	if err := m.storeFutu(context.Background(), rec); err != nil {
+	if err := m.storeFutu(testContext(context.Background()), rec); err != nil {
 		t.Fatal(err)
 	}
 	for _, overlay := range []bool{false, true} {
-		if _, err := m.futu.ensureConnection(context.Background(), overlay); err == nil || !strings.Contains(err.Error(), "服务尚未启动") {
+		if _, err := m.futu.ensureConnection(testContext(context.Background()), overlay); err == nil || !strings.Contains(err.Error(), "服务尚未启动") {
 			t.Fatalf("managed startup failure did not gate connection: %v", err)
 		}
 	}

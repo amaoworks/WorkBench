@@ -1,6 +1,6 @@
 # Workbench Agent 指南 (Agent Guidelines)
 
-Workbench 是本地优先、单用户的个人工作台，采用 Go 模块化单体、内嵌 React SPA 与共享数据库工作空间；原生运行默认 SQLite，Docker Compose 默认 PostgreSQL，两者通过启动配置选择。
+Workbench 是本地优先、支持多用户的个人工作台，采用 Go 模块化单体、内嵌 React SPA 与共享数据库工作空间；个人业务数据按用户隔离，管理员管理平台配置。原生运行默认 SQLite，Docker Compose 默认 PostgreSQL，两者通过启动配置选择。
 在修改或扩展本代码库前，请务必遵守以下架构规则、命令规范与绝对红线。
 
 ---
@@ -27,6 +27,7 @@ Workbench 是本地优先、单用户的个人工作台，采用 Go 模块化单
 
 ### 3. 数据库设计与事务控制
 * 平台和内置业务共享所选数据库及其 `*sql.DB` 连接池，业务连接默认最多 4 个。业务表名使用 `<module_id>_` 前缀（如 `todo_tasks`）。
+* 私有业务使用 `contracts.Principal` 的可信身份，缺失身份时返回错误，不回退到默认用户。所有读取、统计、写入、关联、幂等、事件、通知及后台任务明确用户归属；管理员不自动绕过个人数据权限，详见 [doc/multi-user.md](doc/multi-user.md)。
 * **成对双迁移**：SQLite 迁移放在 `migrations/`，PostgreSQL 迁移放在同包的 `migrations-postgres/`；两者必须使用相同迁移版本号成对添加。
 * **单引擎 SQL 生成**：固定查询集中在归属包的 `query/`，仅通过 SQLite engine 的 `sqlc generate` 统一生成代码（切勿修改 `sqlc.yaml` 引入 postgres 引擎）。PostgreSQL 驱动在运行时自动将 `?` 占位符转换为 `$N`。
 * 业务写入及其对应事件通过 `PublishTx` 在同一个事务 (`*sql.Tx`) 中提交；通知与业务写入需要原子提交时使用 `CreateTx`。独立事件或提醒可使用 `Publish` / `Create`，由服务管理自身事务。

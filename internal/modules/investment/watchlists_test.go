@@ -15,7 +15,7 @@ func TestWatchlistsPreserveStateAndRejectStaleWriters(t *testing.T) {
 	m := openInvestmentModule(t)
 	read := func() watchlistsView {
 		got := httptest.NewRecorder()
-		m.getWatchlists(got, httptest.NewRequest("GET", "/", nil))
+		m.getWatchlists(got, testRequest("GET", "/", nil))
 		var view watchlistsView
 		if got.Code != 200 || got.Header().Get("Cache-Control") != "no-store" || json.Unmarshal(got.Body.Bytes(), &view) != nil {
 			t.Fatalf("read: %d %s", got.Code, got.Body)
@@ -32,7 +32,7 @@ func TestWatchlistsPreserveStateAndRejectStaleWriters(t *testing.T) {
 		wg.Go(func() {
 			body, _ := json.Marshal(map[string]any{"revision": 0, "writer": fmt.Sprint(i), "sequence": 1, "state": state})
 			got := httptest.NewRecorder()
-			m.saveWatchlists(got, httptest.NewRequest("PUT", "/", strings.NewReader(string(body))))
+			m.saveWatchlists(got, testRequest("PUT", "/", strings.NewReader(string(body))))
 			results <- got.Code
 		})
 	}
@@ -49,7 +49,7 @@ func TestWatchlistsPreserveStateAndRejectStaleWriters(t *testing.T) {
 		t.Fatalf("round trip: %+v", got)
 	}
 	got := httptest.NewRecorder()
-	m.saveWatchlists(got, httptest.NewRequest("PUT", "/", strings.NewReader(`{"revision":1,"writer":"new","sequence":1,"state":{"lists":[],"activeId":""}}`)))
+	m.saveWatchlists(got, testRequest("PUT", "/", strings.NewReader(`{"revision":1,"writer":"new","sequence":1,"state":{"lists":[],"activeId":""}}`)))
 	if got.Code != 200 || len(read().State.Lists) != 0 || read().State.Lists == nil {
 		t.Fatalf("empty state: %d %s", got.Code, got.Body)
 	}
@@ -70,12 +70,12 @@ func TestWatchlistsRejectInvalidInputWithoutChangingSavedState(t *testing.T) {
 	} {
 		body = strings.Replace(body, "{", `{"writer":"test","sequence":1,`, 1)
 		got := httptest.NewRecorder()
-		m.saveWatchlists(got, httptest.NewRequest("PUT", "/", strings.NewReader(body)))
+		m.saveWatchlists(got, testRequest("PUT", "/", strings.NewReader(body)))
 		if got.Code != http.StatusBadRequest {
 			t.Fatalf("invalid input status: %d", got.Code)
 		}
 	}
-	rec, err := m.queries.GetWatchlists(t.Context())
+	rec, err := m.queries.GetWatchlists(testContext(t.Context()), "owner")
 	if err != nil || rec.Revision != 0 || rec.Content != "null" {
 		t.Fatalf("invalid input changed state: %+v %v", rec, err)
 	}
@@ -87,7 +87,7 @@ func TestWatchlistsUnloadOvertakesEarlierSaveAndRetriesAreIdempotent(t *testing.
 		t.Helper()
 		body := fmt.Sprintf(`{"revision":%d,"writer":%q,"sequence":%d,"state":{"lists":[{"id":"a","title":"自选","symbols":[%q]}],"activeId":"a"}}`, base, writer, sequence, symbol)
 		got := httptest.NewRecorder()
-		m.saveWatchlists(got, httptest.NewRequest("PUT", "/", strings.NewReader(body)))
+		m.saveWatchlists(got, testRequest("PUT", "/", strings.NewReader(body)))
 		if got.Code != want {
 			t.Fatalf("write: %d %s", got.Code, got.Body)
 		}
@@ -96,7 +96,7 @@ func TestWatchlistsUnloadOvertakesEarlierSaveAndRetriesAreIdempotent(t *testing.
 	write(0, 1, "tab-a", "GOOG", 200)
 	write(0, 2, "tab-a", "NVDA", 200)
 	write(0, 2, "tab-a", "WRONG", 409)
-	stored, _ := m.queries.GetWatchlists(t.Context())
+	stored, _ := m.queries.GetWatchlists(testContext(t.Context()), "owner")
 	if stored.Revision != 1 || !strings.Contains(stored.Content, "NVDA") {
 		t.Fatalf("late/duplicate save replaced newer content: %+v", stored)
 	}

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"workbench/internal/contracts"
 	"workbench/internal/foundation/httpapi"
 	todosqlc "workbench/internal/modules/todo/sqlc"
 )
@@ -43,6 +44,10 @@ type Agenda struct {
 }
 
 func (m *Module) agenda(ctx context.Context, zone string) (Agenda, error) {
+	userID, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return Agenda{}, err
+	}
 	settings, err := m.loadWallos(ctx)
 	if err != nil {
 		return Agenda{}, err
@@ -58,16 +63,16 @@ func (m *Module) agenda(ctx context.Context, zone string) (Agenda, error) {
 	endOfDay := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, loc)
 	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
 	completedToday, err := m.queries.CountCompletedBetween(ctx, todosqlc.CountCompletedBetweenParams{
-		CompletedAt: toNullTime(&startOfDay), CompletedAt_2: toNullTime(&endOfDay),
+		UserID: userID, CompletedAt: toNullTime(&startOfDay), CompletedAt_2: toNullTime(&endOfDay),
 	})
 	if err != nil {
 		return Agenda{}, err
 	}
-	counts, err := m.queries.CountAgendaTasks(ctx, todosqlc.CountAgendaTasksParams{NowMs: now.UnixMilli(), DueBefore: endOfDay.UnixMilli()})
+	counts, err := m.queries.CountAgendaTasks(ctx, todosqlc.CountAgendaTasksParams{UserID: userID, NowMs: now.UnixMilli(), DueBefore: endOfDay.UnixMilli()})
 	if err != nil {
 		return Agenda{}, err
 	}
-	rows, err := m.queries.ListAgendaTasks(ctx, todosqlc.ListAgendaTasksParams{DueBefore: endOfDay.UnixMilli(), RowLimit: agendaTaskLimit})
+	rows, err := m.queries.ListAgendaTasks(ctx, todosqlc.ListAgendaTasksParams{UserID: userID, DueBefore: endOfDay.UnixMilli(), RowLimit: agendaTaskLimit})
 	if err != nil {
 		return Agenda{}, err
 	}
@@ -81,7 +86,7 @@ func (m *Module) agenda(ctx context.Context, zone string) (Agenda, error) {
 	if !settings.Enabled {
 		return out, nil
 	}
-	renewals, err := m.queries.ListUpcomingWallos(ctx, todosqlc.ListUpcomingWallosParams{FromDate: now.Format("2006-01-02"), RowLimit: agendaRenewalLimit + agendaTaskLimit})
+	renewals, err := m.queries.ListUpcomingWallos(ctx, todosqlc.ListUpcomingWallosParams{UserID: userID, FromDate: now.Format("2006-01-02"), RowLimit: agendaRenewalLimit + agendaTaskLimit})
 	if err != nil {
 		return Agenda{}, err
 	}
@@ -107,6 +112,9 @@ func descriptionField(description, label string) string {
 }
 
 func (m *Module) agendaHTTP(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireHTTPUser(w, r); !ok {
+		return
+	}
 	out, err := m.agenda(r.Context(), r.URL.Query().Get("tz"))
 	if err != nil {
 		httpapi.Error(w, http.StatusInternalServerError, "todo_agenda_failed", "无法读取今日待办")

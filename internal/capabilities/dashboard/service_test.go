@@ -19,8 +19,8 @@ func TestFillDataIsolatesRoutingAndPreservesRequestContext(t *testing.T) {
 	type contextKey struct{}
 	data := chi.NewRouter()
 	data.Get("/api/cards/{id}", func(w http.ResponseWriter, r *http.Request) {
-		if r.Context().Value(contextKey{}) != "authenticated" {
-			t.Error("lost caller context")
+		if r.Context().Value(contextKey{}) != "authenticated" || contracts.UserID(r.Context()) != "alice" {
+			t.Error("lost caller context or principal")
 		}
 		httpapi.Write(w, http.StatusOK, map[string]string{"id": chi.URLParam(r, "id")})
 	})
@@ -46,7 +46,8 @@ func TestFillDataIsolatesRoutingAndPreservesRequestContext(t *testing.T) {
 	})
 	for range 10 {
 		req := httptest.NewRequest(http.MethodGet, "/api/dashboard/main", nil)
-		req = req.WithContext(context.WithValue(req.Context(), contextKey{}, "authenticated"))
+		ctx := context.WithValue(req.Context(), contextKey{}, "authenticated")
+		req = req.WithContext(contracts.WithPrincipal(ctx, contracts.Principal{UserID: "alice", Role: contracts.RoleUser}))
 		outer.ServeHTTP(httptest.NewRecorder(), req)
 	}
 }

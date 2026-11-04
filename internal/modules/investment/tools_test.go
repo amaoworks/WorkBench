@@ -46,7 +46,7 @@ func TestInvestmentAIToolsRegisterWithExpectedRisk(t *testing.T) {
 
 func TestInvestmentAIToolsReusePortfolioAndMonitorOperations(t *testing.T) {
 	m := openInvestmentModule(t)
-	ctx := context.Background()
+	ctx := testContext(context.Background())
 
 	positions, err := m.positionsTool(ctx, contracts.ToolCall{Arguments: json.RawMessage(`{"accountHash":null}`)})
 	if err != nil {

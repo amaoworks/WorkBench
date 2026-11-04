@@ -56,7 +56,7 @@ func TestJWTApplicationAPIs(t *testing.T) {
 			}
 			login := func(password string) tokens {
 				t.Helper()
-				body, _ := json.Marshal(map[string]string{"password": password, "deviceName": "Integration phone", "platform": "ios"})
+				body, _ := json.Marshal(map[string]string{"username": "admin", "password": password, "deviceName": "Integration phone", "platform": "ios"})
 				w := call("POST", "/api/auth/token", string(body), "")
 				var result tokens
 				if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &result) != nil || result.AccessToken == "" {
@@ -81,7 +81,7 @@ func TestJWTApplicationAPIs(t *testing.T) {
 			}
 			first := login(changed)
 			second := login(changed)
-			browserLoginBody, _ := json.Marshal(map[string]string{"password": changed})
+			browserLoginBody, _ := json.Marshal(map[string]string{"username": "admin", "password": changed})
 			browserLogin := call("POST", "/api/auth/login", string(browserLoginBody), first.AccessToken)
 			var browserLoginError struct {
 				Code string `json:"code"`
@@ -103,7 +103,7 @@ func TestJWTApplicationAPIs(t *testing.T) {
 				t.Helper()
 				now := time.Now().UnixMilli()
 				targets, err := dbsqlc.New(a.DB()).ListActiveMobilePushTokens(context.Background(), dbsqlc.ListActiveMobilePushTokensParams{
-					Now: now, NotificationCreatedAt: now,
+					RecipientID: contracts.LegacyUserID, Now: now, NotificationCreatedAt: now,
 				})
 				if err != nil {
 					t.Fatal(err)
@@ -166,7 +166,7 @@ func TestJWTApplicationAPIs(t *testing.T) {
 				t.Fatal("WebView ticket replay succeeded")
 			}
 			csrfToken, cookies := csrf(t, a.Handler())
-			browserBody, _ := json.Marshal(map[string]string{"password": changed})
+			browserBody, _ := json.Marshal(map[string]string{"username": "admin", "password": changed})
 			browser := request(t, a.Handler(), "POST", "/api/auth/login", browserBody, csrfToken, cookies)
 			if browser.Code != 200 {
 				t.Fatalf("browser login: %d %s", browser.Code, browser.Body)

@@ -66,7 +66,7 @@ func openAuthDatabase(t *testing.T) *workbenchdb.Database {
 
 func markInitialPasswordChanged(t *testing.T, database *workbenchdb.Database) {
 	t.Helper()
-	if _, err := database.SQL().ExecContext(context.Background(), "UPDATE auth_credentials SET must_change_password = 0 WHERE id = 1"); err != nil {
+	if _, err := database.SQL().ExecContext(context.Background(), "UPDATE auth_users SET must_change_password = 0 WHERE id = 'owner'"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -120,7 +120,7 @@ func TestLoginCreatesServerSideSession(t *testing.T) {
 	})))
 	handler := service.LoadAndSave(mux)
 
-	body, _ := json.Marshal(map[string]string{"password": testPassword})
+	body, _ := json.Marshal(map[string]string{"username": "admin", "password": testPassword})
 	loginRequest := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
 	loginRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(loginRecorder, loginRequest)
@@ -160,7 +160,7 @@ func TestLoadDoesNotWriteSessionCookie(t *testing.T) {
 	save := service.LoadAndSave(mux)
 	load := service.Load(mux)
 
-	body, _ := json.Marshal(map[string]string{"password": testPassword})
+	body, _ := json.Marshal(map[string]string{"username": "admin", "password": testPassword})
 	login := httptest.NewRecorder()
 	save.ServeHTTP(login, httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body)))
 	if login.Code != http.StatusOK {
@@ -226,7 +226,7 @@ func TestInitialPasswordMustBeChangedBeforeProtectedAccess(t *testing.T) {
 		return recorder
 	}
 
-	loginBody, _ := json.Marshal(map[string]string{"password": testPassword})
+	loginBody, _ := json.Marshal(map[string]string{"username": "admin", "password": testPassword})
 	login := request(http.MethodPost, "/api/auth/login", string(loginBody), nil)
 	if login.Code != http.StatusOK {
 		t.Fatalf("login status = %d, body = %s", login.Code, login.Body.String())
@@ -251,7 +251,7 @@ func TestInitialPasswordMustBeChangedBeforeProtectedAccess(t *testing.T) {
 		t.Fatalf("password change status = %d, body = %s", changed.Code, changed.Body.String())
 	}
 
-	newLoginBody, _ := json.Marshal(map[string]string{"password": newPassword})
+	newLoginBody, _ := json.Marshal(map[string]string{"username": "admin", "password": newPassword})
 	newLogin := request(http.MethodPost, "/api/auth/login", string(newLoginBody), nil)
 	if newLogin.Code != http.StatusOK {
 		t.Fatalf("new-password login status = %d, body = %s", newLogin.Code, newLogin.Body.String())

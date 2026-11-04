@@ -36,7 +36,10 @@ type Service struct {
 	now             func() time.Time
 	providers       map[string]provider
 	allowed         func(contracts.ModuleID) bool
+	users           contracts.UserDirectory
 }
+
+func (s *Service) SetUserDirectory(users contracts.UserDirectory) { s.users = users }
 
 type deploymentState struct {
 	Enabled     bool  `json:"enabled"`
@@ -135,7 +138,10 @@ func (s *Service) consume(ctx context.Context, event contracts.Event) error {
 	if json.Unmarshal(event.Payload, &payload) != nil || payload.NotificationID == "" {
 		return &deliveryError{message: "invalid notification event", permanent: true}
 	}
-	row, err := dbsqlc.New(s.db).GetNotificationByID(ctx, payload.NotificationID)
+	if event.UserID == "" || contracts.UserID(ctx) != event.UserID {
+		return &deliveryError{message: "notification event owner is required", permanent: true}
+	}
+	row, err := dbsqlc.New(s.db).GetNotificationByID(ctx, dbsqlc.GetNotificationByIDParams{ID: payload.NotificationID, RecipientID: event.UserID})
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -143,7 +149,7 @@ func (s *Service) consume(ctx context.Context, event contracts.Event) error {
 		return errors.New("cannot read notification for mobile push")
 	}
 	note := contracts.Notification{
-		ID: row.ID, SourceModule: contracts.ModuleID(row.SourceModule), External: row.External != 0,
+		ID: row.ID, RecipientID: row.RecipientID, SourceModule: contracts.ModuleID(row.SourceModule), External: row.External != 0,
 		Severity: contracts.NotificationSeverity(row.Severity), Title: row.Title, Content: row.Content,
 		ActionLabel: row.ActionLabel, ActionRoute: row.ActionRoute, CreatedAt: time.UnixMilli(row.CreatedAt).UTC(),
 		ExpiresAt: nullableTime(row.ExpiresAt),
@@ -155,12 +161,24 @@ func (s *Service) Deliver(ctx context.Context, note contracts.Notification) erro
 	if !s.enabled || !note.External || note.CreatedAt.UnixMilli() < s.activatedAt || (s.allowed != nil && !s.allowed(note.SourceModule)) {
 		return nil
 	}
+	if note.RecipientID == "" || (contracts.UserID(ctx) != "" && contracts.UserID(ctx) != note.RecipientID) {
+		return &deliveryError{message: "notification recipient is required", permanent: true}
+	}
+	if s.users != nil {
+		active, err := s.users.IsUserActive(ctx, note.RecipientID)
+		if err != nil {
+			return errors.New("cannot check notification recipient")
+		}
+		if !active {
+			return nil
+		}
+	}
 	now := s.now().UTC()
 	if (note.ExpiresAt == nil && now.Sub(note.CreatedAt) > 15*time.Minute) || (note.ExpiresAt != nil && !now.Before(*note.ExpiresAt)) {
 		return &deliveryError{message: "mobile notification delivery window expired", permanent: true}
 	}
 	targets, err := dbsqlc.New(s.db).ListActiveMobilePushTokens(ctx, dbsqlc.ListActiveMobilePushTokensParams{
-		Now: now.UnixMilli(), NotificationCreatedAt: note.CreatedAt.UnixMilli(),
+		RecipientID: note.RecipientID, Now: now.UnixMilli(), NotificationCreatedAt: note.CreatedAt.UnixMilli(),
 	})
 	if err != nil {
 		return errors.New("cannot list mobile push tokens")
@@ -204,6 +222,11 @@ type tokenRequest struct {
 }
 
 func (s *Service) RegisterToken(w http.ResponseWriter, r *http.Request) {
+	userID, err := contracts.RequireUserID(r.Context())
+	if err != nil {
+		httpapi.Error(w, 401, "authentication_required", "authentication required")
+		return
+	}
 	if !s.enabled {
 		httpapi.Error(w, http.StatusNotFound, "mobile_push_disabled", "mobile push is disabled")
 		return
@@ -235,10 +258,11 @@ func (s *Service) RegisterToken(w http.ResponseWriter, r *http.Request) {
 			now := s.now().UTC().UnixMilli()
 			var affected int64
 			affected, err = queries.UpsertMobilePushToken(r.Context(), dbsqlc.UpsertMobilePushTokenParams{
-				ID: id, DeviceSessionID: sessionID, Platform: request.Platform, Token: request.PushToken, CreatedAt: now, UpdatedAt: now,
+				ID: id, UserID: userID, DeviceSessionID: sessionID, Platform: request.Platform, Token: request.PushToken, CreatedAt: now, UpdatedAt: now,
 			})
 			if err == nil {
 				if affected == 0 {
+					_ = tx.Rollback()
 					httpapi.Error(w, http.StatusUnauthorized, "device_session_inactive", "device session is inactive")
 					return
 				}
@@ -246,10 +270,12 @@ func (s *Service) RegisterToken(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
+		_ = tx.Rollback()
 		httpapi.Error(w, http.StatusInternalServerError, "push_token_registration_failed", "could not register push token")
 		return
 	}
 	if err := tx.Commit(); err != nil {
+		_ = tx.Rollback()
 		httpapi.Error(w, http.StatusInternalServerError, "push_token_registration_failed", "could not register push token")
 		return
 	}
@@ -257,6 +283,11 @@ func (s *Service) RegisterToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) DeleteToken(w http.ResponseWriter, r *http.Request) {
+	userID, err := contracts.RequireUserID(r.Context())
+	if err != nil {
+		httpapi.Error(w, 401, "authentication_required", "authentication required")
+		return
+	}
 	request, ok := decodeTokenRequest(w, r)
 	if !ok {
 		return
@@ -266,7 +297,7 @@ func (s *Service) DeleteToken(w http.ResponseWriter, r *http.Request) {
 		httpapi.Error(w, http.StatusUnauthorized, "device_authentication_required", "device authentication required")
 		return
 	}
-	if err := dbsqlc.New(s.db).DeleteMobilePushToken(r.Context(), dbsqlc.DeleteMobilePushTokenParams{DeviceSessionID: sessionID, Platform: request.Platform, Token: request.PushToken}); err != nil {
+	if err := dbsqlc.New(s.db).DeleteMobilePushToken(r.Context(), dbsqlc.DeleteMobilePushTokenParams{UserID: userID, DeviceSessionID: sessionID, Platform: request.Platform, Token: request.PushToken}); err != nil {
 		httpapi.Error(w, http.StatusInternalServerError, "push_token_deletion_failed", "could not delete push token")
 		return
 	}

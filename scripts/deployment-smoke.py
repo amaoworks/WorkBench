@@ -122,7 +122,7 @@ def main():
             nonlocal token, password
             cookies.clear()
             token = request("GET", "/api/auth/csrf")["token"]
-            status = request("POST", "/api/auth/login", {"password": password})
+            status = request("POST", "/api/auth/login", {"username": "admin", "password": password})
             if status["mustChangePassword"]:
                 request("GET", "/api/modules/todo/tasks", expected=403)
                 new_password = password + "-Changed"
@@ -130,7 +130,7 @@ def main():
                 password = new_password
                 cookies.clear()
                 token = request("GET", "/api/auth/csrf")["token"]
-                status = request("POST", "/api/auth/login", {"password": password})
+                status = request("POST", "/api/auth/login", {"username": "admin", "password": password})
             assert not status["mustChangePassword"], "password change remained required"
 
         try:

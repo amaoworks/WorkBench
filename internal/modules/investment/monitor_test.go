@@ -46,7 +46,7 @@ func setupPriceMonitor(t *testing.T) (*Module, *time.Time) {
 
 func addPriceRule(t *testing.T, m *Module, id, symbol, direction string, bps int64) {
 	t.Helper()
-	if err := m.queries.CreatePriceRule(context.Background(), investmentsqlc.CreatePriceRuleParams{ID: id, Symbol: symbol, Direction: direction, ThresholdBps: bps, Enabled: 1, CreatedAt: m.now().UnixMilli(), UpdatedAt: m.now().UnixMilli()}); err != nil {
+	if err := m.queries.CreatePriceRule(testContext(context.Background()), investmentsqlc.CreatePriceRuleParams{UserID: "owner", ID: id, Symbol: symbol, Direction: direction, ThresholdBps: bps, Enabled: 1, CreatedAt: m.now().UnixMilli(), UpdatedAt: m.now().UnixMilli()}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -114,7 +114,7 @@ func TestPriceMonitorBackgroundBatchDailyDedupAndRestart(t *testing.T) {
 		return priceFixture(symbol, 103, *now)
 	})
 	for i := 0; i < 2; i++ {
-		if err := m.scanPrices(context.Background()); err != nil {
+		if err := m.scanPrices(testContext(context.Background())); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -130,13 +130,13 @@ func TestPriceMonitorBackgroundBatchDailyDedupAndRestart(t *testing.T) {
 	}
 	defer restarted.Close()
 	restarted.now, restarted.httpClient = m.now, m.httpClient
-	if err := restarted.scanPrices(context.Background()); err != nil {
+	if err := restarted.scanPrices(testContext(context.Background())); err != nil {
 		t.Fatal(err)
 	}
 	countTriggers(t, m, 2)
 	*now = now.Add(24 * time.Hour)
 	seedSchwab(t, restarted, schwabRecord{AccessToken: "monitor-token", RefreshToken: "monitor-refresh", TokenExpiresAt: now.Add(time.Hour)})
-	if err := restarted.scanPrices(context.Background()); err != nil {
+	if err := restarted.scanPrices(testContext(context.Background())); err != nil {
 		t.Fatal(err)
 	}
 	countTriggers(t, m, 4)
@@ -167,11 +167,11 @@ func TestPriceMonitorRejectsInvalidQuotes(t *testing.T) {
 				}
 				return q
 			})
-			if err := m.scanPrices(context.Background()); err != nil {
+			if err := m.scanPrices(testContext(context.Background())); err != nil {
 				t.Fatal(err)
 			}
 			countTriggers(t, m, 0)
-			rule, _ := m.queries.GetPriceRule(context.Background(), "rule")
+			rule, _ := m.queries.GetPriceRule(testContext(context.Background()), investmentsqlc.GetPriceRuleParams{UserID: "owner", ID: "rule"})
 			if rule.LastError == "" || rule.Price.Valid {
 				t.Fatal("invalid quote was displayed as current", rule)
 			}
@@ -198,7 +198,7 @@ func TestPriceMonitorCalendarAndNoRulesAvoidQuotes(t *testing.T) {
 				}
 				return monitorResponse(marketFixture(m, *now, false)), nil
 			})}
-			err := m.scanPrices(context.Background())
+			err := m.scanPrices(testContext(context.Background()))
 			if (err != nil) != (state == "malformed-calendar") {
 				t.Fatal(err)
 			}
@@ -219,12 +219,12 @@ func TestPriceMonitorNotificationFailureRollsBackDailyTrigger(t *testing.T) {
 	installMonitorFeed(t, m, now, func(symbol string) monitoredQuote { return priceFixture(symbol, 103, *now) })
 	actual := m.deps.Notifications
 	m.deps.Notifications = failedNotice{actual}
-	if err := m.scanPrices(context.Background()); err == nil {
+	if err := m.scanPrices(testContext(context.Background())); err == nil {
 		t.Fatal("missing notification failure")
 	}
 	countTriggers(t, m, 0)
 	m.deps.Notifications = actual
-	if err := m.scanPrices(context.Background()); err != nil {
+	if err := m.scanPrices(testContext(context.Background())); err != nil {
 		t.Fatal(err)
 	}
 	countTriggers(t, m, 1)
@@ -238,17 +238,17 @@ func TestPriceMonitorIgnoresInFlightResultAfterChanges(t *testing.T) {
 			started, release := make(chan struct{}), make(chan struct{})
 			installMonitorFeed(t, m, now, func(symbol string) monitoredQuote { close(started); <-release; return priceFixture(symbol, 105, *now) })
 			done := make(chan error, 1)
-			go func() { done <- m.scanPrices(context.Background()) }()
+			go func() { done <- m.scanPrices(testContext(context.Background())) }()
 			<-started
 			switch change {
 			case "disabled":
-				if err := m.OnEnabledChanged(context.Background(), false); err != nil {
+				if err := m.OnEnabledChanged(testContext(context.Background()), false); err != nil {
 					t.Fatal(err)
 				}
 			case "edited":
 				_, _ = m.deps.DB.Exec("UPDATE investment_price_rules SET threshold_bps=1000,version=version+1 WHERE id='rule'")
 			case "deleted":
-				_, _ = m.queries.DeletePriceRule(context.Background(), "rule")
+				_, _ = m.queries.DeletePriceRule(testContext(context.Background()), investmentsqlc.DeletePriceRuleParams{UserID: "owner", ID: "rule"})
 			case "reauthorized":
 				seedSchwab(t, m, schwabRecord{AccessToken: "new-token", TokenExpiresAt: now.Add(time.Hour)})
 			}
@@ -270,26 +270,26 @@ func TestPriceRulesHTTPValidationAndStableHistory(t *testing.T) {
 	router.Delete("/rules/{id}", m.deletePriceRule)
 	for _, input := range []string{`{"symbol":"/ES","direction":"up","thresholdPercent":3,"enabled":true}`, `{"symbol":"AAPL","direction":"up","thresholdPercent":0,"enabled":true}`, `{"symbol":"AAPL","direction":"down","thresholdPercent":101,"enabled":true}`, `{"symbol":"AAPL","direction":"up","thresholdPercent":1.001,"enabled":true}`, `{"symbol":"AAPL","direction":"up","thresholdPercent":1}`} {
 		w := httptest.NewRecorder()
-		router.ServeHTTP(w, httptest.NewRequest("POST", "/rules", strings.NewReader(input)))
+		router.ServeHTTP(w, testRequest("POST", "/rules", strings.NewReader(input)))
 		if w.Code != 400 {
 			t.Fatalf("invalid rule accepted: %d %s", w.Code, w.Body.String())
 		}
 	}
 	created := httptest.NewRecorder()
-	router.ServeHTTP(created, httptest.NewRequest("POST", "/rules", strings.NewReader(`{"symbol":" aapl ","direction":"up","thresholdPercent":3,"enabled":true}`)))
+	router.ServeHTTP(created, testRequest("POST", "/rules", strings.NewReader(`{"symbol":" aapl ","direction":"up","thresholdPercent":3,"enabled":true}`)))
 	var rule priceRuleView
 	if created.Code != 201 || json.Unmarshal(created.Body.Bytes(), &rule) != nil || rule.Symbol != "AAPL" {
 		t.Fatal(created.Body.String())
 	}
 	for i := 0; i < 51; i++ {
-		_, err := m.queries.CreatePriceTrigger(context.Background(), investmentsqlc.CreatePriceTriggerParams{ID: fmt.Sprintf("id-%03d", i), RuleID: fmt.Sprintf("rule-%d", i), TradingDate: "2026-09-22", Symbol: "AAPL", Direction: "up", ThresholdBps: 300, Price: 103, PreviousClose: 100, ChangePercent: 3, QuoteAt: now.UnixMilli(), TriggeredAt: now.UnixMilli(), NotificationID: "notice"})
+		_, err := m.queries.CreatePriceTrigger(testContext(context.Background()), investmentsqlc.CreatePriceTriggerParams{UserID: "owner", ID: fmt.Sprintf("id-%03d", i), RuleID: fmt.Sprintf("rule-%d", i), TradingDate: "2026-09-22", Symbol: "AAPL", Direction: "up", ThresholdBps: 300, Price: 103, PreviousClose: 100, ChangePercent: 3, QuoteAt: now.UnixMilli(), TriggeredAt: now.UnixMilli(), NotificationID: "notice"})
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
 	page := func(cursor string) ([]priceTriggerView, string) {
 		w := httptest.NewRecorder()
-		m.getPriceHistory(w, httptest.NewRequest("GET", "/history?cursor="+cursor, nil))
+		m.getPriceHistory(w, testRequest("GET", "/history?cursor="+cursor, nil))
 		var result struct {
 			Items []priceTriggerView `json:"items"`
 			Next  string             `json:"nextCursor"`
@@ -305,7 +305,7 @@ func TestPriceRulesHTTPValidationAndStableHistory(t *testing.T) {
 		t.Fatal("history pagination lost or duplicated records")
 	}
 	deleted := httptest.NewRecorder()
-	router.ServeHTTP(deleted, httptest.NewRequest("DELETE", "/rules/"+rule.ID, nil))
+	router.ServeHTTP(deleted, testRequest("DELETE", "/rules/"+rule.ID, nil))
 	if deleted.Code != 200 {
 		t.Fatal(deleted.Body.String())
 	}

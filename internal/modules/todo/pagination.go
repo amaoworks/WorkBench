@@ -76,6 +76,10 @@ func taskListFilters(r *http.Request) (int64, string, string, time.Time, time.Ti
 }
 
 func (m *Module) listTasks(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireHTTPUser(w, r)
+	if !ok {
+		return
+	}
 	view, priority, category, endToday, endWeek, err := taskListFilters(r)
 	if err != nil {
 		httpapi.Error(w, 400, "invalid_filter", err.Error())
@@ -98,7 +102,8 @@ func (m *Module) listTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	params := todosqlc.ListTasksPageParams{
-		View: view, NowMs: now.UnixMilli(), EndToday: endToday.UnixMilli(), EndWeek: endWeek.UnixMilli(),
+		UserID: userID,
+		View:   view, NowMs: now.UnixMilli(), EndToday: endToday.UnixMilli(), EndWeek: endWeek.UnixMilli(),
 		PriorityFilter: priority, CategoryFilter: category, PageLimit: int64(limit + 1),
 	}
 	if encoded := r.URL.Query().Get("cursor"); encoded != "" {
@@ -155,6 +160,10 @@ func taskPriorityRank(priority string) int64 {
 }
 
 func (m *Module) taskCounts(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireHTTPUser(w, r)
+	if !ok {
+		return
+	}
 	_, priority, category, _, _, err := taskListFilters(r)
 	if err != nil {
 		httpapi.Error(w, 400, "invalid_filter", err.Error())
@@ -167,7 +176,8 @@ func (m *Module) taskCounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	row, err := m.queries.CountTaskGroups(r.Context(), todosqlc.CountTaskGroupsParams{
-		NowMs: now.UnixMilli(), EndToday: endToday.UnixMilli(), EndWeek: endWeek.UnixMilli(),
+		UserID: userID,
+		NowMs:  now.UnixMilli(), EndToday: endToday.UnixMilli(), EndWeek: endWeek.UnixMilli(),
 		PriorityFilter: priority, CategoryFilter: category,
 	})
 	if err != nil {

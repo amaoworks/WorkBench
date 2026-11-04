@@ -17,6 +17,7 @@ import (
 	"github.com/alexedwards/scs/v2"
 	"github.com/justinas/nosurf"
 
+	"workbench/internal/contracts"
 	"workbench/internal/foundation/database/sqlc"
 )
 
@@ -50,6 +51,7 @@ type Service struct {
 	cookieSameSite http.SameSite
 	passwordLimit  *passwordLimit
 	tokenMu        sync.Mutex
+	userDisabled   func(string)
 	now            func() time.Time
 }
 
@@ -85,6 +87,7 @@ func New(ctx context.Context, db *sql.DB, cfg Config) (*Service, error) {
 	store := NewSessionStore(db)
 	sessions := scs.New()
 	sessions.Store = store
+	store.sessions = sessions
 	sessions.Lifetime = 7 * 24 * time.Hour
 	sessions.IdleTimeout = 24 * time.Hour
 	sessions.HashTokenInStore = true
@@ -126,10 +129,15 @@ func New(ctx context.Context, db *sql.DB, cfg Config) (*Service, error) {
 		}
 	}
 
-	if cfg.Mode == ModePassword {
-		if err := service.ensureCredential(ctx, cfg.InitialPassword, logger); err != nil {
-			return nil, err
+	if err := service.ensureCredential(ctx, cfg.InitialPassword, logger); err != nil {
+		return nil, err
+	}
+	if cfg.Mode == ModeLocal {
+		if _, err := service.localUser(ctx); err != nil {
+			return nil, errors.New("local mode requires a single active owner administrator; use password mode for multiple users")
 		}
+	}
+	if cfg.Mode == ModePassword {
 		if err := service.ensureSigningKey(ctx); err != nil {
 			return nil, fmt.Errorf("initialize signing key: %w", err)
 		}
@@ -138,12 +146,17 @@ func New(ctx context.Context, db *sql.DB, cfg Config) (*Service, error) {
 }
 
 func (s *Service) ensureCredential(ctx context.Context, initialPassword string, logger *slog.Logger) error {
-	count, err := s.queries.CountAuthCredentials(ctx)
-	if err != nil {
-		return fmt.Errorf("inspect auth credentials: %w", err)
-	}
-	if count > 0 {
+	owner, err := s.queries.GetAuthUser(ctx, contracts.LegacyUserID)
+	if err == nil && (owner.PasswordHash != "" || s.mode == ModeLocal) {
 		return nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("inspect auth users: %w", err)
+	}
+	exists := err == nil
+	if s.mode == ModeLocal {
+		now := s.now().UnixMilli()
+		return s.queries.InsertAuthUser(ctx, dbsqlc.InsertAuthUserParams{ID: contracts.LegacyUserID, Username: "admin", DisplayName: "管理员", Role: "admin", Status: "active", CredentialVersion: now, CreatedAt: now, UpdatedAt: now})
 	}
 	generated := initialPassword == ""
 	if generated {
@@ -156,9 +169,12 @@ func (s *Service) ensureCredential(ctx context.Context, initialPassword string, 
 	if err != nil {
 		return err
 	}
-	err = s.queries.InsertInitialPassword(ctx, dbsqlc.InsertInitialPasswordParams{
-		PasswordHash: hash, UpdatedAt: time.Now().UTC().UnixMilli(),
-	})
+	now := s.now().UnixMilli()
+	if exists {
+		err = s.queries.InitializeOwnerPassword(ctx, dbsqlc.InitializeOwnerPasswordParams{PasswordHash: hash, CredentialVersion: now, UpdatedAt: now})
+	} else {
+		err = s.queries.InsertAuthUser(ctx, dbsqlc.InsertAuthUserParams{ID: contracts.LegacyUserID, Username: "admin", DisplayName: "管理员", PasswordHash: hash, Role: "admin", Status: "active", CredentialVersion: now, MustChangePassword: 1, CreatedAt: now, UpdatedAt: now})
+	}
 	if err != nil {
 		return fmt.Errorf("store initial password: %w", err)
 	}
@@ -179,11 +195,14 @@ func (s *Service) Authenticate(ctx context.Context, password string) (bool, erro
 		return false, err
 	}
 	defer s.passwordLimit.release()
-	hash, err := s.queries.GetPasswordHash(ctx)
+	user, err := s.queries.GetAuthUser(ctx, contracts.LegacyUserID)
 	if err != nil {
 		return false, fmt.Errorf("load credential: %w", err)
 	}
-	return verifyPassword(password, hash)
+	if user.Status != "active" {
+		return false, nil
+	}
+	return verifyPassword(password, user.PasswordHash)
 }
 
 func (s *Service) LoadAndSave(next http.Handler) http.Handler {
@@ -221,43 +240,42 @@ func (s *Service) Load(next http.Handler) http.Handler {
 }
 
 func (s *Service) Require(next http.Handler) http.Handler {
-	if s.mode == ModeLocal {
-		return next
-	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		credential, err := s.queries.GetAuthCredential(r.Context())
+		user, err := s.requestUser(r)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"code": "authentication_failed", "message": "authentication failed"})
-			return
-		}
-		claims, bearer := r.Context().Value(deviceContextKey{}).(*accessClaims)
-		authenticated := bearer && claims.Version == credential.UpdatedAt
-		if !bearer {
-			authenticated = s.sessions.GetBool(r.Context(), "authenticated") && s.sessions.GetInt64(r.Context(), "credentialVersion") == credential.UpdatedAt
-			if authenticated {
-				authenticated = s.browserDeviceActive(r)
-			}
-		}
-		if !authenticated {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"code": "authentication_required", "message": "login required"})
 			return
 		}
+		expectedUser := r.Header.Get("X-Workbench-User")
+		socketUser := r.URL.Query().Get("workbenchUser")
+		if (expectedUser != "" && expectedUser != user.ID) || (socketUser != "" && socketUser != user.ID) {
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, http.StatusConflict, map[string]string{"code": "account_changed", "message": "登录用户已变更，请重新加载"})
+			return
+		}
 		changingPassword := r.Method == http.MethodPut && r.URL.Path == "/api/settings/password"
-		revokingDevice := r.Method == http.MethodPost && r.URL.Path == "/api/auth/token/revoke"
-		if credential.MustChangePassword != 0 && !changingPassword && !revokingDevice {
+		revokingDevice := r.Method == http.MethodPost && (r.URL.Path == "/api/auth/token/revoke" || r.URL.Path == "/api/auth/logout" || r.URL.Path == "/api/auth/logout-all")
+		if s.mode == ModePassword && user.MustChangePassword != 0 && !changingPassword && !revokingDevice {
 			writeJSON(w, http.StatusForbidden, map[string]string{"code": "password_change_required", "message": "首次登录请修改密码"})
 			return
 		}
-		s.serveAuthenticated(w, r, next, credential.UpdatedAt)
+		s.serveAuthenticated(w, s.principalRequest(r, user), next, user.CredentialVersion)
 	})
 }
 
 func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	if s.mode == ModeLocal {
-		writeJSON(w, http.StatusOK, map[string]bool{"authenticated": true, "mustChangePassword": false})
+		user, err := s.localUser(r.Context())
+		if err != nil {
+			invalidToken(w)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "mustChangePassword": false, "user": viewUser(user)})
 		return
 	}
 	var request struct {
+		Username string `json:"username"`
 		Password string `json:"password"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
@@ -266,19 +284,14 @@ func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"code": "invalid_request", "message": "invalid login request"})
 		return
 	}
-	if retryAfter, err := s.passwordLimit.acquire(true); err != nil {
+	if retryAfter, err := s.acquireLogin(r, request.Username); err != nil {
 		writePasswordLimit(w, retryAfter, err)
 		return
 	}
 	defer s.passwordLimit.release()
 	// Read the hash and version together so a concurrent password change cannot
 	// turn a login with the old password into a session for the new credential.
-	credential, err := s.queries.GetAuthCredential(r.Context())
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"code": "authentication_failed", "message": "authentication failed"})
-		return
-	}
-	ok, err := verifyPassword(request.Password, credential.PasswordHash)
+	credential, ok, err := s.verifyLogin(r.Context(), request.Username, request.Password)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"code": "authentication_failed", "message": "authentication failed"})
 		return
@@ -292,14 +305,15 @@ func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.sessions.Put(r.Context(), "authenticated", true)
-	s.sessions.Put(r.Context(), "credentialVersion", credential.UpdatedAt)
+	s.sessions.Put(r.Context(), "credentialVersion", credential.CredentialVersion)
+	s.sessions.Put(r.Context(), "userID", credential.ID)
 	s.sessions.Remove(r.Context(), "deviceSessionID")
 	if err := s.trackBrowser(r); err != nil {
 		_ = s.sessions.Destroy(r.Context())
 		tokenFailed(w)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"authenticated": true, "mustChangePassword": credential.MustChangePassword != 0})
+	writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "mustChangePassword": credential.MustChangePassword != 0, "user": viewUser(credential)})
 }
 
 func (s *Service) LogoutHandler(w http.ResponseWriter, r *http.Request) {
@@ -321,23 +335,13 @@ func (s *Service) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) StatusHandler(w http.ResponseWriter, r *http.Request) {
-	if DeviceSessionID(r) != "" {
-		credential, err := s.queries.GetAuthCredential(r.Context())
-		if err != nil {
-			tokenFailed(w)
-			return
-		}
-		writeJSON(w, 200, map[string]any{"authenticated": true, "mode": s.mode, "mustChangePassword": credential.MustChangePassword != 0})
-		return
+	w.Header().Set("Cache-Control", "no-store")
+	user, err := s.requestUser(r)
+	response := map[string]any{"authenticated": err == nil, "mode": s.mode, "mustChangePassword": err == nil && s.mode == ModePassword && user.MustChangePassword != 0}
+	if err == nil {
+		response["user"] = viewUser(user)
 	}
-	authenticated := s.mode == ModeLocal || s.sessions.GetBool(r.Context(), "authenticated")
-	mustChangePassword := false
-	if s.mode == ModePassword && authenticated {
-		credential, err := s.queries.GetAuthCredential(r.Context())
-		authenticated = err == nil && s.sessions.GetInt64(r.Context(), "credentialVersion") == credential.UpdatedAt && s.browserDeviceActive(r)
-		mustChangePassword = authenticated && credential.MustChangePassword != 0
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"authenticated": authenticated, "mode": s.mode, "mustChangePassword": mustChangePassword})
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Service) CSRFTokenHandler(w http.ResponseWriter, r *http.Request) {

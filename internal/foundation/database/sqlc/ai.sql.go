@@ -10,11 +10,32 @@ import (
 	"database/sql"
 )
 
+const checkAIToolConversation = `-- name: CheckAIToolConversation :one
+SELECT COUNT(*) FROM ai_conversations c
+WHERE c.id = ?1 AND c.user_id = ?2 AND c.archived_at IS NULL
+  AND (?3 = '' OR EXISTS (
+      SELECT 1 FROM ai_messages m WHERE m.id = ?3 AND m.conversation_id = c.id
+  ))
+`
+
+type CheckAIToolConversationParams struct {
+	ConversationID string      `json:"conversation_id"`
+	UserID         string      `json:"user_id"`
+	MessageID      interface{} `json:"message_id"`
+}
+
+func (q *Queries) CheckAIToolConversation(ctx context.Context, arg CheckAIToolConversationParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, checkAIToolConversation, arg.ConversationID, arg.UserID, arg.MessageID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const finishAIToolCall = `-- name: FinishAIToolCall :exec
 UPDATE ai_tool_calls
 SET status = ?1, result_json = ?2,
     error = NULLIF(?3, ''), completed_at = ?4
-WHERE id = ?5
+WHERE id = ?5 AND user_id = ?6
 `
 
 type FinishAIToolCallParams struct {
@@ -23,6 +44,7 @@ type FinishAIToolCallParams struct {
 	Error       interface{}    `json:"error"`
 	CompletedAt sql.NullInt64  `json:"completed_at"`
 	ID          string         `json:"id"`
+	UserID      string         `json:"user_id"`
 }
 
 func (q *Queries) FinishAIToolCall(ctx context.Context, arg FinishAIToolCallParams) error {
@@ -32,16 +54,18 @@ func (q *Queries) FinishAIToolCall(ctx context.Context, arg FinishAIToolCallPara
 		arg.Error,
 		arg.CompletedAt,
 		arg.ID,
+		arg.UserID,
 	)
 	return err
 }
 
 const getAIToolCallResult = `-- name: GetAIToolCallResult :one
 SELECT status, result_json, error FROM ai_tool_calls
-WHERE tool_name = ? AND idempotency_key = ?
+WHERE user_id = ? AND tool_name = ? AND idempotency_key = ?
 `
 
 type GetAIToolCallResultParams struct {
+	UserID         string         `json:"user_id"`
 	ToolName       string         `json:"tool_name"`
 	IdempotencyKey sql.NullString `json:"idempotency_key"`
 }
@@ -53,7 +77,7 @@ type GetAIToolCallResultRow struct {
 }
 
 func (q *Queries) GetAIToolCallResult(ctx context.Context, arg GetAIToolCallResultParams) (GetAIToolCallResultRow, error) {
-	row := q.db.QueryRowContext(ctx, getAIToolCallResult, arg.ToolName, arg.IdempotencyKey)
+	row := q.db.QueryRowContext(ctx, getAIToolCallResult, arg.UserID, arg.ToolName, arg.IdempotencyKey)
 	var i GetAIToolCallResultRow
 	err := row.Scan(&i.Status, &i.ResultJson, &i.Error)
 	return i, err
@@ -61,18 +85,19 @@ func (q *Queries) GetAIToolCallResult(ctx context.Context, arg GetAIToolCallResu
 
 const insertAIToolCall = `-- name: InsertAIToolCall :execrows
 INSERT INTO ai_tool_calls(
-    id, conversation_id, message_id, tool_name, module, risk,
+    id, user_id, conversation_id, message_id, tool_name, module, risk,
     arguments_json, idempotency_key, confirmation_at, status, created_at
 ) VALUES (
-    ?1, NULLIF(?2, ''), NULLIF(?3, ''),
-    ?4, ?5, ?6, ?7,
-    NULLIF(?8, ''), ?9, 'running', ?10
+    ?1, ?2, NULLIF(?3, ''), NULLIF(?4, ''),
+    ?5, ?6, ?7, ?8,
+    NULLIF(?9, ''), ?10, 'running', ?11
 )
-ON CONFLICT(tool_name, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
+ON CONFLICT(user_id, tool_name, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
 `
 
 type InsertAIToolCallParams struct {
 	ID             string        `json:"id"`
+	UserID         string        `json:"user_id"`
 	ConversationID interface{}   `json:"conversation_id"`
 	MessageID      interface{}   `json:"message_id"`
 	ToolName       string        `json:"tool_name"`
@@ -87,6 +112,7 @@ type InsertAIToolCallParams struct {
 func (q *Queries) InsertAIToolCall(ctx context.Context, arg InsertAIToolCallParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, insertAIToolCall,
 		arg.ID,
+		arg.UserID,
 		arg.ConversationID,
 		arg.MessageID,
 		arg.ToolName,

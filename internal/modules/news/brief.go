@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"workbench/internal/contracts"
 	"workbench/internal/foundation/httpapi"
 	newssqlc "workbench/internal/modules/news/sqlc"
 )
@@ -84,7 +85,11 @@ func mentions(text string, patterns map[string]*regexp.Regexp) []string {
 }
 
 func (m *Module) Brief(ctx context.Context, symbols []string) (Brief, error) {
-	sources, err := m.q.CountSources(ctx)
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return Brief{}, err
+	}
+
+	sources, err := m.q.CountSources(ctx, contracts.UserID(ctx))
 	if err != nil {
 		return Brief{}, err
 	}
@@ -92,12 +97,12 @@ func (m *Module) Brief(ctx context.Context, symbols []string) (Brief, error) {
 	if sources == 0 {
 		return out, nil
 	}
-	stats, err := m.q.NewsStats(ctx)
+	stats, err := m.q.NewsStats(ctx, contracts.UserID(ctx))
 	if err != nil {
 		return Brief{}, err
 	}
 	out.Unread = stats.Unread
-	digests, err := m.q.ListDigestsPage(ctx, newssqlc.ListDigestsPageParams{CursorTime: math.MaxInt64, CursorID: "\uffff", PageLimit: 1})
+	digests, err := m.q.ListDigestsPage(ctx, newssqlc.ListDigestsPageParams{UserID: contracts.UserID(ctx), CursorTime: math.MaxInt64, CursorID: "\uffff", PageLimit: 1})
 	if err != nil {
 		return Brief{}, err
 	}
@@ -114,7 +119,7 @@ func (m *Module) Brief(ctx context.Context, symbols []string) (Brief, error) {
 	if len(symbols) > 0 {
 		limit = briefScan
 	}
-	rows, err := m.q.ListArticlesPage(ctx, newssqlc.ListArticlesPageParams{CursorTime: math.MaxInt64, CursorID: "\uffff", PageLimit: int64(limit)})
+	rows, err := m.q.ListArticlesPage(ctx, newssqlc.ListArticlesPageParams{UserID: contracts.UserID(ctx), CursorTime: math.MaxInt64, CursorID: "\uffff", PageLimit: int64(limit)})
 	if err != nil {
 		return Brief{}, err
 	}

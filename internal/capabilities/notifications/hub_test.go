@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"workbench/internal/contracts"
 )
 
 type streamRecorder struct {
@@ -59,7 +61,7 @@ func TestHubStreamsEventsAndHeartbeat(t *testing.T) {
 	hub := NewHub()
 	hub.heartbeat = 5 * time.Millisecond
 	recorder := newStreamRecorder()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(testContext())
 	request := httptest.NewRequest(http.MethodGet, "/api/notifications/stream", nil).WithContext(ctx)
 	done := make(chan struct{})
 	go func() {
@@ -81,7 +83,7 @@ func TestHubStreamsEventsAndHeartbeat(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	hub.Broadcast(StreamEvent{ID: "event-1", Type: "core.notification.created", Data: []byte(`{"id":"notice-1"}`)})
+	hub.Send(contracts.LegacyUserID, StreamEvent{ID: "event-1", Type: "core.notification.created", Data: []byte(`{"id":"notice-1"}`)})
 	waitForStreamText(t, recorder, "event: core.notification.created")
 	waitForStreamText(t, recorder, ": heartbeat")
 	cancel()

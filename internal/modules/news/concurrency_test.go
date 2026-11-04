@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"workbench/internal/contracts"
+	"workbench/internal/modules/news/sqlc"
 )
 
 func awaitNews[T any](t *testing.T, result <-chan T) T {
@@ -53,7 +54,7 @@ func TestSourceFetchDoesNotBlockOtherSourcesOrConfiguration(t *testing.T) {
 				}
 				return response(r, 200, rss(m.now(), "fast", "https://media.example/fast", "Fast source", "fast")), nil
 			})}
-			ctx := context.Background()
+			ctx := testContext()
 			done := make(chan error, 1)
 			go func() { _, err := m.RefreshSource(ctx, slow.ID); done <- err }()
 			awaitNews(t, started)
@@ -72,7 +73,7 @@ func TestSourceFetchDoesNotBlockOtherSourcesOrConfiguration(t *testing.T) {
 			if err := awaitNews(t, done); err == nil {
 				t.Fatal("accepted a result from the replaced source")
 			}
-			current, err := m.q.GetSource(ctx, slow.ID)
+			current, err := m.q.GetSource(ctx, newssqlc.GetSourceParams{UserID: contracts.UserID(ctx), ID: slow.ID})
 			if err != nil || current.FetchedAt != 0 || current.FailureCount != 0 || current.Url != input.URL {
 				t.Fatal("stale fetch changed source state", current, err)
 			}
@@ -98,7 +99,7 @@ func TestBatchRefreshStartsOtherSourcesWhileOneIsSlow(t *testing.T) {
 		return response(r, 200, rss(m.now(), r.URL.Path, "https://media.example"+r.URL.Path, r.URL.Path, "body")), nil
 	})}
 	done := make(chan error, 1)
-	go func() { _, err := m.Refresh(context.Background(), false); done <- err }()
+	go func() { _, err := m.Refresh(testContext(), false); done <- err }()
 	paths := map[string]bool{awaitNews(t, started): true, awaitNews(t, started): true}
 	if len(paths) != 2 {
 		t.Fatal("did not fetch distinct sources", paths)
@@ -120,9 +121,9 @@ func TestWaitingSourceRefreshHonorsCancellation(t *testing.T) {
 		return response(r, 200, rss(m.now(), "one", "https://media.example/one", "One", "body")), nil
 	})}
 	done := make(chan error, 1)
-	go func() { _, err := m.RefreshSource(context.Background(), s.ID); done <- err }()
+	go func() { _, err := m.RefreshSource(testContext(), s.ID); done <- err }()
 	awaitNews(t, started)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(testContext())
 	cancel()
 	waiting := make(chan error, 1)
 	go func() { _, err := m.RefreshSource(ctx, s.ID); waiting <- err }()
@@ -152,7 +153,7 @@ func TestAnalysisDoesNotBlockDigestOrSettingsAndDiscardsOldLanguage(t *testing.T
 		}
 		return "简报 [1]", nil
 	}
-	ctx := context.Background()
+	ctx := testContext()
 	done := make(chan error, 1)
 	go func() { _, err := m.Analyze(ctx, id); done <- err }()
 	awaitNews(t, started)
@@ -190,7 +191,7 @@ func TestConcurrentAnalysisAndDigestRespectSharedBudget(t *testing.T) {
 	m, _, ai := openModule(t)
 	ingest(t, m)
 	id := firstArticle(t, m).ID
-	ctx := context.Background()
+	ctx := testContext()
 	s, _ := m.Settings(ctx)
 	s.DailyAILimit = 1
 	if _, err := m.SaveSettings(ctx, s); err != nil {
@@ -246,7 +247,7 @@ func TestDigestDiscardsChangedSettingsWithoutSavingOrNotifying(t *testing.T) {
 		<-release
 		return "简报 [1]", nil
 	}
-	ctx := context.Background()
+	ctx := testContext()
 	done := make(chan error, 1)
 	input := DigestInput{PeriodHours: 24, MaxItems: 5, Push: true}
 	go func() { _, err := m.CreateDigest(ctx, input, "scheduled:changed"); done <- err }()

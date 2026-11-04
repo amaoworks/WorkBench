@@ -25,6 +25,7 @@ type telegramConfig struct {
 	BotToken    string `json:"botToken"`
 	ChatID      string `json:"chatId"`
 	ActivatedAt int64  `json:"activatedAt"`
+	Generation  int64  `json:"generation"`
 }
 
 type telegramStatus struct {
@@ -45,6 +46,28 @@ type Telegram struct {
 	baseURL   string
 	now       func() time.Time
 	rates     map[string]*telegramRate
+	users     contracts.UserDirectory
+}
+
+func (t *Telegram) SetUserDirectory(users contracts.UserDirectory) { t.users = users }
+
+func (t *Telegram) recipient(ctx context.Context, userID string) (dbsqlc.TelegramRecipient, error) {
+	row, err := dbsqlc.New(t.db).GetTelegramRecipient(ctx, userID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return dbsqlc.TelegramRecipient{UserID: userID, StatusJson: "{}"}, nil
+	}
+	return row, err
+}
+
+func (t *Telegram) recipientActive(ctx context.Context, userID string) bool {
+	if userID == "" {
+		return false
+	}
+	if t.users == nil {
+		return contracts.UserID(ctx) == userID
+	}
+	active, err := t.users.IsUserActive(ctx, userID)
+	return err == nil && active
 }
 
 type telegramRate struct{ nextSend, blockedUntil time.Time }
@@ -69,7 +92,10 @@ func (t *Telegram) Consumer() contracts.EventConsumer {
 			if json.Unmarshal(event.Payload, &payload) != nil || payload.NotificationID == "" {
 				return &telegramError{message: "通知事件格式无效", permanent: true}
 			}
-			row, err := dbsqlc.New(t.db).GetNotificationByID(ctx, payload.NotificationID)
+			if event.UserID == "" || contracts.UserID(ctx) != event.UserID {
+				return &telegramError{message: "notification event owner is required", permanent: true}
+			}
+			row, err := dbsqlc.New(t.db).GetNotificationByID(ctx, dbsqlc.GetNotificationByIDParams{ID: payload.NotificationID, RecipientID: event.UserID})
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil
 			}
@@ -77,7 +103,7 @@ func (t *Telegram) Consumer() contracts.EventConsumer {
 				return errors.New("无法读取待推送通知")
 			}
 			note := contracts.Notification{
-				ID: row.ID, SourceModule: contracts.ModuleID(row.SourceModule), External: row.External != 0,
+				ID: row.ID, RecipientID: row.RecipientID, SourceModule: contracts.ModuleID(row.SourceModule), External: row.External != 0,
 				Severity: contracts.NotificationSeverity(row.Severity), Title: row.Title, Content: row.Content,
 				ActionLabel: row.ActionLabel, ActionRoute: row.ActionRoute, IdempotencyKey: row.IdempotencyKey,
 				SourceEventID: contracts.EventID(row.SourceEventID), CreatedAt: time.UnixMilli(row.CreatedAt).UTC(),
@@ -112,12 +138,28 @@ func (t *Telegram) Deliver(ctx context.Context, note contracts.Notification) err
 	if !note.External {
 		return nil
 	}
+	if note.RecipientID == "" || (contracts.UserID(ctx) != "" && contracts.UserID(ctx) != note.RecipientID) {
+		return &telegramError{message: "notification recipient is required", permanent: true}
+	}
+	if !t.recipientActive(ctx, note.RecipientID) {
+		return nil
+	}
+	ctx = contracts.WithPrincipal(ctx, contracts.Principal{UserID: note.RecipientID, Role: contracts.RoleUser})
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	var config telegramConfig
 	if err := t.load(ctx, "telegram", &config); err != nil {
 		return errors.New("无法读取 Telegram 配置")
 	}
+	recipient, err := t.recipient(ctx, note.RecipientID)
+	if err != nil {
+		return errors.New("无法读取 Telegram 接收设置")
+	}
+	if recipient.Enabled == 0 || recipient.ChatID == "" || recipient.BotGeneration != config.Generation {
+		return nil
+	}
+	config.ChatID = recipient.ChatID
+	config.ActivatedAt = max(config.ActivatedAt, recipient.ActivatedAt)
 	now := t.now()
 	if !config.Enabled || note.CreatedAt.UnixMilli() < config.ActivatedAt || (t.allowed != nil && !t.allowed(note.SourceModule)) {
 		return nil
@@ -130,7 +172,8 @@ func (t *Telegram) Deliver(ctx context.Context, note contracts.Notification) err
 
 func (t *Telegram) sendTracked(ctx context.Context, config telegramConfig, content string) error {
 	var status telegramStatus
-	if err := t.load(ctx, "telegram_status", &status); err != nil {
+	recipient, loadErr := t.recipient(ctx, contracts.UserID(ctx))
+	if loadErr != nil || json.Unmarshal([]byte(recipient.StatusJson), &status) != nil {
 		return errors.New("无法读取 Telegram 投递状态")
 	}
 	now := t.now().UTC()
@@ -144,7 +187,8 @@ func (t *Telegram) sendTracked(ctx context.Context, config telegramConfig, conte
 	}
 	statusCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
-	if saveErr := t.save(statusCtx, "telegram_status", status); saveErr != nil {
+	raw, _ := json.Marshal(status)
+	if saveErr := dbsqlc.New(t.db).SaveTelegramRecipientStatus(statusCtx, dbsqlc.SaveTelegramRecipientStatusParams{UserID: contracts.UserID(ctx), StatusJson: string(raw)}); saveErr != nil {
 		// An auxiliary status write must never turn confirmed delivery into a
 		// retry. The durable event completion is handled by the dispatcher.
 		t.logger.Warn("cannot persist Telegram status")

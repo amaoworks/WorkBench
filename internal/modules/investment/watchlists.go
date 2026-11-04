@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"workbench/internal/contracts"
 
 	"workbench/internal/foundation/httpapi"
 	investmentsqlc "workbench/internal/modules/investment/sqlc"
@@ -29,7 +30,11 @@ type watchlistsView struct {
 
 func (m *Module) getWatchlists(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	rec, err := m.queries.GetWatchlists(r.Context())
+	rec, err := m.queries.GetWatchlists(r.Context(), contracts.UserID(r.Context()))
+	if errors.Is(err, sql.ErrNoRows) {
+		httpapi.Write(w, 200, watchlistsView{})
+		return
+	}
 	if err != nil {
 		httpapi.Error(w, 500, "watchlists_read_failed", "无法读取自选表")
 		return
@@ -59,11 +64,11 @@ func (m *Module) saveWatchlists(w http.ResponseWriter, r *http.Request) {
 		httpapi.Error(w, 400, "invalid_watchlists", "自选表格式无效")
 		return
 	}
-	saved, err := m.queries.SaveWatchlists(r.Context(), investmentsqlc.SaveWatchlistsParams{
+	saved, err := m.queries.SaveWatchlists(r.Context(), investmentsqlc.SaveWatchlistsParams{UserID: contracts.UserID(r.Context()),
 		Content: string(content), BaseRevision: *input.Revision, Writer: input.Writer, Sequence: input.Sequence,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
-		current, readErr := m.queries.GetWatchlists(r.Context())
+		current, readErr := m.queries.GetWatchlists(r.Context(), contracts.UserID(r.Context()))
 		if readErr != nil {
 			httpapi.Error(w, 500, "watchlists_save_failed", "无法保存自选表")
 			return

@@ -61,12 +61,12 @@ func TestQuoteOnlyFutuLeaseSharesBasicWithoutAffectingKlines(t *testing.T) {
 		{"/api/modules/investment/overnight", module.saveOvernight},
 	} {
 		response := httptest.NewRecorder()
-		config.save(response, httptest.NewRequest(http.MethodPut, config.path, strings.NewReader(`{"enabled":true}`)))
+		config.save(response, testRequest(http.MethodPut, config.path, strings.NewReader(`{"enabled":true}`)))
 		if response.Code != http.StatusOK {
 			t.Fatal(response.Body.String())
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(testContext(context.Background()), 3*time.Second)
 	defer cancel()
 	gateway := module.futu
 	generation, applied, err := gateway.addSub(ctx, "AAPL", "", "")

@@ -132,13 +132,15 @@ func TestMigrateCoreUpgradesVersionOneDatabaseWithoutDataLoss(t *testing.T) {
 	if err := database.MigrateCore(ctx); err != nil {
 		t.Fatalf("upgrade core database: %v", err)
 	}
-	var browserID string
-	var browserCreated, browserSeen int64
-	if err := database.SQL().QueryRow("SELECT id, created_at, last_seen_at FROM auth_browser_sessions WHERE token_hash = 'existing-browser-token-hash'").Scan(&browserID, &browserCreated, &browserSeen); err != nil {
-		t.Fatalf("existing browser session was not enrolled during upgrade: %v", err)
+	var sessions, browsers int
+	if err := database.SQL().QueryRow("SELECT COUNT(*) FROM sessions").Scan(&sessions); err != nil {
+		t.Fatal(err)
 	}
-	if browserID == "" || browserID == "existing-browser-token-hash" || browserCreated != 2000000000000-86400000 || browserSeen != browserCreated {
-		t.Fatal("invalid upgraded browser session metadata")
+	if err := database.SQL().QueryRow("SELECT COUNT(*) FROM auth_browser_sessions").Scan(&browsers); err != nil {
+		t.Fatal(err)
+	}
+	if sessions != 0 || browsers != 0 {
+		t.Fatal("single-user sessions must be revoked during the multi-user upgrade")
 	}
 	var title string
 	if err := database.SQL().QueryRow("SELECT title FROM ai_conversations WHERE id = 'conversation-one'").Scan(&title); err != nil {

@@ -66,8 +66,12 @@ func New(db *sql.DB, widgets []contracts.WidgetDefinition, enabled EnabledFunc) 
 func (s *Service) UseDataHandler(handler http.Handler) { s.data = handler }
 
 func (s *Service) list(ctx context.Context) ([]Widget, error) {
+	userID, err := contracts.RequireUserID(ctx)
+	if err != nil {
+		return nil, err
+	}
 	preferences := map[string]Preference{}
-	raw, err := s.queries.GetDashboardLayout(ctx)
+	raw, err := s.queries.GetDashboardLayout(ctx, userID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
@@ -107,6 +111,9 @@ func (s *Service) list(ctx context.Context) ([]Widget, error) {
 }
 
 func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !requireUser(w, r) {
+		return
+	}
 	items, err := s.list(r.Context())
 	if err != nil {
 		httpapi.Error(w, 500, "dashboard_failed", "无法读取总览配置")
@@ -209,6 +216,9 @@ func (c *capture) Write(p []byte) (int, error) {
 
 // Catalog includes disabled modules so their preferences remain editable and survive re-enabling.
 func (s *Service) Catalog(w http.ResponseWriter, r *http.Request) {
+	if !requireUser(w, r) {
+		return
+	}
 	items, err := s.list(r.Context())
 	if err != nil {
 		httpapi.Error(w, 500, "dashboard_failed", "无法读取总览配置")
@@ -218,6 +228,9 @@ func (s *Service) Catalog(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) Save(w http.ResponseWriter, r *http.Request) {
+	if !requireUser(w, r) {
+		return
+	}
 	var input struct {
 		Items []Preference `json:"items"`
 	}
@@ -238,15 +251,26 @@ func (s *Service) Save(w http.ResponseWriter, r *http.Request) {
 		delete(known, pref.ID)
 	}
 	raw, _ := json.Marshal(input.Items)
-	if err := s.queries.SaveDashboardLayout(r.Context(), string(raw)); err != nil {
+	if err := s.queries.SaveDashboardLayout(r.Context(), dbsqlc.SaveDashboardLayoutParams{UserID: contracts.UserID(r.Context()), Value: string(raw)}); err != nil {
 		httpapi.Error(w, 500, "dashboard_failed", "无法保存总览配置")
 		return
 	}
 	s.Catalog(w, r)
 }
 
+func requireUser(w http.ResponseWriter, r *http.Request) bool {
+	if _, err := contracts.RequireUserID(r.Context()); err != nil {
+		httpapi.Error(w, http.StatusUnauthorized, "unauthenticated", "请先登录")
+		return false
+	}
+	return true
+}
+
 func (s *Service) Reset(w http.ResponseWriter, r *http.Request) {
-	if err := s.queries.ResetDashboardLayout(r.Context()); err != nil {
+	if !requireUser(w, r) {
+		return
+	}
+	if err := s.queries.ResetDashboardLayout(r.Context(), contracts.UserID(r.Context())); err != nil {
 		httpapi.Error(w, 500, "dashboard_failed", "无法重置总览配置")
 		return
 	}

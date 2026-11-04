@@ -4,18 +4,18 @@
 
 ## Telegram
 
-「设置 → 通知推送」（`/settings?tab=notifications`）管理唯一的 Telegram 接收目标。待办到期、价格预警和资讯简报等明确标记为外发的通知会推送到该目标，其他站内通知不自动外发。
+管理员在「设置 → 通知推送」（`/settings?tab=notifications`）管理共享 Telegram 机器人，在「用户管理 → 通知目标」为用户分配接收目标。用户只能启停和测试自己的推送；不能读取 Bot Token 或修改其他用户的目标。待办到期、价格预警和资讯简报等外发通知只发送到收件人自己的目标。
 
 1. 在 Telegram 向 [@BotFather](https://t.me/BotFather) 创建机器人，获取 Bot Token。
 2. 私聊请先向机器人发送 `/start`；群组请添加机器人，频道需要发布权限。填写目标的数字 Chat ID（群组可为负数）或公开频道 `@用户名`。数字 ID 可从自己机器人的 [getUpdates 响应](https://core.telegram.org/bots/api#getupdates) 中读取 `message.chat.id`。
-3. 在设置中填写 Token、Chat ID，点击「发送测试消息」确认接收，再保存并启用。测试使用当前表单，不保存候选配置；测试消息会真实发送。
+3. 管理员保存并启用 Bot Token，为用户保存 Chat ID。用户在个人推送中启用接收并点击「发送测试消息」确认。个人测试只使用已保存的本人目标，测试消息会真实发送。
 
 服务端通过 HTTPS 调用 [sendMessage](https://core.telegram.org/bots/api#sendmessage)，无需接收消息的 webhook。部署环境需能访问 `api.telegram.org`。Token 不在读取接口中回显，留空保留，可显式清除；它与其他凭据一样保存在私有工作空间数据库及备份中，数据库本身未加密。
 
 ## Telegram 投递行为
 
 - 外发通知先写入站内通知，再由 `core.notification.telegram` 消费者独立投递。复用事件表和租约恢复，外部超时不会阻塞 SSE 消费者。
-- 启用、更换机器人或更换接收目标后，只发送此后产生的新通知。停用渠道或来源模块时跳过投递，历史收件箱不补发。
+- 启用或更换本人接收目标后，只发送此后产生的新通知。更换 Bot Token 会提升机器人代次，旧目标需要管理员重新分配，不会自动发送给新机器人。停用服务、个人接收、账号或来源模块时跳过投递，历史收件箱不补发。
 - 通知可设置明确的投递截止时间；未设置时在创建后 15 分钟内有效。超过截止时间的投递终止为失败，站内通知仍保留。
 - 每个机器人串行发送，间隔至少 3.1 秒。网络/服务错误使用持久化指数退避，最多 12 次尝试；429 尊重 `retry_after`，无效凭据或权限等永久错误直接停止。不同机器人的候选配置测试相互隔离。
 - 设置页显示最近尝试、最近成功、脱敏错误，以及自当前目标启用以来的终止失败数量。失败消息不提供手工重放，调整配置用于后续新通知。
@@ -24,9 +24,12 @@
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| GET | `/api/settings/telegram` | `enabled`、`chatId`、`hasBotToken`、最近投递状态和失败数 |
-| PUT | `/api/settings/telegram` | `{ enabled, botToken, chatId, clearBotToken }`，Token 留空保留 |
-| POST | `/api/settings/telegram/test` | 测试当前表单并返回 `{ ok: true }`，不保存配置 |
+| GET | `/api/settings/telegram` | 管理员读取服务开关、密钥存在状态及本人投递状态 |
+| PUT | `/api/settings/telegram` | 管理员保存 `{ enabled, botToken, clearBotToken }`；兼容 `chatId` 只设置管理员本人的目标 |
+| POST | `/api/settings/telegram/test` | 管理员测试候选配置，不保存 |
+| GET / PUT | `/api/settings/telegram/recipient` | 读取本人目标和状态 / 保存 `{ enabled }`；普通用户不能提交 Chat ID |
+| POST | `/api/settings/telegram/recipient/test` | 测试已保存的本人目标 |
+| GET / PUT | `/api/settings/telegram/recipients/{userID}` | 管理员读取 / 分配 `{ enabled, chatId }` |
 
 接口使用平台鉴权、来源检查和 CSRF 保护。通道实现在 `internal/capabilities/notifications/telegram*.go`，前端在 `web/src/features/settings/TelegramPanel.tsx`。测试使用本地传输替身，不发送真实消息。
 
@@ -52,7 +55,7 @@ Android 使用 `platform: "android"`。系统仅从已验证的 Bearer token 取
 | PUT | `/api/mobile/push-token` | 更新当前设备的推送 token |
 | DELETE | `/api/mobile/push-token` | 删除当前设备与请求中 token 的绑定 |
 
-注册和删除请求体均为 `{ platform, pushToken }`。注册 token 即表示当前设备选择接收移动通知，删除 token 即表示退出；当前没有额外的设备偏好开关。同一设备会话每个平台保留一个 token，操作系统刷新 token 时使用 PUT 更新。注销、撤销或过期的设备会话不再参与投递。
+注册和删除请求体均为 `{ platform, pushToken }`。注册 token 即表示当前设备选择接收移动通知，删除 token 即表示退出；当前没有额外的设备偏好开关。同一设备会话每个平台保留一个 token，操作系统刷新 token 时使用 PUT 更新。注销、撤销或过期的设备会话及禁用账号不再参与投递；设备归属必须与通知收件人一致。
 
 - 以数据库毫秒时间戳为准，通知创建时间须不早于服务启用时间和当前 token 的注册时间，历史事件回填不触发补发。首次注册、更换 token、将 token 转移到另一设备会话时，均使用本次注册时间；相同设备会话重复注册相同 token 保留原时间。
 - 服务启用状态及启用时间保存在 `workspace_settings` 的 `mobile_push` 配置项。启动时首次启用，或从已记录的停用状态重新启用，会更新启用时间；保持启用的普通重启不改变时间边界，未过期的待重试通知继续投递。停用状态在以停用配置启动时记录。

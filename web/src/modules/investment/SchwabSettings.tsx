@@ -10,6 +10,7 @@ import { disconnectSchwab, refreshSchwabToken, useRefreshInvestment } from "./qu
 import type { SchwabSettings as Settings } from "./schema";
 import { formatDateTime } from "../../shared/format";
 import { MaskedInput } from "./MaskedInput";
+import { useIsAdmin } from "../../shared/auth";
 
 export type SchwabDraft = { appKey: string; appSecret: string; callbackUrl: string };
 
@@ -29,6 +30,7 @@ export function SchwabSection({
   blockNavigation: boolean;
   error?: string;
 }) {
+  const isAdmin = useIsAdmin();
   const refresh = useRefreshInvestment();
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const disconnectButton = useRef<HTMLButtonElement>(null);
@@ -66,7 +68,7 @@ export function SchwabSection({
           {error}
         </Notice>
       )}
-      <div className="space-y-4">
+      {isAdmin && <div className="space-y-4">
         <Field label="App Key">
           <MaskedInput revealLabel="App Key" required={dirty} value={value.appKey} onChange={(event) => onChange({ appKey: event.target.value })} />
         </Field>
@@ -88,7 +90,7 @@ export function SchwabSection({
             placeholder="https://workbench.example.com/oauth/schwab"
           />
         </Field>
-      </div>
+      </div>}
       {initial.connected && (
         <Badge tone="success">
           已连接{initial.tokenExpiresAt ? ` · 令牌到期 ${formatDateTime(initial.tokenExpiresAt)}` : ""}
@@ -99,10 +101,11 @@ export function SchwabSection({
           行情和交易已暂停。
         </Notice>
       )}
-      {!initial.connected && !initial.reauthorizationRequired && initial.hasAppSecret && (
+      {!initial.configured && <Notice title="Schwab 应用未配置">联系管理员配置应用。</Notice>}
+      {!initial.connected && !initial.reauthorizationRequired && initial.configured && (
         <Notice title="未连接 Schwab">请完成 OAuth 授权。</Notice>
       )}
-      {initial.callbackUrl && !initial.callbackUrl.startsWith("https://") && (
+      {isAdmin && initial.callbackUrl && !initial.callbackUrl.startsWith("https://") && (
         <Notice tone="danger" title="回调地址无效">
           回调地址须为 HTTPS。
         </Notice>
@@ -116,7 +119,7 @@ export function SchwabSection({
         <Button
           type="button"
           variant={initial.reauthorizationRequired ? "primary" : "secondary"}
-          disabled={busy || blockNavigation || !initial.hasAppSecret || !initial.callbackUrl.startsWith("https://")}
+          disabled={busy || blockNavigation || !initial.configured}
           onClick={() => {
             window.location.href = "/api/modules/investment/schwab/oauth/login";
           }}

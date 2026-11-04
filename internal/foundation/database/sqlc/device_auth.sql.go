@@ -114,7 +114,7 @@ func (q *Queries) GetBrowserGrant(ctx context.Context, tokenHash string) (AuthBr
 }
 
 const getBrowserSession = `-- name: GetBrowserSession :one
-SELECT id, token_hash, device_session_id, created_at, last_seen_at, revoked_at FROM auth_browser_sessions WHERE id = ?
+SELECT id, token_hash, device_session_id, created_at, last_seen_at, revoked_at, user_id FROM auth_browser_sessions WHERE id = ?
 `
 
 func (q *Queries) GetBrowserSession(ctx context.Context, id string) (AuthBrowserSession, error) {
@@ -127,12 +127,13 @@ func (q *Queries) GetBrowserSession(ctx context.Context, id string) (AuthBrowser
 		&i.CreatedAt,
 		&i.LastSeenAt,
 		&i.RevokedAt,
+		&i.UserID,
 	)
 	return i, err
 }
 
 const getDeviceSession = `-- name: GetDeviceSession :one
-SELECT id, device_name, platform, credential_version, created_at, last_seen_at, expires_at, revoked_at FROM auth_device_sessions WHERE id = ?
+SELECT id, device_name, platform, credential_version, created_at, last_seen_at, expires_at, revoked_at, user_id FROM auth_device_sessions WHERE id = ?
 `
 
 func (q *Queries) GetDeviceSession(ctx context.Context, id string) (AuthDeviceSession, error) {
@@ -147,6 +148,7 @@ func (q *Queries) GetDeviceSession(ctx context.Context, id string) (AuthDeviceSe
 		&i.LastSeenAt,
 		&i.ExpiresAt,
 		&i.RevokedAt,
+		&i.UserID,
 	)
 	return i, err
 }
@@ -199,7 +201,7 @@ func (q *Queries) InsertBrowserGrant(ctx context.Context, arg InsertBrowserGrant
 }
 
 const insertBrowserSession = `-- name: InsertBrowserSession :exec
-INSERT INTO auth_browser_sessions(id, token_hash, created_at, last_seen_at, device_session_id) VALUES (?, ?, ?, ?, ?)
+INSERT INTO auth_browser_sessions(id, token_hash, created_at, last_seen_at, device_session_id, user_id) VALUES (?, ?, ?, ?, ?, ?)
 `
 
 type InsertBrowserSessionParams struct {
@@ -208,6 +210,7 @@ type InsertBrowserSessionParams struct {
 	CreatedAt       int64          `json:"created_at"`
 	LastSeenAt      int64          `json:"last_seen_at"`
 	DeviceSessionID sql.NullString `json:"device_session_id"`
+	UserID          string         `json:"user_id"`
 }
 
 func (q *Queries) InsertBrowserSession(ctx context.Context, arg InsertBrowserSessionParams) error {
@@ -217,13 +220,14 @@ func (q *Queries) InsertBrowserSession(ctx context.Context, arg InsertBrowserSes
 		arg.CreatedAt,
 		arg.LastSeenAt,
 		arg.DeviceSessionID,
+		arg.UserID,
 	)
 	return err
 }
 
 const insertDeviceSession = `-- name: InsertDeviceSession :exec
-INSERT INTO auth_device_sessions(id, device_name, platform, credential_version, created_at, last_seen_at, expires_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO auth_device_sessions(id, device_name, platform, credential_version, created_at, last_seen_at, expires_at, user_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertDeviceSessionParams struct {
@@ -234,6 +238,7 @@ type InsertDeviceSessionParams struct {
 	CreatedAt         int64  `json:"created_at"`
 	LastSeenAt        int64  `json:"last_seen_at"`
 	ExpiresAt         int64  `json:"expires_at"`
+	UserID            string `json:"user_id"`
 }
 
 func (q *Queries) InsertDeviceSession(ctx context.Context, arg InsertDeviceSessionParams) error {
@@ -245,6 +250,7 @@ func (q *Queries) InsertDeviceSession(ctx context.Context, arg InsertDeviceSessi
 		arg.CreatedAt,
 		arg.LastSeenAt,
 		arg.ExpiresAt,
+		arg.UserID,
 	)
 	return err
 }
@@ -282,11 +288,16 @@ func (q *Queries) InsertSigningKey(ctx context.Context, arg InsertSigningKeyPara
 const listBrowserSessions = `-- name: ListBrowserSessions :many
 SELECT b.id, b.token_hash, b.created_at, b.last_seen_at, s.expiry
 FROM auth_browser_sessions b JOIN sessions s ON s.token = b.token_hash
-WHERE s.expiry > ?1 AND b.revoked_at IS NULL
+WHERE s.expiry > ?1 AND b.revoked_at IS NULL AND b.user_id = ?2
 AND (b.device_session_id IS NULL OR EXISTS (
     SELECT 1 FROM auth_device_sessions d WHERE d.id = b.device_session_id AND d.revoked_at IS NULL AND d.expires_at > ?1
 )) ORDER BY b.created_at DESC, b.id
 `
+
+type ListBrowserSessionsParams struct {
+	Now    int64  `json:"now"`
+	UserID string `json:"user_id"`
+}
 
 type ListBrowserSessionsRow struct {
 	ID         string `json:"id"`
@@ -296,8 +307,8 @@ type ListBrowserSessionsRow struct {
 	Expiry     int64  `json:"expiry"`
 }
 
-func (q *Queries) ListBrowserSessions(ctx context.Context, now int64) ([]ListBrowserSessionsRow, error) {
-	rows, err := q.db.QueryContext(ctx, listBrowserSessions, now)
+func (q *Queries) ListBrowserSessions(ctx context.Context, arg ListBrowserSessionsParams) ([]ListBrowserSessionsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listBrowserSessions, arg.Now, arg.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -326,11 +337,16 @@ func (q *Queries) ListBrowserSessions(ctx context.Context, now int64) ([]ListBro
 }
 
 const listDeviceSessions = `-- name: ListDeviceSessions :many
-SELECT id, device_name, platform, credential_version, created_at, last_seen_at, expires_at, revoked_at FROM auth_device_sessions WHERE revoked_at IS NULL AND expires_at > ? ORDER BY created_at DESC, id
+SELECT id, device_name, platform, credential_version, created_at, last_seen_at, expires_at, revoked_at, user_id FROM auth_device_sessions WHERE revoked_at IS NULL AND expires_at > ? AND user_id = ? ORDER BY created_at DESC, id
 `
 
-func (q *Queries) ListDeviceSessions(ctx context.Context, expiresAt int64) ([]AuthDeviceSession, error) {
-	rows, err := q.db.QueryContext(ctx, listDeviceSessions, expiresAt)
+type ListDeviceSessionsParams struct {
+	ExpiresAt int64  `json:"expires_at"`
+	UserID    string `json:"user_id"`
+}
+
+func (q *Queries) ListDeviceSessions(ctx context.Context, arg ListDeviceSessionsParams) ([]AuthDeviceSession, error) {
+	rows, err := q.db.QueryContext(ctx, listDeviceSessions, arg.ExpiresAt, arg.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -347,6 +363,7 @@ func (q *Queries) ListDeviceSessions(ctx context.Context, expiresAt int64) ([]Au
 			&i.LastSeenAt,
 			&i.ExpiresAt,
 			&i.RevokedAt,
+			&i.UserID,
 		); err != nil {
 			return nil, err
 		}
@@ -371,20 +388,30 @@ func (q *Queries) RetireSigningKeys(ctx context.Context, retiredAt sql.NullInt64
 }
 
 const revokeAllBrowserSessions = `-- name: RevokeAllBrowserSessions :exec
-UPDATE auth_browser_sessions SET revoked_at = ? WHERE revoked_at IS NULL
+UPDATE auth_browser_sessions SET revoked_at = ? WHERE revoked_at IS NULL AND user_id = ?
 `
 
-func (q *Queries) RevokeAllBrowserSessions(ctx context.Context, revokedAt sql.NullInt64) error {
-	_, err := q.db.ExecContext(ctx, revokeAllBrowserSessions, revokedAt)
+type RevokeAllBrowserSessionsParams struct {
+	RevokedAt sql.NullInt64 `json:"revoked_at"`
+	UserID    string        `json:"user_id"`
+}
+
+func (q *Queries) RevokeAllBrowserSessions(ctx context.Context, arg RevokeAllBrowserSessionsParams) error {
+	_, err := q.db.ExecContext(ctx, revokeAllBrowserSessions, arg.RevokedAt, arg.UserID)
 	return err
 }
 
 const revokeAllDeviceSessions = `-- name: RevokeAllDeviceSessions :exec
-UPDATE auth_device_sessions SET revoked_at = ? WHERE revoked_at IS NULL
+UPDATE auth_device_sessions SET revoked_at = ? WHERE revoked_at IS NULL AND user_id = ?
 `
 
-func (q *Queries) RevokeAllDeviceSessions(ctx context.Context, revokedAt sql.NullInt64) error {
-	_, err := q.db.ExecContext(ctx, revokeAllDeviceSessions, revokedAt)
+type RevokeAllDeviceSessionsParams struct {
+	RevokedAt sql.NullInt64 `json:"revoked_at"`
+	UserID    string        `json:"user_id"`
+}
+
+func (q *Queries) RevokeAllDeviceSessions(ctx context.Context, arg RevokeAllDeviceSessionsParams) error {
+	_, err := q.db.ExecContext(ctx, revokeAllDeviceSessions, arg.RevokedAt, arg.UserID)
 	return err
 }
 

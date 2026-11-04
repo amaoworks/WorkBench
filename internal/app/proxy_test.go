@@ -75,7 +75,7 @@ func TestHTTPSProxyToHTTPApplication(t *testing.T) {
 		t.Fatalf("missing CSRF token: %v", err)
 	}
 	csrf.Body.Close()
-	login := call("POST", "/api/auth/login", `{"password":"Proxy-Test-123"}`, token.Token, publicURL, 200)
+	login := call("POST", "/api/auth/login", `{"username":"admin","password":"Proxy-Test-123"}`, token.Token, publicURL, 200)
 	login.Body.Close()
 	var secureSession bool
 	for _, res := range []*http.Response{csrf, login} {
@@ -92,7 +92,7 @@ func TestHTTPSProxyToHTTPApplication(t *testing.T) {
 	call("POST", "/api/modules/todo/tasks", `{"title":"Blocked before password change"}`, token.Token, publicURL, 403).Body.Close()
 	change := call("PUT", "/api/settings/password", `{"currentPassword":"Proxy-Test-123","newPassword":"Proxy-Changed-456"}`, token.Token, publicURL, 200)
 	change.Body.Close()
-	login = call("POST", "/api/auth/login", `{"password":"Proxy-Changed-456"}`, token.Token, publicURL, 200)
+	login = call("POST", "/api/auth/login", `{"username":"admin","password":"Proxy-Changed-456"}`, token.Token, publicURL, 200)
 	login.Body.Close()
 	call("POST", "/api/modules/todo/tasks", `{"title":"Proxy task"}`, token.Token, publicURL, 201).Body.Close()
 	call("POST", "/api/modules/todo/tasks", `{"title":"CSRF bypass"}`, "", publicURL, 400).Body.Close()

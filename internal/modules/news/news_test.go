@@ -20,6 +20,22 @@ import (
 	"workbench/internal/modules/news/sqlc"
 )
 
+func testContext() context.Context {
+	return contracts.WithPrincipal(context.Background(), contracts.Principal{UserID: contracts.LegacyUserID, Role: contracts.RoleAdmin})
+}
+
+type testUsers struct{ ids []string }
+
+func (u testUsers) ActiveUserIDs(context.Context) ([]string, error) { return u.ids, nil }
+func (u testUsers) IsUserActive(_ context.Context, id string) (bool, error) {
+	for _, candidate := range u.ids {
+		if candidate == id {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 type roundTrip func(*http.Request) (*http.Response, error)
 
 func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
@@ -42,7 +58,7 @@ func (f *textFixture) GenerateText(ctx context.Context, r contracts.TextRequest)
 func (f *textFixture) count() int { f.mu.Lock(); defer f.mu.Unlock(); return f.calls }
 func openModule(t *testing.T) (*Module, *workbenchdb.Database, *textFixture) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := testContext()
 	db, err := workbenchdb.Open(ctx, workbenchdb.Config{Path: filepath.Join(t.TempDir(), "data.db")})
 	if err != nil {
 		t.Fatal(err)
@@ -57,7 +73,7 @@ func openModule(t *testing.T) (*Module, *workbenchdb.Database, *textFixture) {
 		t.Fatal(err)
 	}
 	ai := &textFixture{}
-	m, err := New(Dependencies{DB: db.SQL(), Events: store, Notifications: ns, AI: ai})
+	m, err := New(Dependencies{DB: db.SQL(), Events: store, Notifications: ns, AI: ai, Users: testUsers{ids: []string{contracts.LegacyUserID}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +92,7 @@ func rss(now time.Time, guid, link, title, body string) string {
 }
 func addSource(t *testing.T, m *Module, name string) Source {
 	t.Helper()
-	s, err := m.SaveSource(context.Background(), "", SourceInput{Name: name, Kind: "rss", URL: "https://example.com/" + name, Topic: "市场", Enabled: true, IntervalMinutes: 30})
+	s, err := m.SaveSource(testContext(), "", SourceInput{Name: name, Kind: "rss", URL: "https://example.com/" + name, Topic: "市场", Enabled: true, IntervalMinutes: 30})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +100,7 @@ func addSource(t *testing.T, m *Module, name string) Source {
 }
 func firstArticle(t *testing.T, m *Module) newssqlc.NewsArticle {
 	t.Helper()
-	rows, err := m.q.ListAllArticles(context.Background())
+	rows, err := m.q.ListAllArticles(testContext(), contracts.UserID(testContext()))
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("articles=%v, err=%v", rows, err)
 	}
@@ -96,7 +112,7 @@ func ingest(t *testing.T, m *Module) Source {
 	m.client = &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
 		return response(r, 200, rss(m.now(), "guid-1", "https://media.example/story?utm_source=x", "Company earnings", "Revenue increased 10%.")), nil
 	})}
-	if _, err := m.RefreshSource(context.Background(), s.ID); err != nil {
+	if _, err := m.RefreshSource(testContext(), s.ID); err != nil {
 		t.Fatal(err)
 	}
 	return s
@@ -127,13 +143,13 @@ func TestFeedFormatsAndTextSafety(t *testing.T) {
 
 func TestFetchDeduplicatesAcrossSourcesAndPreservesReadingState(t *testing.T) {
 	m, _, _ := openModule(t)
-	ctx := context.Background()
+	ctx := testContext()
 	s := ingest(t, m)
 	a := firstArticle(t, m)
-	if err := m.q.SetArticleRead(ctx, newssqlc.SetArticleReadParams{ID: a.ID, IsRead: 1}); err != nil {
+	if err := m.q.SetArticleRead(ctx, newssqlc.SetArticleReadParams{UserID: contracts.UserID(ctx), ID: a.ID, IsRead: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.q.SetArticleStarred(ctx, newssqlc.SetArticleStarredParams{ID: a.ID, Starred: 1}); err != nil {
+	if err := m.q.SetArticleStarred(ctx, newssqlc.SetArticleStarredParams{UserID: contracts.UserID(ctx), ID: a.ID, Starred: 1}); err != nil {
 		t.Fatal(err)
 	}
 	other := addSource(t, m, "other")
@@ -190,22 +206,22 @@ func TestConditionalFetchAndPersistentBackoff(t *testing.T) {
 		v.Header.Set("Retry-After", "7200")
 		return v, nil
 	})
-	if _, err := m.RefreshSource(context.Background(), s.ID); err != nil {
+	if _, err := m.RefreshSource(testContext(), s.ID); err != nil {
 		t.Fatal(err)
 	}
-	r, err := m.RefreshSource(context.Background(), s.ID)
+	r, err := m.RefreshSource(testContext(), s.ID)
 	if err != nil || !r.NotModified {
 		t.Fatal(r, err)
 	}
-	if _, err = m.RefreshSource(context.Background(), s.ID); err == nil {
+	if _, err = m.RefreshSource(testContext(), s.ID); err == nil {
 		t.Fatal("accepted HTTP 429")
 	}
-	rows, err := m.Sources(context.Background())
+	rows, err := m.Sources(testContext())
 	if err != nil || !strings.Contains(rows[0].LastError, "429") || rows[0].NextFetchAt.Before(m.now().Add(2*time.Hour)) {
 		t.Fatal(rows, err)
 	}
 	before := calls
-	if _, err = m.Refresh(context.Background(), true); err != nil || before != calls {
+	if _, err = m.Refresh(testContext(), true); err != nil || before != calls {
 		t.Fatal("ignored persistent backoff", calls, err)
 	}
 }
@@ -213,7 +229,7 @@ func TestConditionalFetchAndPersistentBackoff(t *testing.T) {
 func TestRulesRematchExistingArticlesBeforeAI(t *testing.T) {
 	m, _, _ := openModule(t)
 	s := ingest(t, m)
-	ctx := context.Background()
+	ctx := testContext()
 	rule, err := m.SaveRule(ctx, "", RuleInput{Name: "Focus", IncludeKeywords: []string{"earnings"}, ExcludeKeywords: []string{"advertisement"}, SourceIDs: []string{s.ID}, Topic: "财报", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
@@ -246,7 +262,7 @@ func TestRulesRematchExistingArticlesBeforeAI(t *testing.T) {
 func TestAICacheQuotaAndLanguageInvalidation(t *testing.T) {
 	m, _, ai := openModule(t)
 	ingest(t, m)
-	ctx := context.Background()
+	ctx := testContext()
 	id := firstArticle(t, m).ID
 	s, _ := m.Settings(ctx)
 	s.DailyAILimit = 1
@@ -282,7 +298,7 @@ func TestUnavailableAIDoesNotConsumeBudgetAndDigestKeepsLinks(t *testing.T) {
 	m, _, ai := openModule(t)
 	ingest(t, m)
 	ai.fn = func(context.Context, contracts.TextRequest) (string, error) { return "", contracts.ErrAIUnavailable }
-	ctx := context.Background()
+	ctx := testContext()
 	if _, err := m.Analyze(ctx, firstArticle(t, m).ID); !errors.Is(err, contracts.ErrAIUnavailable) {
 		t.Fatal(err)
 	}
@@ -305,7 +321,7 @@ func TestScheduledDigestAndPushAreIdempotentAndAtomic(t *testing.T) {
 	ai.fn = func(context.Context, contracts.TextRequest) (string, error) {
 		return "公司收入增长10%。[1]", nil
 	}
-	ctx := context.Background()
+	ctx := testContext()
 	s, _ := m.Settings(ctx)
 	s.DigestEnabled = true
 	s.PushEnabled = true
@@ -319,7 +335,7 @@ func TestScheduledDigestAndPushAreIdempotentAndAtomic(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	rows, err := m.q.ListDigestsPage(ctx, newssqlc.ListDigestsPageParams{CursorTime: 1 << 62, CursorID: "z", PageLimit: 10})
+	rows, err := m.q.ListDigestsPage(ctx, newssqlc.ListDigestsPageParams{UserID: contracts.UserID(ctx), CursorTime: 1 << 62, CursorID: "z", PageLimit: 10})
 	if err != nil || len(rows) != 1 || ai.count() != 1 {
 		t.Fatal(rows, ai.count(), err)
 	}
@@ -364,9 +380,9 @@ func TestDisableCancelsInFlightAIAndReenableRestoresWork(t *testing.T) {
 		<-ctx.Done()
 		return "", ctx.Err()
 	}
-	go func() { _, err := m.Analyze(context.Background(), id); done <- err }()
+	go func() { _, err := m.Analyze(testContext(), id); done <- err }()
 	<-started
-	if err := m.OnEnabledChanged(context.Background(), false); err != nil {
+	if err := m.OnEnabledChanged(testContext(), false); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -377,11 +393,11 @@ func TestDisableCancelsInFlightAIAndReenableRestoresWork(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("disable did not cancel AI")
 	}
-	if err := m.OnEnabledChanged(context.Background(), true); err != nil {
+	if err := m.OnEnabledChanged(testContext(), true); err != nil {
 		t.Fatal(err)
 	}
 	ai.fn = nil
-	if _, err := m.Analyze(context.Background(), id); err != nil {
+	if _, err := m.Analyze(testContext(), id); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -389,9 +405,9 @@ func TestDisableCancelsInFlightAIAndReenableRestoresWork(t *testing.T) {
 func TestRetentionPreservesFavorites(t *testing.T) {
 	m, _, _ := openModule(t)
 	ingest(t, m)
-	ctx := context.Background()
+	ctx := testContext()
 	id := firstArticle(t, m).ID
-	if err := m.q.SetArticleStarred(ctx, newssqlc.SetArticleStarredParams{ID: id, Starred: 1}); err != nil {
+	if err := m.q.SetArticleStarred(ctx, newssqlc.SetArticleStarredParams{UserID: contracts.UserID(ctx), ID: id, Starred: 1}); err != nil {
 		t.Fatal(err)
 	}
 	later := m.now().Add(100 * 24 * time.Hour)
@@ -401,13 +417,13 @@ func TestRetentionPreservesFavorites(t *testing.T) {
 		t.Fatal(err)
 	}
 	firstArticle(t, m)
-	if err := m.q.SetArticleStarred(ctx, newssqlc.SetArticleStarredParams{ID: id, Starred: 0}); err != nil {
+	if err := m.q.SetArticleStarred(ctx, newssqlc.SetArticleStarredParams{UserID: contracts.UserID(ctx), ID: id, Starred: 0}); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.cleanup(ctx, s); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := m.q.ListAllArticles(ctx)
+	rows, err := m.q.ListAllArticles(ctx, contracts.UserID(ctx))
 	if err != nil || len(rows) != 0 {
 		t.Fatal(rows, err)
 	}
@@ -415,10 +431,10 @@ func TestRetentionPreservesFavorites(t *testing.T) {
 
 func TestChangedGUIDURLMergesExistingArticles(t *testing.T) {
 	m, _, _ := openModule(t)
-	ctx := context.Background()
+	ctx := testContext()
 	left := ingest(t, m)
 	old := firstArticle(t, m)
-	if err := m.q.SetArticleStarred(ctx, newssqlc.SetArticleStarredParams{ID: old.ID, Starred: 1}); err != nil {
+	if err := m.q.SetArticleStarred(ctx, newssqlc.SetArticleStarredParams{UserID: contracts.UserID(ctx), ID: old.ID, Starred: 1}); err != nil {
 		t.Fatal(err)
 	}
 	right := addSource(t, m, "second")
@@ -435,7 +451,7 @@ func TestChangedGUIDURLMergesExistingArticles(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := firstArticle(t, m)
-	origins, err := m.q.ListOrigins(ctx, a.ID)
+	origins, err := m.q.ListOrigins(ctx, newssqlc.ListOriginsParams{UserID: contracts.UserID(ctx), ArticleID: a.ID})
 	if err != nil || len(origins) != 2 || a.Starred != 1 || a.Url != "https://media.example/second" {
 		t.Fatal(a, origins, err)
 	}
@@ -447,7 +463,7 @@ func TestChangedGUIDURLMergesExistingArticles(t *testing.T) {
 
 func TestScrapedMetadataAndAIInputAreBoundedBeforeQuota(t *testing.T) {
 	m, _, ai := openModule(t)
-	ctx := context.Background()
+	ctx := testContext()
 	src := addSource(t, m, "large")
 	body := strings.Replace(rss(m.now(), strings.Repeat("x", 10000), "https://media.example/meta", "Title", "Body"), "</item>", "<source>"+strings.Repeat("publisher", 15000)+"</source></item>", 1)
 	m.client.Transport = roundTrip(func(r *http.Request) (*http.Response, error) { return response(r, 200, body), nil })
@@ -479,7 +495,7 @@ func TestScrapedMetadataAndAIInputAreBoundedBeforeQuota(t *testing.T) {
 
 func TestFeedWriteAndItsEventRollBackTogether(t *testing.T) {
 	m, _, _ := openModule(t)
-	ctx := context.Background()
+	ctx := testContext()
 	src := addSource(t, m, "rollback")
 	m.client.Transport = roundTrip(func(r *http.Request) (*http.Response, error) {
 		v := response(r, 200, rss(m.now(), "first", "https://media.example/rollback", "Title", "Body"))
@@ -490,11 +506,11 @@ func TestFeedWriteAndItsEventRollBackTogether(t *testing.T) {
 	if _, err := m.RefreshSource(ctx, src.ID); err == nil {
 		t.Fatal("accepted failed ingestion event")
 	}
-	articles, err := m.q.ListAllArticles(ctx)
+	articles, err := m.q.ListAllArticles(ctx, contracts.UserID(ctx))
 	if err != nil || len(articles) != 0 {
 		t.Fatal("article escaped rollback", articles, err)
 	}
-	row, err := m.q.GetSource(ctx, src.ID)
+	row, err := m.q.GetSource(ctx, newssqlc.GetSourceParams{UserID: contracts.UserID(ctx), ID: src.ID})
 	if err != nil || row.Etag != "" {
 		t.Fatal("fetch checkpoint escaped rollback", row, err)
 	}

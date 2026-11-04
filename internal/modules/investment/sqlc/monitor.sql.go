@@ -11,22 +11,23 @@ import (
 )
 
 const countPriceRules = `-- name: CountPriceRules :one
-SELECT COUNT(*) FROM investment_price_rules
+SELECT COUNT(*) FROM investment_price_rules WHERE user_id=?1
 `
 
-func (q *Queries) CountPriceRules(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countPriceRules)
+func (q *Queries) CountPriceRules(ctx context.Context, userID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countPriceRules, userID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
 const createPriceRule = `-- name: CreatePriceRule :exec
-INSERT INTO investment_price_rules(id, symbol, direction, threshold_bps, enabled, created_at, updated_at)
-VALUES(?, ?, ?, ?, ?, ?, ?)
+INSERT INTO investment_price_rules(user_id,id,symbol,direction,threshold_bps,enabled,created_at,updated_at)
+VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
 `
 
 type CreatePriceRuleParams struct {
+	UserID       string `json:"user_id"`
 	ID           string `json:"id"`
 	Symbol       string `json:"symbol"`
 	Direction    string `json:"direction"`
@@ -38,6 +39,7 @@ type CreatePriceRuleParams struct {
 
 func (q *Queries) CreatePriceRule(ctx context.Context, arg CreatePriceRuleParams) error {
 	_, err := q.db.ExecContext(ctx, createPriceRule,
+		arg.UserID,
 		arg.ID,
 		arg.Symbol,
 		arg.Direction,
@@ -50,13 +52,13 @@ func (q *Queries) CreatePriceRule(ctx context.Context, arg CreatePriceRuleParams
 }
 
 const createPriceTrigger = `-- name: CreatePriceTrigger :execrows
-INSERT INTO investment_price_triggers(id, rule_id, trading_date, symbol, direction, threshold_bps,
-    price, previous_close, change_percent, quote_at, triggered_at, notification_id)
-VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(rule_id, trading_date) DO NOTHING
+INSERT INTO investment_price_triggers(user_id,id,rule_id,trading_date,symbol,direction,threshold_bps,price,previous_close,change_percent,quote_at,triggered_at,notification_id)
+VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)
+ON CONFLICT(rule_id,trading_date) DO NOTHING
 `
 
 type CreatePriceTriggerParams struct {
+	UserID         string  `json:"user_id"`
 	ID             string  `json:"id"`
 	RuleID         string  `json:"rule_id"`
 	TradingDate    string  `json:"trading_date"`
@@ -73,6 +75,7 @@ type CreatePriceTriggerParams struct {
 
 func (q *Queries) CreatePriceTrigger(ctx context.Context, arg CreatePriceTriggerParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, createPriceTrigger,
+		arg.UserID,
 		arg.ID,
 		arg.RuleID,
 		arg.TradingDate,
@@ -93,11 +96,16 @@ func (q *Queries) CreatePriceTrigger(ctx context.Context, arg CreatePriceTrigger
 }
 
 const deletePriceRule = `-- name: DeletePriceRule :execrows
-DELETE FROM investment_price_rules WHERE id = ?
+DELETE FROM investment_price_rules WHERE user_id=?1 AND id=?2
 `
 
-func (q *Queries) DeletePriceRule(ctx context.Context, id string) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deletePriceRule, id)
+type DeletePriceRuleParams struct {
+	UserID string `json:"user_id"`
+	ID     string `json:"id"`
+}
+
+func (q *Queries) DeletePriceRule(ctx context.Context, arg DeletePriceRuleParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deletePriceRule, arg.UserID, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -105,7 +113,7 @@ func (q *Queries) DeletePriceRule(ctx context.Context, id string) (int64, error)
 }
 
 const getPriceMonitor = `-- name: GetPriceMonitor :one
-SELECT status, checked_at, last_error FROM investment_price_monitor WHERE id = 1
+SELECT status,checked_at,last_error FROM investment_price_monitor WHERE user_id=?1
 `
 
 type GetPriceMonitorRow struct {
@@ -114,19 +122,24 @@ type GetPriceMonitorRow struct {
 	LastError string        `json:"last_error"`
 }
 
-func (q *Queries) GetPriceMonitor(ctx context.Context) (GetPriceMonitorRow, error) {
-	row := q.db.QueryRowContext(ctx, getPriceMonitor)
+func (q *Queries) GetPriceMonitor(ctx context.Context, userID string) (GetPriceMonitorRow, error) {
+	row := q.db.QueryRowContext(ctx, getPriceMonitor, userID)
 	var i GetPriceMonitorRow
 	err := row.Scan(&i.Status, &i.CheckedAt, &i.LastError)
 	return i, err
 }
 
 const getPriceRule = `-- name: GetPriceRule :one
-SELECT id, symbol, direction, threshold_bps, enabled, version, created_at, updated_at, price, previous_close, change_percent, quote_at, checked_at, last_error FROM investment_price_rules WHERE id = ?
+SELECT id, symbol, direction, threshold_bps, enabled, version, created_at, updated_at, price, previous_close, change_percent, quote_at, checked_at, last_error, user_id FROM investment_price_rules WHERE user_id=?1 AND id=?2
 `
 
-func (q *Queries) GetPriceRule(ctx context.Context, id string) (InvestmentPriceRule, error) {
-	row := q.db.QueryRowContext(ctx, getPriceRule, id)
+type GetPriceRuleParams struct {
+	UserID string `json:"user_id"`
+	ID     string `json:"id"`
+}
+
+func (q *Queries) GetPriceRule(ctx context.Context, arg GetPriceRuleParams) (InvestmentPriceRule, error) {
+	row := q.db.QueryRowContext(ctx, getPriceRule, arg.UserID, arg.ID)
 	var i InvestmentPriceRule
 	err := row.Scan(
 		&i.ID,
@@ -143,16 +156,17 @@ func (q *Queries) GetPriceRule(ctx context.Context, id string) (InvestmentPriceR
 		&i.QuoteAt,
 		&i.CheckedAt,
 		&i.LastError,
+		&i.UserID,
 	)
 	return i, err
 }
 
 const listPriceRules = `-- name: ListPriceRules :many
-SELECT id, symbol, direction, threshold_bps, enabled, version, created_at, updated_at, price, previous_close, change_percent, quote_at, checked_at, last_error FROM investment_price_rules ORDER BY created_at, id
+SELECT id, symbol, direction, threshold_bps, enabled, version, created_at, updated_at, price, previous_close, change_percent, quote_at, checked_at, last_error, user_id FROM investment_price_rules WHERE user_id=?1 ORDER BY created_at,id
 `
 
-func (q *Queries) ListPriceRules(ctx context.Context) ([]InvestmentPriceRule, error) {
-	rows, err := q.db.QueryContext(ctx, listPriceRules)
+func (q *Queries) ListPriceRules(ctx context.Context, userID string) ([]InvestmentPriceRule, error) {
+	rows, err := q.db.QueryContext(ctx, listPriceRules, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -175,6 +189,7 @@ func (q *Queries) ListPriceRules(ctx context.Context) ([]InvestmentPriceRule, er
 			&i.QuoteAt,
 			&i.CheckedAt,
 			&i.LastError,
+			&i.UserID,
 		); err != nil {
 			return nil, err
 		}
@@ -190,19 +205,25 @@ func (q *Queries) ListPriceRules(ctx context.Context) ([]InvestmentPriceRule, er
 }
 
 const listPriceTriggers = `-- name: ListPriceTriggers :many
-SELECT id, rule_id, trading_date, symbol, direction, threshold_bps, price, previous_close, change_percent, quote_at, triggered_at, notification_id FROM investment_price_triggers
-WHERE triggered_at < ?1 OR (triggered_at = ?1 AND id < ?2)
-ORDER BY triggered_at DESC, id DESC LIMIT ?3
+SELECT id, rule_id, trading_date, symbol, direction, threshold_bps, price, previous_close, change_percent, quote_at, triggered_at, notification_id, user_id FROM investment_price_triggers
+WHERE user_id=?1 AND (triggered_at<?2 OR (triggered_at=?2 AND id<?3))
+ORDER BY triggered_at DESC,id DESC LIMIT ?4
 `
 
 type ListPriceTriggersParams struct {
+	UserID     string `json:"user_id"`
 	BeforeTime int64  `json:"before_time"`
 	BeforeID   string `json:"before_id"`
 	PageLimit  int64  `json:"page_limit"`
 }
 
 func (q *Queries) ListPriceTriggers(ctx context.Context, arg ListPriceTriggersParams) ([]InvestmentPriceTrigger, error) {
-	rows, err := q.db.QueryContext(ctx, listPriceTriggers, arg.BeforeTime, arg.BeforeID, arg.PageLimit)
+	rows, err := q.db.QueryContext(ctx, listPriceTriggers,
+		arg.UserID,
+		arg.BeforeTime,
+		arg.BeforeID,
+		arg.PageLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -223,6 +244,7 @@ func (q *Queries) ListPriceTriggers(ctx context.Context, arg ListPriceTriggersPa
 			&i.QuoteAt,
 			&i.TriggeredAt,
 			&i.NotificationID,
+			&i.UserID,
 		); err != nil {
 			return nil, err
 		}
@@ -238,39 +260,47 @@ func (q *Queries) ListPriceTriggers(ctx context.Context, arg ListPriceTriggersPa
 }
 
 const setPriceTriggerNotification = `-- name: SetPriceTriggerNotification :exec
-UPDATE investment_price_triggers SET notification_id = ? WHERE id = ?
+UPDATE investment_price_triggers SET notification_id=?1 WHERE user_id=?2 AND id=?3
 `
 
 type SetPriceTriggerNotificationParams struct {
 	NotificationID string `json:"notification_id"`
+	UserID         string `json:"user_id"`
 	ID             string `json:"id"`
 }
 
 func (q *Queries) SetPriceTriggerNotification(ctx context.Context, arg SetPriceTriggerNotificationParams) error {
-	_, err := q.db.ExecContext(ctx, setPriceTriggerNotification, arg.NotificationID, arg.ID)
+	_, err := q.db.ExecContext(ctx, setPriceTriggerNotification, arg.NotificationID, arg.UserID, arg.ID)
 	return err
 }
 
 const updatePriceMonitor = `-- name: UpdatePriceMonitor :exec
-UPDATE investment_price_monitor SET status = ?, checked_at = ?, last_error = ? WHERE id = 1
+INSERT INTO investment_price_monitor(user_id,status,checked_at,last_error)
+VALUES(?1,?2,?3,?4)
+ON CONFLICT(user_id) DO UPDATE SET status=excluded.status,checked_at=excluded.checked_at,last_error=excluded.last_error
 `
 
 type UpdatePriceMonitorParams struct {
+	UserID    string        `json:"user_id"`
 	Status    string        `json:"status"`
 	CheckedAt sql.NullInt64 `json:"checked_at"`
 	LastError string        `json:"last_error"`
 }
 
 func (q *Queries) UpdatePriceMonitor(ctx context.Context, arg UpdatePriceMonitorParams) error {
-	_, err := q.db.ExecContext(ctx, updatePriceMonitor, arg.Status, arg.CheckedAt, arg.LastError)
+	_, err := q.db.ExecContext(ctx, updatePriceMonitor,
+		arg.UserID,
+		arg.Status,
+		arg.CheckedAt,
+		arg.LastError,
+	)
 	return err
 }
 
 const updatePriceRule = `-- name: UpdatePriceRule :execrows
-UPDATE investment_price_rules SET symbol = ?, direction = ?, threshold_bps = ?, enabled = ?,
-    version = version + 1, updated_at = ?, price = NULL, previous_close = NULL,
-    change_percent = NULL, quote_at = NULL, checked_at = NULL, last_error = ''
-WHERE id = ?
+UPDATE investment_price_rules SET symbol=?1,direction=?2,threshold_bps=?3,enabled=?4,
+version=version+1,updated_at=?5,price=NULL,previous_close=NULL,change_percent=NULL,quote_at=NULL,checked_at=NULL,last_error=''
+WHERE user_id=?6 AND id=?7
 `
 
 type UpdatePriceRuleParams struct {
@@ -279,6 +309,7 @@ type UpdatePriceRuleParams struct {
 	ThresholdBps int64  `json:"threshold_bps"`
 	Enabled      int64  `json:"enabled"`
 	UpdatedAt    int64  `json:"updated_at"`
+	UserID       string `json:"user_id"`
 	ID           string `json:"id"`
 }
 
@@ -289,6 +320,7 @@ func (q *Queries) UpdatePriceRule(ctx context.Context, arg UpdatePriceRuleParams
 		arg.ThresholdBps,
 		arg.Enabled,
 		arg.UpdatedAt,
+		arg.UserID,
 		arg.ID,
 	)
 	if err != nil {
@@ -298,8 +330,8 @@ func (q *Queries) UpdatePriceRule(ctx context.Context, arg UpdatePriceRuleParams
 }
 
 const updatePriceRuleQuote = `-- name: UpdatePriceRuleQuote :exec
-UPDATE investment_price_rules SET price = ?, previous_close = ?, change_percent = ?, quote_at = ?, checked_at = ?, last_error = ?
-WHERE id = ? AND version = ? AND enabled = 1
+UPDATE investment_price_rules SET price=?1,previous_close=?2,change_percent=?3,quote_at=?4,checked_at=?5,last_error=?6
+WHERE user_id=?7 AND id=?8 AND version=?9 AND enabled=1
 `
 
 type UpdatePriceRuleQuoteParams struct {
@@ -309,6 +341,7 @@ type UpdatePriceRuleQuoteParams struct {
 	QuoteAt       sql.NullInt64   `json:"quote_at"`
 	CheckedAt     sql.NullInt64   `json:"checked_at"`
 	LastError     string          `json:"last_error"`
+	UserID        string          `json:"user_id"`
 	ID            string          `json:"id"`
 	Version       int64           `json:"version"`
 }
@@ -321,6 +354,7 @@ func (q *Queries) UpdatePriceRuleQuote(ctx context.Context, arg UpdatePriceRuleQ
 		arg.QuoteAt,
 		arg.CheckedAt,
 		arg.LastError,
+		arg.UserID,
 		arg.ID,
 		arg.Version,
 	)

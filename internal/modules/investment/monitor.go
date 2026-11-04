@@ -16,11 +16,13 @@ func (m *Module) monitorJob() contracts.JobDefinition {
 	return contracts.JobDefinition{ID: "investment.monitor_prices", Module: "investment",
 		Schedule: contracts.ScheduleSpec{Kind: contracts.ScheduleInterval, Interval: time.Minute}, TimeZone: "America/New_York",
 		Timeout: 45 * time.Second, OverlapPolicy: contracts.OverlapSkip, MisfirePolicy: contracts.MisfireRunOnce,
-		Retry: contracts.RetryPolicy{MaxAttempts: 1}, Handler: func(ctx context.Context, _ contracts.JobRun) error { return m.scanPrices(ctx) }}
+		Retry: contracts.RetryPolicy{MaxAttempts: 1}, Handler: func(ctx context.Context, _ contracts.JobRun) error {
+			return m.forEachUser(ctx, func(child *Module, ctx context.Context) error { return child.scanPrices(ctx) })
+		}}
 }
 
 func (m *Module) monitorState(ctx context.Context, status, message string) error {
-	return m.queries.UpdatePriceMonitor(ctx, investmentsqlc.UpdatePriceMonitorParams{Status: status, CheckedAt: sql.NullInt64{Int64: m.now().UnixMilli(), Valid: true}, LastError: message})
+	return m.queries.UpdatePriceMonitor(ctx, investmentsqlc.UpdatePriceMonitorParams{UserID: contracts.UserID(ctx), Status: status, CheckedAt: sql.NullInt64{Int64: m.now().UnixMilli(), Valid: true}, LastError: message})
 }
 
 func (m *Module) scanPrices(ctx context.Context) error {
@@ -32,7 +34,7 @@ func (m *Module) scanPrices(ctx context.Context) error {
 	if !active {
 		return nil
 	}
-	rules, err := m.queries.ListPriceRules(ctx)
+	rules, err := m.queries.ListPriceRules(ctx, contracts.UserID(ctx))
 	if err != nil {
 		return err
 	}
@@ -101,7 +103,7 @@ func (m *Module) evaluatePrice(ctx context.Context, rule investmentsqlc.Investme
 	}
 	defer tx.Rollback()
 	queries := investmentsqlc.New(tx)
-	current, err := queries.GetPriceRule(ctx, rule.ID)
+	current, err := queries.GetPriceRule(ctx, investmentsqlc.GetPriceRuleParams{UserID: contracts.UserID(ctx), ID: rule.ID})
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -111,7 +113,7 @@ func (m *Module) evaluatePrice(ctx context.Context, rule investmentsqlc.Investme
 	if current.Enabled != 1 || current.Version != rule.Version {
 		return nil
 	}
-	update := investmentsqlc.UpdatePriceRuleQuoteParams{ID: rule.ID, Version: rule.Version, CheckedAt: sql.NullInt64{Int64: now.UnixMilli(), Valid: true}}
+	update := investmentsqlc.UpdatePriceRuleQuoteParams{UserID: contracts.UserID(ctx), ID: rule.ID, Version: rule.Version, CheckedAt: sql.NullInt64{Int64: now.UnixMilli(), Valid: true}}
 	if invalid != nil {
 		update.LastError = invalid.Error()
 		if err := queries.UpdatePriceRuleQuote(ctx, update); err != nil {
@@ -137,7 +139,7 @@ func (m *Module) evaluatePrice(ctx context.Context, rule investmentsqlc.Investme
 		return err
 	}
 	date := now.In(m.marketLocation).Format("2006-01-02")
-	count, err := queries.CreatePriceTrigger(ctx, investmentsqlc.CreatePriceTriggerParams{ID: id, RuleID: rule.ID, TradingDate: date,
+	count, err := queries.CreatePriceTrigger(ctx, investmentsqlc.CreatePriceTriggerParams{UserID: contracts.UserID(ctx), ID: id, RuleID: rule.ID, TradingDate: date,
 		Symbol: rule.Symbol, Direction: rule.Direction, ThresholdBps: rule.ThresholdBps, Price: quote.Regular.Price, PreviousClose: quote.Quote.ClosePrice,
 		ChangePercent: change, QuoteAt: quote.Regular.Time, TriggeredAt: now.UnixMilli()})
 	if err != nil {
@@ -150,14 +152,14 @@ func (m *Module) evaluatePrice(ctx context.Context, rule investmentsqlc.Investme
 	if rule.Direction == "down" {
 		direction = "下跌"
 	}
-	notice, err := m.deps.Notifications.CreateTx(ctx, tx, contracts.NewNotification{SourceModule: "investment", External: true, Severity: contracts.NotificationWarning,
+	notice, err := m.deps.Notifications.CreateTx(ctx, tx, contracts.NewNotification{RecipientID: contracts.UserID(ctx), SourceModule: "investment", External: true, Severity: contracts.NotificationWarning,
 		Title:       fmt.Sprintf("%s %s达到 %.2f%%", rule.Symbol, direction, threshold),
 		Content:     fmt.Sprintf("最新价：%.4f USD\n前一交易日收盘价：%.4f USD\n涨跌幅：%+.2f%%\n行情时间：%s\n常规交易时段 · 每条规则每交易日提醒一次", quote.Regular.Price, quote.Quote.ClosePrice, change, time.UnixMilli(quote.Regular.Time).In(m.marketLocation).Format("2006-01-02 15:04:05 MST")),
-		ActionLabel: "查看价格监控", ActionRoute: "/investment?tab=monitor", IdempotencyKey: "investment:monitor:" + rule.ID + ":" + date})
+		ActionLabel: "查看价格监控", ActionRoute: "/investment?tab=monitor", IdempotencyKey: "investment:monitor:" + contracts.UserID(ctx) + ":" + rule.ID + ":" + date})
 	if err != nil {
 		return err
 	}
-	if err := queries.SetPriceTriggerNotification(ctx, investmentsqlc.SetPriceTriggerNotificationParams{ID: id, NotificationID: notice.ID}); err != nil {
+	if err := queries.SetPriceTriggerNotification(ctx, investmentsqlc.SetPriceTriggerNotificationParams{UserID: contracts.UserID(ctx), ID: id, NotificationID: notice.ID}); err != nil {
 		return err
 	}
 	return tx.Commit()

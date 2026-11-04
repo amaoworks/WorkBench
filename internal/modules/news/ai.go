@@ -15,6 +15,10 @@ import (
 var ErrAILimit = errors.New("已达到资讯每日 AI 调用上限")
 
 func (m *Module) reserveAI(ctx context.Context) (string, error) {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return "", err
+	}
+
 	m.settingsMu.Lock()
 	defer m.settingsMu.Unlock()
 	s, err := m.Settings(ctx)
@@ -27,7 +31,7 @@ func (m *Module) reserveAI(ctx context.Context) (string, error) {
 		return day, err
 	}
 	defer tx.Rollback()
-	calls, err := m.q.WithTx(tx).ReserveAI(ctx, day)
+	calls, err := m.q.WithTx(tx).ReserveAI(ctx, newssqlc.ReserveAIParams{UserID: contracts.UserID(ctx), Day: day})
 	if err != nil {
 		return day, err
 	}
@@ -37,6 +41,10 @@ func (m *Module) reserveAI(ctx context.Context) (string, error) {
 	return day, tx.Commit()
 }
 func (m *Module) generate(ctx context.Context, instruction, input string) (string, error) {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return "", err
+	}
+
 	if len(input) > 64000 || len(instruction) > 8000 {
 		return "", errors.New("资讯 AI 输入超过长度上限")
 	}
@@ -50,7 +58,7 @@ func (m *Module) generate(ctx context.Context, instruction, input string) (strin
 	if errors.Is(err, contracts.ErrAIUnavailable) {
 		refund, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer cancel()
-		if e := m.q.RefundAI(refund, day); e != nil {
+		if e := m.q.RefundAI(refund, newssqlc.RefundAIParams{UserID: contracts.UserID(refund), Day: day}); e != nil {
 			return "", e
 		}
 	}
@@ -60,6 +68,10 @@ func articleCacheKey(v newssqlc.NewsArticle, s Settings) string {
 	return hash("news-translate-v1\n" + s.TargetLanguage + "\n" + v.Title + "\n" + v.Content)
 }
 func (m *Module) Analyze(ctx context.Context, id string) (Article, error) {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return Article{}, err
+	}
+
 	ctx, cancel := m.operation(ctx)
 	defer cancel()
 	release, err := m.work.acquire(ctx, "article:"+id)
@@ -120,6 +132,10 @@ func (m *Module) Analyze(ctx context.Context, id string) (Article, error) {
 }
 
 func (m *Module) startAnalysis(ctx context.Context, id string) (newssqlc.NewsArticle, Settings, error) {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return newssqlc.NewsArticle{}, Settings{}, err
+	}
+
 	m.settingsMu.Lock()
 	defer m.settingsMu.Unlock()
 	tx, err := m.db.BeginTx(ctx, nil)
@@ -128,11 +144,11 @@ func (m *Module) startAnalysis(ctx context.Context, id string) (newssqlc.NewsArt
 	}
 	defer tx.Rollback()
 	q := m.q.WithTx(tx)
-	v, err := q.GetArticle(ctx, id)
+	v, err := q.GetArticle(ctx, newssqlc.GetArticleParams{UserID: contracts.UserID(ctx), ID: id})
 	if err != nil {
 		return v, Settings{}, err
 	}
-	state, err := q.GetSettings(ctx)
+	state, err := m.settingsState(ctx, q)
 	if err != nil {
 		return v, Settings{}, err
 	}
@@ -140,13 +156,17 @@ func (m *Module) startAnalysis(ctx context.Context, id string) (newssqlc.NewsArt
 	if err != nil || (v.AiStatus == "ready" && v.AiCacheKey == articleCacheKey(v, s)) {
 		return v, s, err
 	}
-	if err = q.StartArticleAI(ctx, newssqlc.StartArticleAIParams{ID: id, AiAttemptedAt: m.now().UnixMilli()}); err != nil {
+	if err = q.StartArticleAI(ctx, newssqlc.StartArticleAIParams{UserID: contracts.UserID(ctx), ID: id, AiAttemptedAt: m.now().UnixMilli()}); err != nil {
 		return v, s, err
 	}
 	return v, s, tx.Commit()
 }
 
 func (m *Module) completeAnalysis(ctx context.Context, id, key string, result newssqlc.FinishArticleAIParams, message string) error {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return err
+	}
+
 	m.settingsMu.Lock()
 	defer m.settingsMu.Unlock()
 	tx, err := m.db.BeginTx(ctx, nil)
@@ -155,11 +175,11 @@ func (m *Module) completeAnalysis(ctx context.Context, id, key string, result ne
 	}
 	defer tx.Rollback()
 	q := m.q.WithTx(tx)
-	current, err := q.GetArticle(ctx, id)
+	current, err := q.GetArticle(ctx, newssqlc.GetArticleParams{UserID: contracts.UserID(ctx), ID: id})
 	if err != nil {
 		return err
 	}
-	state, err := q.GetSettings(ctx)
+	state, err := m.settingsState(ctx, q)
 	if err != nil {
 		return err
 	}
@@ -172,12 +192,13 @@ func (m *Module) completeAnalysis(ctx context.Context, id, key string, result ne
 		return nil
 	}
 	if message != "" {
-		err = q.FailArticleAI(ctx, newssqlc.FailArticleAIParams{ID: id, AiError: message})
+		err = q.FailArticleAI(ctx, newssqlc.FailArticleAIParams{UserID: contracts.UserID(ctx), ID: id, AiError: message})
 	} else {
+		result.UserID = contracts.UserID(ctx)
 		err = q.FinishArticleAI(ctx, result)
 		if err == nil {
 			payload, _ := json.Marshal(map[string]string{"id": id})
-			_, err = m.events.PublishTx(ctx, tx, contracts.NewEvent{Topic: "news.article.analyzed", SchemaVersion: 1, SourceModule: "news", AggregateID: id, Payload: payload})
+			_, err = m.events.PublishTx(ctx, tx, contracts.NewEvent{UserID: contracts.UserID(ctx), Topic: "news.article.analyzed", SchemaVersion: 1, SourceModule: "news", AggregateID: id, Payload: payload})
 		}
 	}
 	if err != nil {
@@ -186,6 +207,10 @@ func (m *Module) completeAnalysis(ctx context.Context, id, key string, result ne
 	return tx.Commit()
 }
 func (m *Module) processJob(ctx context.Context, _ contracts.JobRun) error {
+	return m.forActiveUsers(ctx, m.processUser)
+}
+
+func (m *Module) processUser(ctx context.Context) error {
 	ctx, cancel := m.operation(ctx)
 	defer cancel()
 	s, err := m.Settings(ctx)
@@ -198,7 +223,7 @@ func (m *Module) processJob(ctx context.Context, _ contracts.JobRun) error {
 	if !s.AutoAI {
 		return nil
 	}
-	ids, err := m.q.ListAICandidates(ctx, m.now().Add(-15*time.Minute).UnixMilli())
+	ids, err := m.q.ListAICandidates(ctx, newssqlc.ListAICandidatesParams{UserID: contracts.UserID(ctx), AiAttemptedAt: m.now().Add(-15 * time.Minute).UnixMilli()})
 	if err != nil {
 		return err
 	}
@@ -214,6 +239,10 @@ func (m *Module) processJob(ctx context.Context, _ contracts.JobRun) error {
 	return nil
 }
 func (m *Module) cleanup(ctx context.Context, s Settings) error {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return err
+	}
+
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -221,13 +250,13 @@ func (m *Module) cleanup(ctx context.Context, s Settings) error {
 	defer tx.Rollback()
 	q := m.q.WithTx(tx)
 	cutoff := m.now().Add(-time.Duration(s.RetentionDays) * 24 * time.Hour)
-	if err = q.DeleteOldArticles(ctx, cutoff.UnixMilli()); err != nil {
+	if err = q.DeleteOldArticles(ctx, newssqlc.DeleteOldArticlesParams{UserID: contracts.UserID(ctx), PublishedAt: cutoff.UnixMilli()}); err != nil {
 		return err
 	}
-	if err = q.DeleteOldDigests(ctx, cutoff.UnixMilli()); err != nil {
+	if err = q.DeleteOldDigests(ctx, newssqlc.DeleteOldDigestsParams{UserID: contracts.UserID(ctx), CreatedAt: cutoff.UnixMilli()}); err != nil {
 		return err
 	}
-	if err = q.DeleteOldUsage(ctx, cutoff.UTC().Format("2006-01-02")); err != nil {
+	if err = q.DeleteOldUsage(ctx, newssqlc.DeleteOldUsageParams{UserID: contracts.UserID(ctx), Day: cutoff.UTC().Format("2006-01-02")}); err != nil {
 		return err
 	}
 	return tx.Commit()

@@ -1,1 +1,0 @@
-import{r as e,tt as t}from"./Notice-CaryMyY1.js";var n=t();function r({checked:t,onChange:r,label:i,className:a,...o}){return(0,n.jsx)(`button`,{...o,type:`button`,className:e(`studio-switch focus-ring`,a),role:`switch`,"aria-checked":t,"aria-label":i,onClick:()=>r(!t),children:(0,n.jsx)(`span`,{className:`studio-switch-track`,children:(0,n.jsx)(`span`,{})})})}export{r as t};

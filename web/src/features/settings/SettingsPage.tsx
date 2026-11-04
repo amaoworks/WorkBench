@@ -16,6 +16,7 @@ import {
   Paintbrush,
   Radio,
   Sun,
+  Users,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api, apiValidated } from "../../shared/api";
@@ -24,6 +25,8 @@ import { ModulesPanel } from "./ModulesPanel";
 import { LoggingPanel } from "./LoggingPanel";
 import { TelegramPanel } from "./TelegramPanel";
 import { DeviceSessionsPanel } from "./DeviceSessionsPanel";
+import { UsersPanel } from "./UsersPanel";
+import { useAuth, useIsAdmin } from "../../shared/auth";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
@@ -35,10 +38,11 @@ import { cn } from "../../shared/cn";
 
 const sections = [
   { id: "appearance", title: "外观", icon: Paintbrush },
-  { id: "modules", title: "业务模块", icon: Blocks },
+  { id: "modules", title: "业务", icon: Blocks },
   { id: "ai", title: "AI", icon: Bot },
   { id: "notifications", title: "通知推送", icon: Radio },
   { id: "security", title: "账户安全", icon: Fingerprint },
+  { id: "users", title: "用户管理", icon: Users },
   { id: "data", title: "数据与运行", icon: Database },
 ] as const;
 type SectionId = (typeof sections)[number]["id"];
@@ -71,6 +75,9 @@ function scrollToSection(id: SectionId, smooth: boolean) {
 }
 
 function SettingsContent({ data }: { data: Settings }) {
+  const auth = useAuth();
+  const isAdmin = useIsAdmin();
+  const visibleSections = sections.filter((section) => isAdmin || !["ai", "users", "data"].includes(section.id));
   const [params, setParams] = useSearchParams();
   const requested = params.get("tab");
   const [current, setCurrent] = useState<SectionId>(isSection(requested) ? requested : "appearance");
@@ -94,7 +101,7 @@ function SettingsContent({ data }: { data: Settings }) {
         const element = document.getElementById(sectionId(section.id));
         if (element && element.getBoundingClientRect().top <= SPY_OFFSET) next = section.id;
       }
-      if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2) next = "data";
+      if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2) next = isAdmin ? "data" : "security";
       setCurrent(next);
     };
     const onScroll = () => {
@@ -108,7 +115,7 @@ function SettingsContent({ data }: { data: Settings }) {
       window.removeEventListener("scroll", onScroll);
       window.removeEventListener("resize", onScroll);
     };
-  }, []);
+  }, [isAdmin]);
 
   // Keep the active chip visible when the nav is a horizontal strip.
   useEffect(() => {
@@ -135,7 +142,7 @@ function SettingsContent({ data }: { data: Settings }) {
       <PageHeader title="设置" />
       <div className="settings-layout">
         <nav ref={nav} className="settings-nav" aria-label="设置分类">
-          {sections.map(({ id, title, icon: Icon }) => (
+          {visibleSections.map(({ id, title, icon: Icon }) => (
             <a
               key={id}
               href={`?tab=${id}`}
@@ -159,20 +166,29 @@ function SettingsContent({ data }: { data: Settings }) {
           <SettingsSection id="modules">
             <ModulesPanel />
           </SettingsSection>
-          <SettingsSection id="ai">
-            <AIForm key={JSON.stringify(data.ai)} value={data.ai} />
-          </SettingsSection>
+          {isAdmin && data.ai && (
+            <SettingsSection id="ai">
+              <AIForm key={JSON.stringify(data.ai)} value={data.ai} />
+            </SettingsSection>
+          )}
           <SettingsSection id="notifications">
             <TelegramPanel />
           </SettingsSection>
           <SettingsSection id="security">
-            <PasswordForm mode={data.deployment.authMode} />
-            {data.deployment.authMode === "password" && <DeviceSessionsPanel />}
+            <PasswordForm mode={auth.mode} />
+            {auth.mode === "password" && <DeviceSessionsPanel />}
           </SettingsSection>
-          <SettingsSection id="data">
-            <DataPanel value={data} />
-            <LoggingPanel key={data.logging.level} value={data.logging} />
-          </SettingsSection>
+          {isAdmin && (
+            <SettingsSection id="users">
+              <UsersPanel />
+            </SettingsSection>
+          )}
+          {isAdmin && data.deployment && data.logging && (
+            <SettingsSection id="data">
+              <DataPanel deployment={data.deployment} />
+              <LoggingPanel key={data.logging.level} value={data.logging} />
+            </SettingsSection>
+          )}
         </div>
       </div>
     </div>
@@ -450,7 +466,7 @@ function AppearanceForm({ value }: { value: Settings }) {
   );
 }
 
-function DataPanel({ value }: { value: Settings }) {
+function DataPanel({ deployment }: { deployment: NonNullable<Settings["deployment"]> }) {
   const [file, setFile] = useState("");
   const backup = useMutation({
     mutationFn: () => apiValidated("/api/system/backup", backupSchema, { method: "POST", body: "{}" }),
@@ -460,7 +476,6 @@ function DataPanel({ value }: { value: Settings }) {
     },
     onError: (err) => toast.error(err.message),
   });
-  const deployment = value.deployment;
   return (
     <div className="settings-rows">
       <SettingsRow label="数据备份">

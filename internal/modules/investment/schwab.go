@@ -9,11 +9,14 @@ import (
 	"strings"
 	"time"
 
+	"workbench/internal/contracts"
 	"workbench/internal/foundation/httpapi"
 	investmentsqlc "workbench/internal/modules/investment/sqlc"
 )
 
 type schwabRecord struct {
+	AppVersion              int64
+	ConnectionVersion       int64
 	AppKey                  string
 	AppSecret               string
 	CallbackURL             string
@@ -31,6 +34,7 @@ type schwabRecord struct {
 }
 
 type schwabSettingsView struct {
+	Configured              bool       `json:"configured"`
 	AppKey                  string     `json:"appKey"`
 	CallbackURL             string     `json:"callbackUrl"`
 	HasAppSecret            bool       `json:"hasAppSecret"`
@@ -47,14 +51,29 @@ type schwabSettingsInput struct {
 }
 
 func (m *Module) loadSchwab(ctx context.Context) (schwabRecord, error) {
-	row, err := m.queries.GetSchwab(ctx)
+	id, err := m.requireUser(ctx)
+	if err != nil {
+		return schwabRecord{}, err
+	}
+	if m.userID != "" && id != m.userID {
+		return schwabRecord{}, contracts.ErrUnauthenticated
+	}
+	app, err := m.queries.GetSchwabApp(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
 		return schwabRecord{}, nil
 	}
 	if err != nil {
 		return schwabRecord{}, err
 	}
+	row, err := m.queries.GetSchwab(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return schwabRecord{AppKey: app.AppKey, AppSecret: app.AppSecret, CallbackURL: app.CallbackUrl, AppVersion: app.Version}, nil
+	}
+	if err != nil {
+		return schwabRecord{}, err
+	}
 	return schwabRecord{
+		AppVersion: row.Version, ConnectionVersion: row.ConnectionVersion,
 		AppKey: row.AppKey, AppSecret: row.AppSecret, CallbackURL: row.CallbackUrl,
 		AccessToken: row.AccessToken, RefreshToken: row.RefreshToken,
 		TokenExpiresAt: unixMilli(row.TokenExpiresAt), StreamerInfo: row.StreamerInfo,
@@ -66,12 +85,19 @@ func (m *Module) loadSchwab(ctx context.Context) (schwabRecord, error) {
 }
 
 func (m *Module) storeSchwab(ctx context.Context, rec schwabRecord) error {
+	id, err := m.requireUser(ctx)
+	if err != nil {
+		return err
+	}
+	if m.userID != "" && id != m.userID {
+		return contracts.ErrUnauthenticated
+	}
 	var reauthorizationRequired int64
 	if rec.ReauthorizationRequired {
 		reauthorizationRequired = 1
 	}
-	return m.queries.UpsertSchwab(ctx, investmentsqlc.UpsertSchwabParams{
-		AppKey: rec.AppKey, AppSecret: rec.AppSecret, CallbackUrl: rec.CallbackURL,
+	count, err := m.queries.UpsertSchwab(ctx, investmentsqlc.UpsertSchwabParams{
+		UserID: id, AppVersion: rec.AppVersion, ConnectionVersion: rec.ConnectionVersion,
 		AccessToken: rec.AccessToken, RefreshToken: rec.RefreshToken,
 		TokenExpiresAt: timeUnixMilli(rec.TokenExpiresAt), StreamerInfo: rec.StreamerInfo,
 		OauthState: rec.OAuthState, OauthStateExpiresAt: timeUnixMilli(rec.OAuthStateExpiresAt),
@@ -79,6 +105,13 @@ func (m *Module) storeSchwab(ctx context.Context, rec schwabRecord) error {
 		ReauthorizationRequired: reauthorizationRequired,
 		AuthorizedAt:            timeUnixMilli(rec.AuthorizedAt),
 	})
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return errors.New("Schwab 连接或应用配置已更改，请重试")
+	}
+	return nil
 }
 
 func (m *Module) getSchwab(w http.ResponseWriter, r *http.Request) {
@@ -90,12 +123,29 @@ func (m *Module) getSchwab(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	httpapi.Write(w, http.StatusOK, rec.view())
+	view := rec.view()
+	if !contracts.IsAdmin(r.Context()) {
+		view.AppKey = ""
+		view.CallbackURL = ""
+		view.HasAppSecret = false
+	}
+	httpapi.Write(w, http.StatusOK, view)
+}
+
+func (rec schwabRecord) viewFor(ctx context.Context) schwabSettingsView {
+	view := rec.view()
+	if !contracts.IsAdmin(ctx) {
+		view.AppKey = ""
+		view.CallbackURL = ""
+		view.HasAppSecret = false
+	}
+	return view
 }
 
 func (rec schwabRecord) view() schwabSettingsView {
 	view := schwabSettingsView{
-		AppKey: rec.AppKey, CallbackURL: rec.CallbackURL,
+		Configured: rec.AppKey != "" && rec.AppSecret != "" && rec.CallbackURL != "",
+		AppKey:     rec.AppKey, CallbackURL: rec.CallbackURL,
 		HasAppSecret: rec.AppSecret != "", Connected: rec.RefreshToken != "" && !rec.ReauthorizationRequired,
 		LastError:               rec.LastError,
 		ReauthorizationRequired: rec.ReauthorizationRequired,
@@ -108,6 +158,15 @@ func (rec schwabRecord) view() schwabSettingsView {
 }
 
 func (m *Module) saveSchwab(w http.ResponseWriter, r *http.Request) {
+	if !requireAdmin(w, r) {
+		return
+	}
+	root := m
+	if m.root != nil {
+		root = m.root
+	}
+	root.appMu.Lock()
+	defer root.appMu.Unlock()
 	var input schwabSettingsInput
 	if httpapi.Decode(w, r, &input, 16*1024) != nil {
 		httpapi.Error(w, http.StatusBadRequest, "invalid_request", "无效的 Schwab 配置")
@@ -152,12 +211,16 @@ func (m *Module) saveSchwab(w http.ResponseWriter, r *http.Request) {
 		rec = schwabRecord{}
 	}
 	rec.LastError = ""
-	if err := m.storeSchwab(r.Context(), rec); err != nil {
+	if !credentialsChanged {
+		httpapi.Write(w, http.StatusOK, rec.view())
+		return
+	}
+	if err := m.queries.SaveSchwabApp(r.Context(), investmentsqlc.SaveSchwabAppParams{AppKey: rec.AppKey, AppSecret: rec.AppSecret, CallbackUrl: rec.CallbackURL}); err != nil {
 		httpapi.Error(w, http.StatusInternalServerError, "schwab_settings_failed", "无法保存 Schwab 配置")
 		return
 	}
 	if credentialsChanged {
-		m.streamer.reset()
+		root.ResetPersonalStreams()
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpapi.Write(w, http.StatusOK, rec.view())
@@ -213,5 +276,5 @@ func (m *Module) disconnectSchwab(w http.ResponseWriter, r *http.Request) {
 	}
 	m.streamer.reset()
 	w.Header().Set("Cache-Control", "no-store")
-	httpapi.Write(w, http.StatusOK, rec.view())
+	httpapi.Write(w, http.StatusOK, rec.viewFor(r.Context()))
 }

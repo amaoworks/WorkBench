@@ -21,11 +21,17 @@ type HTTPHandler struct{ service *Service }
 
 func NewHTTPHandler(service *Service) *HTTPHandler { return &HTTPHandler{service: service} }
 
-func (h *HTTPHandler) Status(w http.ResponseWriter, _ *http.Request) {
+func (h *HTTPHandler) Status(w http.ResponseWriter, r *http.Request) {
+	if !authenticated(w, r) {
+		return
+	}
 	httpapi.Write(w, http.StatusOK, map[string]bool{"available": h.service.Available()})
 }
 
 func (h *HTTPHandler) List(w http.ResponseWriter, r *http.Request) {
+	if !authenticated(w, r) {
+		return
+	}
 	limit, cursor, err := pageParams(r, 20)
 	if err != nil {
 		httpapi.Error(w, http.StatusBadRequest, "invalid_pagination", "分页参数无效")
@@ -48,6 +54,9 @@ func (h *HTTPHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) Messages(w http.ResponseWriter, r *http.Request) {
+	if !authenticated(w, r) {
+		return
+	}
 	limit, cursor, err := pageParams(r, 50)
 	if err != nil {
 		httpapi.Error(w, http.StatusBadRequest, "invalid_pagination", "分页参数无效")
@@ -74,6 +83,9 @@ func (h *HTTPHandler) Messages(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) Rename(w http.ResponseWriter, r *http.Request) {
+	if !authenticated(w, r) {
+		return
+	}
 	var request struct {
 		Title string `json:"title"`
 	}
@@ -96,6 +108,9 @@ func (h *HTTPHandler) Rename(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) Archive(w http.ResponseWriter, r *http.Request) {
+	if !authenticated(w, r) {
+		return
+	}
 	if err := h.service.archive(r.Context(), chi.URLParam(r, "id")); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpapi.Error(w, http.StatusNotFound, "conversation_not_found", "对话不存在")
@@ -108,6 +123,9 @@ func (h *HTTPHandler) Archive(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) Chat(w http.ResponseWriter, r *http.Request) {
+	if !authenticated(w, r) {
+		return
+	}
 	var request ChatRequest
 	if err := httpapi.Decode(w, r, &request, 64*1024); err != nil {
 		httpapi.Error(w, http.StatusBadRequest, "invalid_request", "invalid chat request")
@@ -115,20 +133,16 @@ func (h *HTTPHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 	response, err := h.service.Chat(r.Context(), request)
 	if err != nil {
-		status := http.StatusInternalServerError
-		code := "chat_failed"
-		if err == ai.ErrUnavailable {
-			status, code = http.StatusServiceUnavailable, "ai_unavailable"
-		} else if errors.Is(err, ErrInvalidRequest) {
-			status, code = http.StatusBadRequest, "invalid_request"
-		}
-		httpapi.Error(w, status, code, err.Error())
+		writeChatError(w, err)
 		return
 	}
 	httpapi.Write(w, http.StatusOK, response)
 }
 
 func (h *HTTPHandler) Stream(w http.ResponseWriter, r *http.Request) {
+	if !authenticated(w, r) {
+		return
+	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		httpapi.Error(w, http.StatusInternalServerError, "stream_unsupported", "streaming unsupported")
@@ -141,14 +155,7 @@ func (h *HTTPHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	}
 	turn, stream, err := h.service.stream(r.Context(), request)
 	if err != nil {
-		status := http.StatusInternalServerError
-		code := "chat_failed"
-		if err == ai.ErrUnavailable {
-			status, code = http.StatusServiceUnavailable, "ai_unavailable"
-		} else if errors.Is(err, ErrInvalidRequest) {
-			status, code = http.StatusBadRequest, "invalid_request"
-		}
-		httpapi.Error(w, status, code, err.Error())
+		writeChatError(w, err)
 		return
 	}
 	defer stream.Close()
@@ -198,6 +205,29 @@ func (h *HTTPHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	}
 	writeSSE(w, "chat.error", map[string]string{"message": "chat stream ended unexpectedly"})
 	flusher.Flush()
+}
+
+func writeChatError(w http.ResponseWriter, err error) {
+	status, code := http.StatusInternalServerError, "chat_failed"
+	switch {
+	case errors.Is(err, contracts.ErrUnauthenticated):
+		status, code = http.StatusUnauthorized, "unauthenticated"
+	case errors.Is(err, sql.ErrNoRows):
+		status, code = http.StatusNotFound, "conversation_not_found"
+	case errors.Is(err, ai.ErrUnavailable):
+		status, code = http.StatusServiceUnavailable, "ai_unavailable"
+	case errors.Is(err, ErrInvalidRequest):
+		status, code = http.StatusBadRequest, "invalid_request"
+	}
+	httpapi.Error(w, status, code, err.Error())
+}
+
+func authenticated(w http.ResponseWriter, r *http.Request) bool {
+	if _, err := contracts.RequireUserID(r.Context()); err != nil {
+		httpapi.Error(w, http.StatusUnauthorized, "unauthenticated", "请先登录")
+		return false
+	}
+	return true
 }
 
 func writeSSE(w http.ResponseWriter, event string, value any) {

@@ -23,6 +23,9 @@ func (m *Module) getOvernight(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) saveOvernight(w http.ResponseWriter, r *http.Request) {
+	if !requireAdmin(w, r) {
+		return
+	}
 	var input struct {
 		Enabled *bool `json:"enabled"`
 	}

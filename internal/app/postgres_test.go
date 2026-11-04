@@ -72,7 +72,7 @@ func postgresTestConfig(t *testing.T) Config {
 
 func TestPostgresWorkspace(t *testing.T) {
 	cfg := postgresTestConfig(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(contracts.WithPrincipal(context.Background(), contracts.Principal{UserID: contracts.LegacyUserID, Role: contracts.RoleAdmin}), 45*time.Second)
 	defer cancel()
 	application, err := New(ctx, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {

@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"workbench/internal/contracts"
 )
 
 func TestPasswordLimitRefill(t *testing.T) {
@@ -122,7 +124,7 @@ func TestPasswordHandlersShareCapacity(t *testing.T) {
 		handler http.HandlerFunc
 		body    string
 	}{
-		{"login", service.LoginHandler, `{"password":"` + testPassword + `"}`},
+		{"login", service.LoginHandler, `{"username":"admin","password":"` + testPassword + `"}`},
 		{"change password", service.ChangePasswordHandler, `{"currentPassword":"` + testPassword + `","newPassword":"Changed-Pass123"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -159,11 +161,11 @@ func TestLoginLimitAndErrorRelease(t *testing.T) {
 		t.Fatalf("invalid JSON consumed capacity: %d %s", got.Code, got.Body.String())
 	}
 	for range loginBurst - 1 {
-		if got := call(`{"password":"wrong"}`); got.Code != http.StatusUnauthorized {
+		if got := call(`{"username":"admin","password":"wrong"}`); got.Code != http.StatusUnauthorized {
 			t.Fatalf("wrong password: %d %s", got.Code, got.Body.String())
 		}
 	}
-	correct := `{"password":"` + testPassword + `"}`
+	correct := `{"username":"admin","password":"` + testPassword + `"}`
 	login := call(correct)
 	if login.Code != http.StatusOK || !strings.Contains(login.Body.String(), `"mustChangePassword":true`) {
 		t.Fatalf("normal initial login: %d %s", login.Code, login.Body.String())
@@ -189,11 +191,11 @@ func TestLoginLimitAndErrorRelease(t *testing.T) {
 		t.Fatalf("initial password change with empty login bucket: %d %s", changed.Code, changed.Body.String())
 	}
 	assertNoPasswordWork(t, service)
-	if service.passwordLimit.tokens != 0 {
+	if service.passwordLimit.loginKeys["user:admin"].tokens != 0 {
 		t.Fatal("password change reset login tokens")
 	}
 	service.passwordLimit.now = func() time.Time { return time.Unix(100, 0).Add(loginRefillInterval) }
-	relogin := call(`{"password":"Changed-Pass123"}`)
+	relogin := call(`{"username":"admin","password":"Changed-Pass123"}`)
 	if relogin.Code != http.StatusOK || !strings.Contains(relogin.Body.String(), `"mustChangePassword":false`) {
 		t.Fatalf("login after initial password change: %d %s", relogin.Code, relogin.Body.String())
 	}
@@ -201,7 +203,7 @@ func TestLoginLimitAndErrorRelease(t *testing.T) {
 
 func TestPasswordLimitCredentialErrorRelease(t *testing.T) {
 	service := newLimitedAuthService(t)
-	if _, err := service.db.Exec("UPDATE auth_credentials SET password_hash = 'invalid' WHERE id = 1"); err != nil {
+	if _, err := service.db.Exec("UPDATE auth_users SET password_hash = 'invalid' WHERE id = 'owner'"); err != nil {
 		t.Fatal(err)
 	}
 	if ok, err := service.Authenticate(context.Background(), testPassword); ok || err == nil {
@@ -213,11 +215,13 @@ func TestPasswordLimitCredentialErrorRelease(t *testing.T) {
 		body    string
 		status  int
 	}{
-		{service.LoginHandler, `{"password":"wrong"}`, http.StatusInternalServerError},
+		{service.LoginHandler, `{"username":"admin","password":"wrong"}`, http.StatusInternalServerError},
 		{service.ChangePasswordHandler, `{"currentPassword":"wrong","newPassword":"Changed-Pass123"}`, http.StatusForbidden},
 	} {
 		recorder := httptest.NewRecorder()
-		tc.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tc.body)))
+		request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tc.body))
+		request = request.WithContext(contracts.WithPrincipal(request.Context(), contracts.Principal{UserID: contracts.LegacyUserID, Role: contracts.RoleAdmin}))
+		tc.handler.ServeHTTP(recorder, request)
 		if recorder.Code != tc.status {
 			t.Fatalf("malformed hash: %d %s", recorder.Code, recorder.Body.String())
 		}
@@ -236,7 +240,9 @@ func TestChangePasswordLimitErrorRelease(t *testing.T) {
 		{`{"currentPassword":"` + testPassword + `","newPassword":"` + testPassword + `"}`, http.StatusBadRequest},
 	} {
 		recorder := httptest.NewRecorder()
-		service.ChangePasswordHandler(recorder, httptest.NewRequest(http.MethodPut, "/api/settings/password", bytes.NewBufferString(tc.body)))
+		request := httptest.NewRequest(http.MethodPut, "/api/settings/password", bytes.NewBufferString(tc.body))
+		request = request.WithContext(contracts.WithPrincipal(request.Context(), contracts.Principal{UserID: contracts.LegacyUserID, Role: contracts.RoleAdmin}))
+		service.ChangePasswordHandler(recorder, request)
 		if recorder.Code != tc.status {
 			t.Fatalf("change-password error: %d %s", recorder.Code, recorder.Body.String())
 		}

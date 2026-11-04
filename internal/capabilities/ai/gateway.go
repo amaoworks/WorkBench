@@ -38,6 +38,9 @@ func (g *Gateway) snapshot() contracts.AIProvider {
 func (g *Gateway) Available() bool { return g.snapshot() != nil }
 
 func (g *Gateway) Generate(ctx context.Context, request contracts.GenerateRequest) (contracts.GenerateResult, error) {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return contracts.GenerateResult{}, err
+	}
 	provider := g.snapshot()
 	if provider == nil {
 		return contracts.GenerateResult{}, ErrUnavailable
@@ -70,6 +73,9 @@ func (g *Gateway) Generate(ctx context.Context, request contracts.GenerateReques
 }
 
 func (g *Gateway) Stream(ctx context.Context, request contracts.GenerateRequest) (contracts.AIStream, error) {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return nil, err
+	}
 	provider := g.snapshot()
 	if provider == nil {
 		return nil, ErrUnavailable
@@ -161,6 +167,8 @@ func (g *Gateway) executeTools(ctx context.Context, request *contracts.GenerateR
 	request.Items = append(request.Items, result.OutputItems...)
 	for _, call := range result.ToolCalls {
 		call.ConversationID, call.MessageID = request.ConversationID, request.MessageID
+		// Model output is not a user confirmation, even if it names the user.
+		call.ConfirmedBy = ""
 		if call.IdempotencyKey == "" {
 			call.IdempotencyKey = result.ResponseID + ":" + call.ID
 		}

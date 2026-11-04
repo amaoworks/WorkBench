@@ -22,6 +22,10 @@ type DigestInput struct {
 }
 
 func (m *Module) CreateDigest(ctx context.Context, in DigestInput, slot string) (Digest, error) {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return Digest{}, err
+	}
+
 	ctx, cancel := m.operation(ctx)
 	defer cancel()
 	in.Topic = strings.TrimSpace(in.Topic)
@@ -34,7 +38,7 @@ func (m *Module) CreateDigest(ctx context.Context, in DigestInput, slot string) 
 			return Digest{}, err
 		}
 		defer release()
-		row, err := m.q.GetDigestBySlot(ctx, slot)
+		row, err := m.q.GetDigestBySlot(ctx, newssqlc.GetDigestBySlotParams{UserID: contracts.UserID(ctx), Slot: slot})
 		if err == nil {
 			return digestDTO(row)
 		}
@@ -47,7 +51,7 @@ func (m *Module) CreateDigest(ctx context.Context, in DigestInput, slot string) 
 		return Digest{}, err
 	}
 	now := m.now().UTC()
-	rows, err := m.q.DigestArticles(ctx, newssqlc.DigestArticlesParams{Since: now.Add(-time.Duration(in.PeriodHours) * time.Hour).UnixMilli(), Until: now.UnixMilli(), Topic: in.Topic, ItemLimit: in.MaxItems})
+	rows, err := m.q.DigestArticles(ctx, newssqlc.DigestArticlesParams{UserID: contracts.UserID(ctx), Since: now.Add(-time.Duration(in.PeriodHours) * time.Hour).UnixMilli(), Until: now.UnixMilli(), Topic: in.Topic, ItemLimit: in.MaxItems})
 	if err != nil {
 		return Digest{}, err
 	}
@@ -113,7 +117,7 @@ func (m *Module) CreateDigest(ctx context.Context, in DigestInput, slot string) 
 	}
 	defer tx.Rollback()
 	q := m.q.WithTx(tx)
-	state, err := q.GetSettings(ctx)
+	state, err := m.settingsState(ctx, q)
 	if err != nil {
 		return Digest{}, err
 	}
@@ -133,14 +137,14 @@ func (m *Module) CreateDigest(ctx context.Context, in DigestInput, slot string) 
 		d.NotificationID = note.ID
 	}
 	itemRaw, _ := json.Marshal(items)
-	if err = q.InsertDigest(ctx, newssqlc.InsertDigestParams{ID: id, Slot: slot, Title: d.Title, Topic: d.Topic, Content: d.Content, ItemsJson: string(itemRaw), CreatedAt: now.UnixMilli(), AiUsed: bit(aiUsed), NotificationID: d.NotificationID}); err != nil {
+	if err = q.InsertDigest(ctx, newssqlc.InsertDigestParams{UserID: contracts.UserID(ctx), ID: id, Slot: slot, Title: d.Title, Topic: d.Topic, Content: d.Content, ItemsJson: string(itemRaw), CreatedAt: now.UnixMilli(), AiUsed: bit(aiUsed), NotificationID: d.NotificationID}); err != nil {
 		return Digest{}, err
 	}
 	payload, _ := json.Marshal(map[string]string{"digestId": id})
-	if _, err = m.events.PublishTx(ctx, tx, contracts.NewEvent{Topic: "news.digest.created", SchemaVersion: 1, SourceModule: "news", AggregateID: id, Payload: payload}); err != nil {
+	if _, err = m.events.PublishTx(ctx, tx, contracts.NewEvent{UserID: contracts.UserID(ctx), Topic: "news.digest.created", SchemaVersion: 1, SourceModule: "news", AggregateID: id, Payload: payload}); err != nil {
 		return Digest{}, err
 	}
-	if err = q.SetDigestSuccess(ctx, now.UnixMilli()); err != nil {
+	if err = q.SetDigestSuccess(ctx, newssqlc.SetDigestSuccessParams{UserID: contracts.UserID(ctx), LastDigestAt: now.UnixMilli()}); err != nil {
 		return Digest{}, err
 	}
 	return d, tx.Commit()
@@ -153,6 +157,10 @@ func mustLocation(zone string) *time.Location {
 	return loc
 }
 func (m *Module) digestNotification(ctx context.Context, tx *sql.Tx, d Digest) (contracts.Notification, error) {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return contracts.Notification{}, err
+	}
+
 	var b strings.Builder
 	b.WriteString(clip(d.Content, 1500))
 	b.WriteString("\n\n来源：")
@@ -165,9 +173,13 @@ func (m *Module) digestNotification(ctx context.Context, tx *sql.Tx, d Digest) (
 		b.WriteString(line)
 	}
 	expires := m.now().UTC().Add(24 * time.Hour)
-	return m.notifications.CreateTx(ctx, tx, contracts.NewNotification{SourceModule: "news", External: true, Severity: contracts.NotificationInfo, Title: d.Title, Content: b.String(), ActionLabel: "查看简报", ActionRoute: "/news?tab=digests", IdempotencyKey: "news:digest:" + d.ID, ExpiresAt: &expires})
+	return m.notifications.CreateTx(ctx, tx, contracts.NewNotification{RecipientID: contracts.UserID(ctx), SourceModule: "news", External: true, Severity: contracts.NotificationInfo, Title: d.Title, Content: b.String(), ActionLabel: "查看简报", ActionRoute: "/news?tab=digests", IdempotencyKey: "news:digest:" + contracts.UserID(ctx) + ":" + d.ID, ExpiresAt: &expires})
 }
 func (m *Module) PushDigest(ctx context.Context, id string) (Digest, error) {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return Digest{}, err
+	}
+
 	ctx, cancel := m.operation(ctx)
 	defer cancel()
 	release, err := m.work.acquire(ctx, "digest-push:"+id)
@@ -181,7 +193,7 @@ func (m *Module) PushDigest(ctx context.Context, id string) (Digest, error) {
 	}
 	defer tx.Rollback()
 	q := m.q.WithTx(tx)
-	row, err := q.GetDigest(ctx, id)
+	row, err := q.GetDigest(ctx, newssqlc.GetDigestParams{UserID: contracts.UserID(ctx), ID: id})
 	if err != nil {
 		return Digest{}, err
 	}
@@ -197,15 +209,19 @@ func (m *Module) PushDigest(ctx context.Context, id string) (Digest, error) {
 		return Digest{}, err
 	}
 	d.NotificationID = note.ID
-	if err = q.SetDigestNotification(ctx, newssqlc.SetDigestNotificationParams{ID: id, NotificationID: note.ID}); err != nil {
+	if err = q.SetDigestNotification(ctx, newssqlc.SetDigestNotificationParams{UserID: contracts.UserID(ctx), ID: id, NotificationID: note.ID}); err != nil {
 		return Digest{}, err
 	}
 	return d, tx.Commit()
 }
 func (m *Module) digestJob(ctx context.Context, _ contracts.JobRun) error {
+	return m.forActiveUsers(ctx, m.digestUser)
+}
+
+func (m *Module) digestUser(ctx context.Context) error {
 	ctx, cancel := m.operation(ctx)
 	defer cancel()
-	state, err := m.q.GetSettings(ctx)
+	state, err := m.settingsState(ctx, m.q)
 	if err != nil {
 		return err
 	}
@@ -222,7 +238,7 @@ func (m *Module) digestJob(ctx context.Context, _ contracts.JobRun) error {
 		return nil
 	}
 	slot := "scheduled:" + local.Format("2006-01-02") + ":" + s.TimeZone
-	if _, err = m.q.GetDigestBySlot(ctx, slot); err == nil {
+	if _, err = m.q.GetDigestBySlot(ctx, newssqlc.GetDigestBySlotParams{UserID: contracts.UserID(ctx), Slot: slot}); err == nil {
 		return nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
@@ -230,7 +246,7 @@ func (m *Module) digestJob(ctx context.Context, _ contracts.JobRun) error {
 	if now.UnixMilli()-state.LastDigestAttemptAt < int64(15*time.Minute/time.Millisecond) {
 		return nil
 	}
-	if err = m.q.SetDigestAttempt(ctx, now.UnixMilli()); err != nil {
+	if err = m.q.SetDigestAttempt(ctx, newssqlc.SetDigestAttemptParams{UserID: contracts.UserID(ctx), LastDigestAttemptAt: now.UnixMilli()}); err != nil {
 		return err
 	}
 	_, err = m.CreateDigest(ctx, DigestInput{Topic: s.DigestTopic, PeriodHours: 24, MaxItems: s.DigestMaxItems, Push: s.PushEnabled}, slot)
@@ -238,7 +254,7 @@ func (m *Module) digestJob(ctx context.Context, _ contracts.JobRun) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return m.q.SetDigestError(ctx, err.Error())
+		return m.q.SetDigestError(ctx, newssqlc.SetDigestErrorParams{UserID: contracts.UserID(ctx), LastDigestError: err.Error()})
 	}
 	return nil
 }

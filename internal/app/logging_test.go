@@ -147,7 +147,7 @@ func TestLoggingSettingsPersistAndChangeAllComponents(t *testing.T) {
 		t.Fatalf("saved level did not override startup default: %s", got.Body.String())
 	}
 	token, cookies = csrf(t, restarted.Handler())
-	if err := restarted.DB().Close(); err != nil {
+	if _, err := restarted.DB().Exec("DROP TABLE workspace_settings"); err != nil {
 		t.Fatal(err)
 	}
 	failed := request(t, restarted.Handler(), "PUT", "/api/settings/logging", []byte(`{"level":"debug"}`), token, cookies)

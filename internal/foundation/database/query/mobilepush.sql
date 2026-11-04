@@ -10,6 +10,8 @@ SELECT sqlc.arg(id), sqlc.arg(device_session_id), sqlc.arg(platform), sqlc.arg(t
        sqlc.arg(created_at), sqlc.arg(updated_at)
 FROM auth_device_sessions
 WHERE id = sqlc.arg(device_session_id)
+  AND user_id = sqlc.arg(user_id)
+  AND EXISTS (SELECT 1 FROM auth_users u WHERE u.id = auth_device_sessions.user_id AND u.status = 'active')
   AND revoked_at IS NULL
   AND expires_at > sqlc.arg(updated_at)
 ON CONFLICT(device_session_id, platform) DO UPDATE SET
@@ -20,15 +22,17 @@ ON CONFLICT(device_session_id, platform) DO UPDATE SET
 
 -- name: DeleteMobilePushToken :exec
 DELETE FROM mobile_push_tokens
-WHERE device_session_id = sqlc.arg(device_session_id)
-  AND platform = sqlc.arg(platform)
-  AND token = sqlc.arg(token);
+WHERE mobile_push_tokens.device_session_id = sqlc.arg(device_session_id)
+  AND mobile_push_tokens.platform = sqlc.arg(platform)
+  AND mobile_push_tokens.token = sqlc.arg(token)
+  AND EXISTS (SELECT 1 FROM auth_device_sessions s WHERE s.id = mobile_push_tokens.device_session_id AND s.user_id = sqlc.arg(user_id));
 
 -- name: ListActiveMobilePushTokens :many
 SELECT t.id, t.platform, t.token
 FROM mobile_push_tokens t
 JOIN auth_device_sessions s ON s.id = t.device_session_id
-WHERE s.revoked_at IS NULL
+JOIN auth_users u ON u.id = s.user_id AND u.status = 'active'
+WHERE s.user_id = sqlc.arg(recipient_id) AND s.revoked_at IS NULL
   AND s.expires_at > sqlc.arg(now)
   AND t.created_at <= sqlc.arg(notification_created_at);
 

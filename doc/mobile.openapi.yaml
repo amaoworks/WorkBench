@@ -30,6 +30,7 @@ paths:
             schema:
               $ref: '#/components/schemas/TokenLoginRequest'
             example:
+              username: alice
               password: Correct-Horse-42!
               deviceName: Alice 的 iPhone
               platform: ios
@@ -747,8 +748,9 @@ components:
     TokenLoginRequest:
       type: object
       additionalProperties: false
-      required: [password, deviceName, platform]
+      required: [username, password, deviceName, platform]
       properties:
+        username: { type: string, minLength: 1, maxLength: 64 }
         password: { type: string }
         deviceName: { type: string, minLength: 1, maxLength: 100 }
         platform: { type: string, enum: [ios, android, other] }
@@ -777,6 +779,19 @@ components:
         authenticated: { type: boolean }
         mode: { type: string, enum: [local, password] }
         mustChangePassword: { type: boolean }
+        user: { $ref: '#/components/schemas/User' }
+    User:
+      type: object
+      required: [id, username, displayName, role, status, mustChangePassword, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        username: { type: string }
+        displayName: { type: string }
+        role: { type: string, enum: [admin, user] }
+        status: { type: string, enum: [active, disabled] }
+        mustChangePassword: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
     Revoked:
       type: object
       additionalProperties: false

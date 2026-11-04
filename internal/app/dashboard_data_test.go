@@ -9,7 +9,7 @@ func TestDashboardIncludeDataEmbedsWidgetResponses(t *testing.T) {
 	a := newTestApp(t)
 	token, cookies := csrf(t, a.Handler())
 	// Explicitly enable the optional full notification card to verify its data route.
-	if _, err := a.DB().Exec(`INSERT INTO workspace_settings(section,value) VALUES('dashboard',?) ON CONFLICT(section) DO UPDATE SET value=excluded.value`,
+	if _, err := a.DB().Exec(`INSERT INTO user_settings(user_id,section,value) VALUES('owner','dashboard',?) ON CONFLICT(user_id,section) DO UPDATE SET value=excluded.value`,
 		`[{"id":"notifications.summary","visible":true,"size":"medium","order":0}]`); err != nil {
 		t.Fatal(err)
 	}

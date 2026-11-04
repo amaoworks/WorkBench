@@ -8,6 +8,7 @@ import (
 	"math"
 	"time"
 
+	"workbench/internal/contracts"
 	"workbench/internal/modules/news/sqlc"
 )
 
@@ -97,8 +98,12 @@ type Article struct {
 }
 
 func (m *Module) articleDTO(ctx context.Context, v newssqlc.NewsArticle) (Article, error) {
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return Article{}, err
+	}
+
 	a := Article{ID: v.ID, Title: v.Title, URL: v.Url, SourceName: v.SourceName, Topic: v.Topic, Content: v.Content, Language: v.Language, PublishedAt: time.UnixMilli(v.PublishedAt).UTC(), CreatedAt: time.UnixMilli(v.CreatedAt).UTC(), Read: v.IsRead == 1, Starred: v.Starred == 1, Matched: v.Matched == 1, TranslatedTitle: v.TranslatedTitle, TranslatedContent: v.TranslatedContent, Summary: v.Summary, AIStatus: v.AiStatus, AIError: v.AiError, Origins: []Origin{}}
-	origins, err := m.q.ListOrigins(ctx, v.ID)
+	origins, err := m.q.ListOrigins(ctx, newssqlc.ListOriginsParams{UserID: contracts.UserID(ctx), ArticleID: v.ID})
 	if err != nil {
 		return a, err
 	}
@@ -108,7 +113,11 @@ func (m *Module) articleDTO(ctx context.Context, v newssqlc.NewsArticle) (Articl
 	return a, nil
 }
 func (m *Module) Article(ctx context.Context, id string) (Article, error) {
-	v, err := m.q.GetArticle(ctx, id)
+	if _, err := contracts.RequireUserID(ctx); err != nil {
+		return Article{}, err
+	}
+
+	v, err := m.q.GetArticle(ctx, newssqlc.GetArticleParams{UserID: contracts.UserID(ctx), ID: id})
 	if err != nil {
 		return Article{}, err
 	}

@@ -40,7 +40,7 @@ func (*fakeNotificationService) Archive(context.Context, []string) error      { 
 func (*fakeNotificationService) UnreadCount(context.Context) (int64, error)   { return 0, nil }
 
 func TestNotificationAIToolsUseContractsAndRuntimeSafety(t *testing.T) {
-	ctx := context.Background()
+	ctx := contracts.WithPrincipal(context.Background(), contracts.Principal{UserID: contracts.LegacyUserID, Role: contracts.RoleAdmin})
 	database, err := workbenchdb.Open(ctx, workbenchdb.Config{Path: filepath.Join(t.TempDir(), "data.db")})
 	if err != nil {
 		t.Fatal(err)
