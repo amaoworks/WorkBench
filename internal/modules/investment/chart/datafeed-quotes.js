@@ -125,6 +125,28 @@ export function mergeQuoteValues(schwab = {}, futu, { equity = false, overnightE
     return quote;
 }
 
+export function futuQuoteValues(source = {}, overnightEnabled = false) {
+    const session = { regular: 'market', premarket: 'pre_market', postmarket: 'post_market', night: 'night',
+        market: 'market', pre_market: 'pre_market', post_market: 'post_market', out_of_session: 'out_of_session' }[source.session];
+    // Session comes from the upstream print, not the browser's wall clock.
+    if (!session || (session === 'night' && !overnightEnabled)) return {};
+    const price = quoteNumber(source.lp ?? source.price);
+    const delta = quoteNumber(source.ch ?? source.change), percent = quoteNumber(source.chp ?? source.changePct);
+    const time = quoteNumber(source.time);
+    const tradeTime = time === undefined ? null : time / 1000;
+    const extended = session === 'pre_market' || session === 'post_market';
+    return {
+        ...defined({ lp: price, ch: delta, chp: percent, volume: quoteNumber(source.volume),
+            high_price: quoteNumber(source.high_price ?? source.high), low_price: quoteNumber(source.low_price ?? source.low),
+            description: source.description, exchange: source.exchange }),
+        cs: session,
+        rtc: extended ? price ?? null : null, rch: extended ? delta ?? null : null,
+        rchp: extended ? percent ?? null : null, rtc_time: extended ? tradeTime : null,
+        ntc: session === 'night' ? price ?? null : null, nch: session === 'night' ? delta ?? null : null,
+        nchp: session === 'night' ? percent ?? null : null, ntc_time: session === 'night' ? tradeTime : null,
+    };
+}
+
 export function quoteData(symbol, values) {
     const available = ['lp', 'rtc', 'ntc', 'bid', 'ask'].some(field => Number.isFinite(values[field]));
     return available ? { s: 'ok', n: String(symbol), v: { ...values } }

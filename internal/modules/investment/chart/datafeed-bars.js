@@ -1,5 +1,43 @@
 // History normalization and time buckets shared with live bar aggregation.
-import { isOvernightET, isSchwabExtendedET } from './futu.js';
+import { futuResponseError, futuSessionContains, isOvernightET, isSchwabExtendedET } from './futu.js';
+
+const ET_CALENDAR = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
+export function futuBarTime(resolution, timestamp) {
+    if (!['1D', '1W', '1M'].includes(resolution)) return timestamp;
+    // OpenD timestamps are ET-local candle dates; UTC-midnight values are
+    // already date markers and must not move to the preceding ET date.
+    let date = timestamp;
+    if (timestamp % 86400000 !== 0) {
+        const parts = Object.fromEntries(ET_CALENDAR.formatToParts(new Date(timestamp)).map(part => [part.type, part.value]));
+        date = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day));
+    }
+    return getBucketTime(resolution, date);
+}
+
+export async function getFutuBars(request, name, resolution, periodParams, session, assertCurrent, overnightEnabled) {
+    const { from, to } = periodParams;
+    const params = new URLSearchParams({ symbol: name, resolution, session, from: String(from), to: String(to) });
+    const response = await request('/kline?' + params);
+    assertCurrent();
+    if (!response.ok) throw await futuResponseError(response, `获取富途行情失败 ${name}`);
+    const data = await response.json();
+    assertCurrent();
+    if (!Array.isArray(data.candles)) throw new Error('富途历史数据格式无效');
+    const daily = ['1D', '1W', '1M'].includes(resolution);
+    const unique = new Map();
+    for (const item of data.candles) {
+        const time = Number(item.time);
+        const bar = { time: futuBarTime(resolution, time), open: Number(item.open), high: Number(item.high),
+            low: Number(item.low), close: Number(item.close), volume: Number(item.volume) };
+        if (!Object.values(bar).every(Number.isFinite)) throw new Error('富途历史数据包含无效价格或时间');
+        if (bar.time >= to * 1000 || (!daily && !futuSessionContains(session, time, overnightEnabled))) continue;
+        unique.set(bar.time, bar);
+    }
+    return [...unique.values()].sort((a, b) => a.time - b.time);
+}
 
 export async function getFutuNightBars(request, name, resolution, from, to, assertCurrent, { requireCompleteHistory = false } = {}) {
     const params = new URLSearchParams({ symbol: name, resolution });

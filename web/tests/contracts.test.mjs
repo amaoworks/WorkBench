@@ -26,7 +26,7 @@ const schemas = {
   backup: settings.backupSchema, task: todo.taskSchema, tasks: todo.tasksResponseSchema,
   summary: todo.summarySchema, todoToday: todo.todoTodaySchema, taskCounts: todo.taskCountsSchema,
   wallos: todo.wallosSettingsSchema, wallosSync: todo.wallosSyncSchema,
-  schwab: investment.schwabSettingsSchema, futu: investment.futuSettingsSchema, overnight: investment.overnightSettingsSchema,
+  schwab: investment.schwabSettingsSchema, marketDataStatus: investment.marketDataStatusSchema, futu: investment.futuSettingsSchema, overnight: investment.overnightSettingsSchema,
   investmentSnapshot: investment.overviewSnapshotSchema, investmentQuotes: investment.overviewQuotesSchema, investmentAlerts: investment.overviewAlertsSchema,
   investmentPositions: investment.positionsResponseSchema, investmentOrders: investment.ordersResponseSchema,
   investmentNetworth: investment.netWorthHistorySchema,
@@ -134,6 +134,18 @@ test("dashboard include=data embeds each widget's own contract", () => {
     const result = schema.safeParse(widget.data);
     assert.equal(result.success, true, `${widget.id}: ${JSON.stringify(result.error?.issues)}`);
   }
+});
+
+test("market data contracts distinguish no provider from shared Futu without Schwab authorization", () => {
+  const none = samples.find((sample) => sample.name === "market-data.none").body;
+  const futu = samples.find((sample) => sample.name === "market-data.futu").body;
+  assert.equal(none.provider, "none");
+  assert.equal(futu.provider, "futu");
+  assert.equal(futu.schwabConnected, false);
+  assert.equal(futu.overnightEnabled, false);
+  const quotes = samples.find((sample) => sample.name === "overview.quotes.futu-empty").body;
+  assert.equal(quotes.provider, "futu");
+  assert.deepEqual(quotes.items, []);
 });
 
 test("rejects unsupported enum and module contract versions", () => {

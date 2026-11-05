@@ -34,7 +34,7 @@ internal/
     scheduler/                 调度、执行记录、重试与恢复
   modules/
     todo/                      待办及 Wallos 联动
-    investment/                Schwab 代理、TradingView 投资终端
+    investment/                Schwab 个人券商代理、Futu 行情、TradingView 投资终端
     news/                      RSS/Atom、关注规则、翻译摘要、简报
   webui/dist/                  已检入的前端生产资源
 web/src/
@@ -43,7 +43,7 @@ web/src/
   modules/
     registry.ts                编译期业务界面注册表（pages、widgets、icons、settings、menu、subpages）
     todo/                      Todo 页面、Widget、设置、查询、schema
-    investment/                行情页面、持仓与订单子页面、Widget、Schwab 设置、查询、schema
+    investment/                行情、持仓与订单页面、Widget、个人授权及共享行情设置、查询、schema
     news/                      资讯、来源、规则、简报、设置、查询、schema
   components/ui/               Badge、Button、Card、Checkbox、ConfirmDialog、EmptyState、Field、Notice、PageHeader、Select、Skeleton、Switch、useConfirmDelete
   shared/                      HTTP 客户端、平台共享 schema、工具

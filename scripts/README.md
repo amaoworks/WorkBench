@@ -207,6 +207,19 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 
 `WORKBENCH_BIN` 默认使用仓库根目录的 `./workbench`。截图写入 `/tmp/workbench-frontend-ux-*.png`。
 
+### 独立行情与来源切换
+
+`investment-market-data.e2e.cjs` 自行创建临时 SQLite 工作空间，运行真实终端和 Datafeed，使用本地合成行情、WebSocket 消息和最小图表控件替身。覆盖未绑定 Schwab 的富途历史/报价/实时推送、关闭夜盘后的普通看盘、日周月周期、代码查询、Schwab 主模式仅订阅富途夜盘、授权失效后的只读切换，以及交易适配器隔离。它不验证真实 TradingView 渲染或上游账号行情权限，不连接真实券商、不提交订单。
+
+```bash
+npm run build --prefix web
+go build -o /tmp/workbench-market-data-test ./cmd/workbench
+PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
+  CHROMIUM_PATH=/usr/bin/chromium \
+  WORKBENCH_BIN=/tmp/workbench-market-data-test \
+  node scripts/investment-market-data.e2e.cjs
+```
+
 ### 个人设置与后台设置
 
 `settings.e2e.cjs` 连接显式指定的临时密码模式工作空间。准备一个管理员和一个普通用户，两者均完成首次改密，投资业务保持启用。脚本验证头像菜单的键盘与触屏操作、旧管理分区链接、异步加载后的分区定位、后台路由权限与请求隔离、投资个人授权和共享配置、未配置与停用状态提示，以及浅色/深色下的 1440/390/360px 布局；不修改共享配置，不登录券商或发送通知。

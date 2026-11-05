@@ -2,13 +2,29 @@
 
 模块 ID 为 `investment`，显示名称为“投资”，页面为 `/investment`，子页面为 `/investment/positions`（持仓）和 `/investment/orders`（订单）。后端在 [internal/modules/investment](../../internal/modules/investment)，前端在 [web/src/modules/investment](../../web/src/modules/investment)。模块随 Workbench 主程序运行，内部按配置、授权、连接、订阅和历史行情分文件，见[代码导航](../../internal/modules/investment/README.md)。
 
-模块在工作台进程内接入 Charles Schwab Trader API：Go 负责 OAuth、REST、Streamer WebSocket 和后台价格监控，TradingView 终端负责行情、持仓与订单界面。`/investment` 是全屏图表，价格监控在 `/investment/monitor`。行情及提醒均使用真实券商数据。
+模块在工作台进程内接入 Charles Schwab Trader API 和 Futu OpenD：Go 负责 OAuth、REST、行情连接和后台价格监控，TradingView 终端负责行情、持仓与订单界面。`/investment` 是全屏图表，价格监控在 `/investment/monitor`。
+
+## 行情来源与权限
+
+行情浏览与个人券商授权分开：
+
+| 当前用户状态 | 常规、盘前与盘后行情 | 夜盘行情 | 账户、持仓、订单与交易 |
+|---|---|---|---|
+| 未绑定 Schwab | 可用的共享富途服务 | 富途，需开启夜盘且标的支持 | 不可用 |
+| 本人 Schwab 授权有效 | 本人的 Schwab | 富途，需开启夜盘且标的支持 | 本人的 Schwab |
+| 本人 Schwab 授权失效 | 可用的共享富途服务，只读看盘 | 富途，需开启夜盘且标的支持 | 重新授权前不可用 |
+
+所有行情请求仍要求工作台身份；不共享管理员的 Schwab 令牌或其他用户的私人持仓。Schwab 官方行情 API 需要用户 OAuth，仅保存 App Key / Secret 不足以取得行情。富途主行情只覆盖美股和 ETF，不扩展期货、期权或外汇；Schwab 原有的个人交易能力不变。
+
+`GET /api/modules/investment/market-data` 返回当前用户的行情路由状态：`provider` 为 `schwab`、`futu` 或 `none`，并提供 `schwabConnected`、`reauthorizationRequired`、`futuEnabled` 和 `overnightEnabled`。响应不包含共享账号、密码或券商令牌；它描述来源选择和功能开关，不代表上游实时行情权限已验证。页面据此选择行情源，而非仅凭 Schwab 连接状态拦截图表。两个来源均未启用时显示「暂无可用行情源」，按角色提供后台设置或券商连接入口；上游无权限或连接失败时显示实际错误，不构造报价。富途作为主源时，常规及扩展行情不依赖夜盘开关；Schwab 授权有效时不重复订阅富途普通时段行情。
+
+富途能否返回实时数据取决于 OpenD 登录、账号行情权限、目标标的、订阅及历史额度，保存凭据不代表实时行情已经可用。部署方须确认 Schwab 应用和富途行情许可允许该部署下的多用户使用。
 
 ## 价格监控与预警
 
 在 `/investment/monitor`（旧链接 `/investment?tab=monitor` 会跳转到这里）添加美股或 ETF 代码，选择上涨/下跌和正百分比阈值，最多 100 条规则。涨跌幅为 `(常规时段最新成交价 / 上一交易日收盘价 - 1) × 100%`；阈值支持两位小数，上涨最多 1000%，下跌最多 100%。首次有效检查已满足阈值时也会提醒。尚未授权时可以保存规则，页面显示授权或行情错误。
 
-`investment.monitor_prices` 每分钟在服务端运行，同一标的只查询一次，每批最多 50 个代码，关闭网页不影响检查。进程必须保持运行。交易时段来自 Schwab `markets/equity` 的当天常规时段，日历最多缓存一小时，支持休市、提前收市和美东夏令时；无法确认时段时暂停判断。盘前、盘后和富途夜盘行情当前不参与预警。
+`investment.monitor_prices` 每分钟在服务端运行，同一标的只查询一次，每批最多 50 个代码，关闭网页不影响检查。进程必须保持运行。价格监控仍要求本人的 Schwab 授权，不随图表切换到富途。交易时段来自 Schwab `markets/equity` 的当天常规时段，日历最多缓存一小时，支持休市、提前收市和美东夏令时；无法确认时段时暂停判断。盘前、盘后和全部富途行情均不参与预警。
 
 查询 `quotes` 的 `quote.closePrice`、`regular.regularMarketLastPrice` 和 `regular.regularMarketTradeTime`。只接受 `assetMainType=EQUITY`、`realtime=true` 的有效正价格；时间必须位于当天常规时段，距检查不超过三分钟且不能显著超前。错误或缺失数据清除本次有效价格并展示原因，不生成提醒。分钟采样可能遗漏短暂越线后回落的波动。
 
@@ -33,28 +49,28 @@
 
 `investment.schwab_refresh` 每二十分钟检查访问令牌；REST 请求和新连接也会按需刷新。令牌刷新后关闭旧流，浏览器自动重新登录连接。断开操作保留应用配置，只清除本人的券商令牌及连接。所有券商访问令牌仅在服务端使用，代理不转发浏览器 Cookie。
 
-刷新时确认令牌失效（`invalid_grant`，或 `invalid_client` 明确指出 refresh token 无效、过期或撤销）会持久保存 `reauthorizationRequired=true`，清除失效令牌并关闭旧连接。投资页、总览卡片及设置页显示「Schwab 授权已失效」和「重新授权」入口；点击后进入现有 OAuth 流程，只有成功回调才恢复已连接状态。终端断开会通知父页立即读取状态，其他页面的状态轮询作为补充。此机制处理实际失效，不发送提前到期提醒。
+刷新时确认令牌失效（`invalid_grant`，或 `invalid_client` 明确指出 refresh token 无效、过期或撤销）会持久保存 `reauthorizationRequired=true`，清除失效令牌并关闭旧连接。个人券商功能显示「Schwab 授权已失效」和「重新授权」入口；只有成功回调才恢复已连接状态。有可用富途服务时仍可只读看盘，持仓、订单、交易和价格监控不会因此恢复。终端断开会通知父页立即读取状态，其他页面的状态轮询作为补充。此机制处理实际失效，不发送提前到期提醒。
 
 网络错误、429、5xx 和普通应用认证错误保留原授权，在页面显示可读错误，允许重试；原始 OAuth 错误正文不会回显。REST 返回 401 时仅对该请求使用的访问令牌检查刷新，迟到的旧请求不会改变新授权，也不会自动重放原业务请求。定时任务不再重复尝试已确认失效的刷新令牌。
 
-## 富途夜盘覆盖
+## 富途服务与夜盘覆盖
 
-Schwab 行情覆盖常规、盘前、盘后和延长时段（约 04:00–20:00 ET），不含美股夜盘（20:00–04:00 ET）。夜盘由本机或 Compose 中的 Futu OpenD 补齐，**只做行情，不接入富途交易**。
+富途可独立提供主行情，也可补充 Schwab 不含的美股夜盘（20:00–04:00 ET）。Schwab 普通及扩展行情约覆盖 04:00–20:00 ET。富途**只做行情，不接入富途交易**。
 
-管理员在「后台设置 → 业务管理 → 投资」管理 Schwab 应用配置、富途牛牛和夜盘总开关；所有用户（包括管理员）在「个人设置 → 业务 → 投资」管理本人的 Schwab 授权，并查看共享夜盘只读状态。富途登录、OpenD、上游订阅池和公共 K 线缓存共享，自选、监控、偏好与通知归个人。Linux x86_64 原生部署在保存账号密码并启用富途牛牛后，自动下载、校验并启动 OpenD；页面显示进程状态和行情登录状态，失败可重试。容器部署可使用配套 OpenD。停用富途牛牛会关闭夜盘，重新启用不会自动恢复夜盘。主机、端口和非本机许可由部署配置管理，不在设置页面或账号保存 API 中修改。兼容版本与首次登录验证见 [OpenD 部署说明](https://github.com/amaoworks/WorkBench/blob/main/futu-opend/README.md)。密码和登录摘要不回显。
+管理员在「后台设置 → 业务管理 → 投资」（`/admin/settings?tab=modules&module=investment`）管理 Schwab 应用配置、富途牛牛和夜盘总开关；所有用户（包括管理员）在「个人设置 → 业务 → 投资」（`/settings?tab=modules&module=investment`）管理本人的 Schwab 授权。富途登录、OpenD、上游订阅池和公共 K 线缓存共享，自选、监控、偏好与通知归个人。Linux x86_64 原生部署在保存账号密码并启用富途牛牛后，自动下载、校验并启动 OpenD；页面显示进程状态和行情登录状态，失败可重试。容器部署可使用配套 OpenD。停用富途牛牛会关闭夜盘，重新启用不会自动恢复夜盘；仅关闭夜盘不影响富途主行情。主机、端口和非本机许可由部署配置管理，不在设置页面或账号保存 API 中修改。兼容版本与首次登录验证见 [OpenD 部署说明](https://github.com/amaoworks/WorkBench/blob/main/futu-opend/README.md)。密码和登录摘要不回显。
 
-- Regular / Premarket / Postmarket / Extended：仍只走 Schwab。
+- Regular / Premarket / Postmarket / Extended：按当前用户的主行情源读取；Schwab 授权有效时使用本人的 Schwab，否则使用可用的富途服务。
 - 「行情时段」集成在 TradingView 图表顶部工具栏，通过官方 `headerReady()` / `createDropdown()` 接入，不再单独占据一行。桌面在右侧显示「行情：常规/扩展/夜盘/全天」；窄屏使用简短标题并移至工具栏靠前位置。菜单位置随宽度切换时仅重建按钮，不重建图表；仅提供常规 (RTH)、扩展 (ETH)、夜盘 (Night)、全天 (24H) 四个行情选项，不另加说明菜单项。仅在夜盘覆盖启用且标的支持时显示 Night/24H。原生底部时段按钮隐藏，避免重复入口。
 - 扩展行情使用分钟图；从日、周、月线选择扩展时自动切到 5 分钟，扩展时段切换到这些周期也会回到 5 分钟。
-- Night 仅提供美股正股行情，K 线只从 OpenD 获取，不与 Schwab 拼接；仅支持 `1/5/15/30` 分钟，其他周期自动回到 5 分钟并短暂提示。
-- 全天 (24H) 是同一张连续分钟图：按 `America/New_York` 时间拼接 Schwab 的 04:00–20:00（盘前、常规、盘后）与 Futu 的 20:00–次日 04:00 数据，跨午夜和夏令时按真实时区处理，排序去重，不为休市或无成交时段补造 K 线；因此不代表周末也交易。仅支持 `1/5/15/30` 分钟，其他周期自动回到 5 分钟。只有夜盘覆盖启用且标的是受支持的美股正股时才显示/使用，不能用只有 Schwab 的半天数据替代完整 24H。24H 的 Futu 历史回补失败会明确报错，不静默返回部分时段；Futu 历史额度限制仍适用。
-- 夜盘设置可在过去日期使用 `request_history_kline` 做额度兜底（7 天 100 只标的，同标的 7 天内不重复占额），结果写入本地 `investment_futu_bars`。行情时段不改变下单面板中的「交易时段」，也不新增富途交易能力。
+- Night 的 K 线只从 OpenD 获取，不与 Schwab 拼接；仅支持具备夜盘权限的标的及 `1/5/15/30` 分钟，其他周期自动回到 5 分钟并短暂提示。
+- 全天 (24H) 是同一张连续分钟图：按 `America/New_York` 时间拼接主行情源的 04:00–20:00（盘前、常规、盘后）与 Futu 的 20:00–次日 04:00 数据。Schwab 主模式由 Schwab 与富途合并，富途主模式的两个时段均来自富途。跨午夜和夏令时按真实时区处理，排序去重，不为休市或无成交时段补造 K 线，因此不代表周末也交易。仅支持 `1/5/15/30` 分钟，其他周期自动回到 5 分钟。只有夜盘覆盖启用且标的受支持时才显示/使用；历史回补失败会明确报错，不把缺少夜盘的半天数据当作完整 24H，富途历史额度限制仍适用。
+- 富途主行情历史支持 `1/5/15/30` 分钟及 `1D/1W/1M`；Night/24H 仍仅使用上述分钟周期。历史可使用 `request_history_kline` 回补并写入本地缓存；上游历史额度按账号与标的计算。行情时段不改变下单面板中的「交易时段」，也不新增富途交易能力。
 
 OpenD 容器封装在源码仓库根目录 [futu-opend](https://github.com/amaoworks/WorkBench/tree/main/futu-opend)，可整夹移到独立仓库。Release 部署包和二进制包不包含该目录，配套容器部署需额外取得同版本源码中的完整目录；Compose 叠加见[部署与发布](../deployment.md)。工作台以 JSON 明文协议连接（`packetEncAlgo=None`），不要把 OpenD `11111` 暴露到公网。
 
 ## 行情与交易
 
-连接后用 iframe 打开 `/investment/terminal`。终端从 Schwab 获取历史与实时行情，读取所选账户的真实多空持仓；终端启动、切换账户或重连时并行读取最近 30 天的全部订单和 30–180 天内 `status=WORKING` 的订单（Schwab 的 `status` 参数一次只能指定一个状态）。随后补读 30–180 天的全部订单（TradingView 打开账户管理器时请求订单历史即触发；未请求时在启动约 3 秒后进行），确保其他非终态订单（如等待条件的单、括号单中的子单）不遗漏。「订单」列表先显示近期订单及较早的 WORKING 订单，「订单历史」等补读完成后返回；补读失败时历史查询返回错误，切换账户或关闭终端时旧查询也不会返回其他账户的数据。后台补读失败每次连接只提示一次，后续轮询重试；成功结果静默并入，不覆盖较新的订单。
+行情源可用后用 iframe 打开 `/investment/terminal`；富途主模式仅看盘，不读取 Schwab 账户或加载交易能力。Schwab 授权有效时，终端读取所选账户的真实多空持仓；终端启动、切换账户或重连时并行读取最近 30 天的全部订单和 30–180 天内 `status=WORKING` 的订单（Schwab 的 `status` 参数一次只能指定一个状态）。随后补读 30–180 天的全部订单（TradingView 打开账户管理器时请求订单历史即触发；未请求时在启动约 3 秒后进行），确保其他非终态订单（如等待条件的单、括号单中的子单）不遗漏。「订单」列表先显示近期订单及较早的 WORKING 订单，「订单历史」等补读完成后返回；补读失败时历史查询返回错误，切换账户或关闭终端时旧查询也不会返回其他账户的数据。后台补读失败每次连接只提示一次，后续轮询重试；成功结果静默并入，不覆盖较新的订单。
 
 之后的十五秒轮询与 ACCT_ACTIVITY 刷新通常读取最近 3 天；订阅确认（ACCT_ACTIVITY 的命令响应和 `SUBSCRIBED` 消息）不是账户变化，不触发刷新。若有更早的非终态订单，则从该订单起读取，最多覆盖 180 天，按订单 ID 合并进已有结果。同一终端内的并发订单读取复用同一请求。Schwab 没有订单游标，单次请求 `maxResults=1000`，达到上限时递归拆分时间范围并按订单 ID 去重；无法完整读取时明确报错，不展示被截断的完整列表。
 
@@ -66,7 +82,7 @@ OpenD 容器封装在源码仓库根目录 [futu-opend](https://github.com/amaow
 
 内部图表启用 TradingView 官方的 `iframe_loading_same_origin`，通过同源代理 `/charting_library/sameorigin.html` 创建子页面，避免依赖 `blob:` iframe 导航。加载提示保留到图表 `chartReady()` 完成，行情 WebSocket 就绪不会提前隐藏它。加载屏显示当前步骤：加载图表库、读取图表设置、初始化图表、查询标的信息、读取 K 线数据、绘制图表。约 20 秒后提示「还在加载」并提供重新加载，图表继续加载；约 90 秒没有步骤进展时显示失败及停留步骤。首个标的查询超时为 45 秒，常规/扩展时段首批 K 线超时为 75 秒。Night/24H 的首批 K 线明确报错时切回常规时段，无响应时由 90 秒无进展计时处理。图表模块加载失败或初始化异常显示重试入口。外层投资页在终端文档没有回报时另行计时：20 秒提示，90 秒显示失败和重新加载入口。终端启动时，并发的持仓读取共用一次 Schwab 请求；同一账户 2 秒内先后发生的持仓读取复用上一次结果，账户事件、轮询或下单后的刷新会提升订单代次并重新读取，设置与自选表加载共用预取的 CSRF 令牌。参见[官方 Featuresets](https://www.tradingview.com/charting-library-docs/latest/customization/Featuresets/#iframe_loading_same_origin)。
 
-`/investment` 只显示图表，铺满顶部导航下方的全部区域，图表上不叠加工作台自己的按钮。券商未连接或需要重新授权时，图表区域居中显示提示和设置/授权入口。旧链接中的 `view` 网址参数会被忽略，`?tab=monitor` 跳转到 `/investment/monitor`。页面铺满、浏览器全屏和新窗口打开暂不提供，见[后续计划](#后续计划)。
+`/investment` 只显示图表，铺满顶部导航下方的全部区域，图表上不叠加工作台自己的按钮。本人 Schwab 未连接或需要重新授权时，有可用富途服务仍可进入只读图表；没有可用行情源时，图表区域居中显示提示及相应设置/授权入口。持仓、订单和价格监控独立检查本人 Schwab 授权。旧链接中的 `view` 网址参数会被忽略，`?tab=monitor` 跳转到 `/investment/monitor`。页面铺满、浏览器全屏和新窗口打开暂不提供，见[后续计划](#后续计划)。
 
 账户初始化在 `broker_factory` 返回后的异步任务中等待 `chartReady()`，但最长延后 15 秒，两者先到者开始读取；连接状态通知发生在 TradingView 完成适配器注册后。尚未实现的首屏优化见[后续计划](#后续计划)。持仓与订单的标的列使用数据中的 `symbol` 字段，分别传给券商标的和图表标的参数，避免渲染异常或将订单 ID 当作图表标的。
 
@@ -82,11 +98,13 @@ OpenD 容器封装在源码仓库根目录 [futu-opend](https://github.com/amaow
 
 每次启动、切换账户或重连后的第一份订单数据仅建立快照，通过 `orders()` / `ordersHistory()` 提供给 TradingView，不逐条触发 `orderUpdate`。后续刷新只推送新增或内容变化的订单，避免左下角重复弹出历史成交、撤单通知；新订单、成交及撤单仍正常更新。下单/改单/撤单后的 REST 回读同步更新比较基准，下一次轮询不会重复推送同一结果。
 
-历史 K 线按时间排序、去重并排除查询结束边界；日、周、月线时间与 UTC 周期起点对齐。终端分钟线统一支持 `1/5/15/30` 分钟，不提供或请求 10 分钟线；Schwab 仍提供日、周、月线，Night/24H 仍只支持上述分钟周期。从日线切换至分钟线时限制单次回补区间（1 分钟最多 46 天，其余分钟线最多 240 天），避免把过宽的日线视窗一次性请求给短周期接口。历史回补不会覆盖更新的实时 K 线，同一品种周期的多个订阅者只计算一次成交量增量，交给图表的数据使用副本，避免图表修改内部缓存。
+历史 K 线按时间排序、去重并排除查询结束边界；日、周、月线时间与 UTC 周期起点对齐。终端分钟线统一支持 `1/5/15/30` 分钟，不提供或请求 10 分钟线；Schwab 和富途主模式均提供日、周、月线，Night/24H 仍只支持上述分钟周期。Schwab 从日线切换至分钟线时限制单次回补区间（1 分钟最多 46 天，其余分钟线最多 240 天）；富途历史按请求日期范围读取，遵守上游历史与订阅额度。历史回补不会覆盖更新的实时 K 线，同一品种周期的多个订阅者只计算一次成交量增量，交给图表的数据使用副本，避免图表修改内部缓存。
 
-Night 视图只读取 Futu 的历史数据；24H 历史并发读取 Schwab 与 Futu，任一请求失败都会报错；读取期间任一行情连接变更都会丢弃旧结果。24H 实时更新按 ET 时段分源，并以独立会话缓存，避免 Night、24H 和普通时段互相污染。
+Night 视图只读取 Futu 的历史数据；Schwab 主模式的 24H 历史并发读取 Schwab 与 Futu 夜盘，任一请求失败都会报错；富途主模式直接请求 Futu 全天历史。读取期间行情连接变更会丢弃旧结果。24H 实时更新按 ET 时段选择主行情或夜盘，并以独立会话缓存，避免 Night、24H 和普通时段互相污染。
 
-图表、自选表和详情使用同一 Datafeed 提供行情。常规主报价、当日开高低及成交量使用 Schwab；冷启动缺少报价时批量读取 Schwab REST，随后接收 Streamer 更新，迟到的 REST 不覆盖新报价。盘前/盘后报价映射为 TV 的 `rtc/rch/rchp/rtc_time`，涨跌以最近常规时段价格为基准，时间使用源端成交时间。富途夜盘映射为当前库使用的 `ntc/nch/nchp`；夜盘期间，有效的富途夜盘成交价同时作为主报价，主报价的涨跌额和涨跌幅统一按 Schwab 最近常规价格计算，缺少该价格时使用前收盘价，再缺少则留空。当日开高低和成交量仍使用 Schwab。夜盘没有可确认的成交时间，因此不填 `ntc_time`。字段缺失保持缺失，零涨跌保留，无任何有效报价时返回暂无行情数据。自选表和详情单独订阅富途 BASIC 报价，无需依赖夜盘 K 线订阅；取消一个报价监听不会释放仍有用户的 K 线租约。时段状态沿用终端声明的美东时间表，夜盘状态随夜盘开关和工作日边界变化。
+图表、自选表和详情使用同一 Datafeed 提供行情。主行情为富途时，从 OpenD 读取美股/ETF 报价、历史及实时 K 线，不发起 Schwab 行情或账户请求；标的查询先按精确代码解析，不提供全市场模糊搜索。
+
+主行情为 Schwab 时，常规主报价、当日开高低及成交量使用 Schwab；冷启动缺少报价时批量读取 Schwab REST，随后接收 Streamer 更新，迟到的 REST 不覆盖新报价。盘前/盘后报价映射为 TV 的 `rtc/rch/rchp/rtc_time`，涨跌以最近常规时段价格为基准，时间使用源端成交时间。富途夜盘映射为当前库使用的 `ntc/nch/nchp`；夜盘期间，有效的富途夜盘成交价同时作为主报价，主报价的涨跌额和涨跌幅统一按 Schwab 最近常规价格计算，缺少该价格时使用前收盘价，再缺少则留空。当日开高低和成交量仍使用 Schwab。夜盘没有可确认的成交时间，因此不填 `ntc_time`。字段缺失保持缺失，零涨跌保留，无任何有效报价时返回暂无行情数据。自选表和详情单独订阅富途 BASIC 报价，无需依赖夜盘 K 线订阅；取消一个报价监听不会释放仍有用户的 K 线租约。时段状态沿用终端声明的美东时间表，夜盘状态随夜盘开关和工作日边界变化。
 
 当前 TV 的 `symbol-details.a7454a82deebf6dcbfda.js` 在详情状态中遗漏四个夜盘报价字段。库代理按 `chart/tv-quotes-compat.json` 对这一已确认分包补齐字段，未知分包保持原样；不改面板布局。终端采用 `quotes-v2/` 库路径刷新浏览器已有分包，服务端仍复用原始上游资源缓存并兼容 `quotes-v1/` 请求。库升级时用真实 TV 回归确认分包和兼容修复，回归脚本遇到未验证的详情分包会报错。
 
@@ -104,13 +122,13 @@ Go 为每个用户维护独立 Streamer，同一用户的浏览器连接共享�
 
 ## TradingView 资源
 
-当前 `/charting_library/` 从 `https://trading-terminal.tradingview-widget.com/charting_library/` 同源反代，保存图纸和新闻等依赖外部服务的功能关闭。常规及扩展时段行情与交易数据来自 Schwab；单独选中 Night 时，图表 K 线只来自 Futu OpenD；选中 24H 时按 ET 将两路行情合并为一张图。
+当前 `/charting_library/` 从 `https://trading-terminal.tradingview-widget.com/charting_library/` 同源反代，保存图纸和新闻等依赖外部服务的功能关闭。常规及扩展行情由当前用户的主行情源提供，账户与交易数据仅来自本人的 Schwab；Night 只来自 Futu OpenD，24H 按 ET 合并主行情与富途夜盘。
 
 图表代理按浏览器支持情况统一使用 gzip 或未压缩正文，避免预热与浏览器请求因 br/zstd 协商不同而重复下载。内容哈希文件名的 JavaScript 与样式表成功取回后缓存在内存和数据目录旁的 `chart-library/`，进程重启后可复用。条件请求在本机校验 ETag；上游失败不写入缓存。这些哈希分包对浏览器使用 `Cache-Control: public, max-age=31536000, immutable`，响应不写入会话 Cookie，也不把 Cookie 列入 Vary，避免空闲续期把每次打开变成整库 304 校验。`charting_library.esm.js` 与 `sameorigin.html` 使用最多五分钟的内存缓存（上游要求更短时从其要求），过期后重新取回；浏览器每次打开时向工作台校验，命中内存时无需访问外部入口资源。
 
 工作台启动后在后台加载磁盘缓存，并预取入口列出的首屏分包；不会遍历运行时清单下载数百个非首屏分包。其余分包首次使用时缓存。并发请求共用一次有超时的下载，离开页面会及时停止该页面的等待，但不会取消新页面仍需使用的共用下载。预热失败会记录日志，可在下次请求重试。
 
-内嵌终端脚本用内容 ETag 校验缓存，未变化时返回 304，程序升级后会返回新脚本；终端 HTML 保持 `no-store`。行情的买入/卖出价还提供给图例区快捷下单按钮和侧栏「详情」面板；详情面板大号价格下方的 bid/ask 行与 K 线重复，由 `custom.css`（经 `custom_css_url` 注入）单独隐藏，报价数据本身保留。该规则依赖 TradingView 语义类名的构建哈希，库升级后若失效应从 symbol-details 分包重新提取；`investment-terminal.e2e.cjs` 用真实库校验该行已被隐藏且其余面板内容仍在。数据源就绪回调在下一个任务中执行，遵循 [TradingView 异步回调约定](https://www.tradingview.com/charting-library-docs/latest/connecting_data/Datafeed-API/#asynchronous-callbacks)，无需固定等待一秒。图表就绪后先显示图表，再异步恢复自选表。标的解析和夜盘连接只读取 `/api/modules/investment/overnight` 的本地开关配置，不等待富途设置页的 OpenD 连接、订阅额度和历史额度检查；24H 对历史额度兜底采用严格模式，失败时不返回伪装完整的半天数据。
+内嵌终端脚本用内容 ETag 校验缓存，未变化时返回 304，程序升级后会返回新脚本；终端 HTML 保持 `no-store`。行情的买入/卖出价还提供给图例区快捷下单按钮和侧栏「详情」面板；详情面板大号价格下方的 bid/ask 行与 K 线重复，由 `custom.css`（经 `custom_css_url` 注入）单独隐藏，报价数据本身保留。该规则依赖 TradingView 语义类名的构建哈希，库升级后若失效应从 symbol-details 分包重新提取；`investment-terminal.e2e.cjs` 用真实库校验该行已被隐藏且其余面板内容仍在。数据源就绪回调在下一个任务中执行，遵循 [TradingView 异步回调约定](https://www.tradingview.com/charting-library-docs/latest/connecting_data/Datafeed-API/#asynchronous-callbacks)，无需固定等待一秒。图表就绪后先显示图表，再异步恢复自选表。标的解析和夜盘开关读取 `/api/modules/investment/overnight` 的本地配置，主行情源读取 `/api/modules/investment/market-data`；这些读取不等待后台富途设置页的 OpenD 连接、订阅额度和历史额度检查。24H 对历史回补采用严格模式，失败时不返回伪装完整的半天数据。
 
 这个演示资源接入不等同于取得库的部署授权。TradingView FAQ 区分了 Widgets、Advanced Charts 和 Trading Platform；自托管交易功能需使用获得授权的 Trading Platform 包。参见 [官方 FAQ](https://www.tradingview.com/charting-library-docs/latest/resources/Frequently-Asked-Questions/)。
 
@@ -118,6 +136,7 @@ Go 为每个用户维护独立 Streamer，同一用户的浏览器连接共享�
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
+| GET | `/api/modules/investment/market-data` | 当前用户的主行情源及脱敏路由状态，不检查上游行情权限 |
 | GET/PUT | `/api/modules/investment/watchlists` | 工作台自选表读取/保存（需要编辑版本、会话和序号） |
 | GET/PUT | `/api/modules/investment/preferences` | 投资偏好读取/按项保存；`chart`、`layout`、`account`、`view` 和 `tv:` 设置键，保存需要编辑版本、会话和序号 |
 | GET | `/api/modules/investment/schwab` | 应用配置、连接状态、`reauthorizationRequired` 及最近错误 |
@@ -135,13 +154,15 @@ Go 为每个用户维护独立 Streamer，同一用户的浏览器连接共享�
 | GET/PUT | `/api/modules/investment/futu` | 管理员读取/管理 Futu 账号密码、服务开关与连接状态 |
 | POST | `/api/modules/investment/futu/disconnect` | 停用 Futu，同时关闭夜盘 |
 | GET/PUT | `/api/modules/investment/overnight` | 用户读取安全状态；管理员修改夜盘总开关，启用前校验 Futu 依赖 |
-| GET | `/api/modules/investment/futu/kline` | 夜盘当前窗口及额度兜底历史；24H 可用 `requireHistory=true` 要求历史回补失败时明确报错 |
-| GET | `/api/modules/investment/futu/quote/ws` | 夜盘推送（覆盖关闭时 409，不升级；就绪帧 `ready` 含 `owner` 与 `generation`，54 秒 ping / 60 秒读取超时，断开自动回收该连接订阅引用） |
-| POST | `/api/modules/investment/futu/quote/ws/command` | 夜盘 ADD/UNSUB；`resolution` 为空时只订阅 BASIC 报价，否则订阅指定 K 线及 BASIC；浏览器等待 `ready` 后必传 `owner` 与 `generation`，缺 `owner` 返回 409（升级前已打开的终端需刷新页面加载新协议，不再允许匿名引用），缺或旧 `generation`、旧 `owner` 返回 `applied:false` 和当前代次 |
+| GET | `/api/modules/investment/futu/quotes?symbols=AAPL,MSFT` | 最多 50 个美股/ETF 的报价；返回 `items`，未知涨跌值为 null，源端没有时间戳时不填 `time` |
+| GET | `/api/modules/investment/futu/symbols?query=AAPL` | 精确代码查询，返回 `items`，仅包含股票与 ETF，不提供全市场模糊搜索 |
+| GET | `/api/modules/investment/futu/kline` | `symbol`、`resolution`、`from/to`（Unix 秒）及 `session=regular/extended/premarket/postmarket/night/equity24h`；未传 session 保留夜盘含义。主模式历史失败返回错误；旧夜盘可用 `requireHistory=true` 要求完整回补 |
+| GET | `/api/modules/investment/futu/quote/ws` | 默认夜盘，`?mode=main` 为主行情。夜盘关闭只阻止默认模式；`ready` 含 `owner` 与 `generation`，54 秒 ping / 60 秒读取超时，断开回收本连接引用 |
+| POST | `/api/modules/investment/futu/quote/ws/command` | 行情 ADD/UNSUB；`resolution` 为空时只订阅 BASIC 报价，否则订阅指定 K 线及 BASIC；浏览器等待 `ready` 后必传 `owner` 与 `generation`，缺 `owner` 返回 409（升级前已打开的终端需刷新页面加载新协议，不再允许匿名引用），缺或旧 `generation`、旧 `owner` 返回 `applied:false` 和当前代次 |
 | GET | `/investment/terminal`、`/investment/terminal/*` | 终端 HTML 与适配器 |
 | GET/HEAD | `/charting_library/*` | 图表库静态文件代理 |
 
-导航 pageKey 为 `investment.overview`。总览卡片为 `investment.snapshot`（资产快照）、`investment.quotes`（持仓与自选行情）和 `investment.alerts`（提醒与异动），分别读取 `/api/modules/investment/overview/snapshot`、`overview/quotes`、`overview/alerts`。
+导航 pageKey 为 `investment.overview`。总览卡片为 `investment.snapshot`（资产快照）、`investment.quotes`（持仓与自选行情）和 `investment.alerts`（提醒与异动），分别读取 `/api/modules/investment/overview/snapshot`、`overview/quotes`、`overview/alerts`。未绑定或授权失效且富途可用时，行情卡只读取本人的自选列表并显示富途行情及 `provider`；资产快照、持仓、订单和净值仍依赖本人 Schwab 授权，不会因富途行情可用而显示为已连接。
 
 ### 持仓与订单子页面
 
@@ -170,11 +191,11 @@ Go 为每个用户维护独立 Streamer，同一用户的浏览器连接共享�
 
 ## 数据、验证与参考
 
-模块构造时要求数据库和通知服务。价格监控通过行情接口读取交易时段与报价，Schwab 适配器在提交前保护授权版本检查。Streamer 接收凭据读取、上游地址和日志依赖；Futu 网关接收配置读取、查询、OpenD 服务和日志依赖。应用配置表为 `investment_schwab_app`，个人授权表为 `investment_schwab_connections`，共享富途配置为 `investment_futu`，夜盘 K 线缓存在 `investment_futu_bars`。升级迁移移除历史演示表 `investment_quotes` 和 `investment_summary`，旧迁移文件保留。SQL 和 sqlc 生成代码均在模块目录。
+模块构造时要求数据库和通知服务。价格监控通过行情接口读取交易时段与报价，Schwab 适配器在提交前保护授权版本检查。Streamer 接收凭据读取、上游地址和日志依赖；Futu 网关接收配置读取、查询、OpenD 服务和日志依赖。应用配置表为 `investment_schwab_app`，个人授权表为 `investment_schwab_connections`，共享富途配置为 `investment_futu`，共享 K 线缓存在 `investment_futu_bars`。旧夜盘保留裸周期键；富途主行情使用 `main:none:<session>:<resolution>` 隔离未复权数据的时段与周期，不将夜盘缓存视为完整历史。升级迁移移除历史演示表 `investment_quotes` 和 `investment_summary`，旧迁移文件保留。SQL 和 sqlc 生成代码均在模块目录。
 
 React 投资页目前不读取偏好的 `view` 项（接口与 schema 保留，供后续页面铺满使用）；图表选择、账户和 TradingView 设置由终端各自校验。删除偏好后的空值保留版本号，后续保存仍参与版本冲突检查。
 
-Go 测试覆盖配置、OAuth、代理、连接确认、断线恢复和配置变更竞态；Node 测试直接导入终端 JS，覆盖交易语义、未确认的交易结果、真实持仓、订单时间分段、跨账户异步响应、订阅重放及历史/实时 K 线衔接。`./scripts/test.sh` 执行 sqlc 漂移检查、Go 测试、React/终端 JS lint、Node 测试与生产构建。模拟服务验证不替代真实券商端到端验收。
+Go 测试覆盖配置、OAuth、代理、连接确认、断线恢复和配置变更竞态；Node 测试直接导入终端 JS，覆盖交易语义、未确认的交易结果、真实持仓、订单时间分段、跨账户异步响应、订阅重放及历史/实时 K 线衔接。`./scripts/test.sh` 执行 sqlc 漂移检查、Go 测试、React/终端 JS lint、Node 测试与生产构建。`scripts/investment-market-data.e2e.cjs` 使用真实终端与 Datafeed、本地行情/推送夹具和最小图表控件替身验证双源切换及只读边界，不代表真实 TradingView 渲染或券商权限验收。模拟服务验证不替代真实券商端到端验收。
 
 实际 TradingView 库的浏览器回归使用虚构的 Schwab 响应，覆盖初始化时序、持仓与订单列渲染、标的跳转、账户切换和重连，以及下单面板的有效期/交易时段名称、可选值和已有订单回填；运行方式见[脚本说明](../../scripts/README.md#投资账户管理器)。终端资源嵌入 Go 程序，修改后需重新编译并启动调试进程才能生效。
 

@@ -246,7 +246,7 @@ test('concurrent symbol resolutions share the overnight settings request', async
     const [aapl, msft] = await Promise.all([first, second]);
     assert.ok(aapl.subsessions.some(session => session.id === 'night'));
     assert.equal(msft.subsessions.some(session => session.id === '24h'), false);
-    assert.equal(starts, 1);
+    assert.equal(starts, 0, 'Schwab metadata lookup must not connect Futu until night data is subscribed');
 });
 
 test('destroying while overnight settings are pending does not start Futu', async (t) => {

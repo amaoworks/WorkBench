@@ -240,7 +240,7 @@ func (m *Module) oauthCallback(w http.ResponseWriter, r *http.Request) {
 	m.finishMobileOAuth(state, mobileOAuthSucceeded, "")
 	// Commit a same-site document before navigation so Strict session cookies
 	// become available again after Schwab's cross-site redirect chain.
-	writeHTML(w, http.StatusOK, `<meta http-equiv="refresh" content="0;url=/investment"><h1>Schwab 授权成功</h1><p>正在返回投资…</p><p>若未自动跳转，<a href="/investment">点击返回工作台</a>。</p>`)
+	writeHTML(w, http.StatusOK, "正在返回投资…")
 }
 
 func (m *Module) finishMobileOAuth(state, status, message string) {
@@ -308,6 +308,35 @@ func writeHTML(w http.ResponseWriter, status int, body string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
+	title, role, refresh := "授权未完成", "alert", ""
+	if status == http.StatusOK {
+		title, role = "授权成功", "status"
+		refresh = `<meta http-equiv="refresh" content="0;url=/investment">`
+	}
 	w.WriteHeader(status)
-	_, _ = io.WriteString(w, "<!doctype html><meta charset=\"utf-8\"><title>Schwab</title><body style=\"font-family:sans-serif;padding:24px;line-height:1.6\">"+body+"</body>")
+	_, _ = io.WriteString(w, oauthResultPage(refresh, role, title, body))
 }
+
+func oauthResultPage(refresh, role, title, body string) string {
+	return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">` +
+		refresh + `<title>Schwab</title><style>` + oauthResultCSS + `</style></head><body><main class="page"><section class="card" role="` +
+		role + `"><div class="brand"><span class="mark" aria-hidden="true">` + oauthMark + `</span><span>Workbench</span></div><h1>` +
+		title + `</h1><p class="message">` + body + `</p><a class="button" href="/investment">返回投资</a></section></main></body></html>`
+}
+
+const oauthMark = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m14.31 8 5.74 9.94"/><path d="M9.69 8h11.48"/><path d="m7.38 12 5.74-9.94"/><path d="M9.69 16 3.95 6.06"/><path d="M14.31 16H2.83"/><path d="m16.62 12-5.74 9.94"/></svg>`
+
+const oauthResultCSS = `:root{color-scheme:light;--ink:#000;--heading:#000;--canvas:#fff;--surface:#fff;--card-border:#e0e0e0;--muted:#707070;--brand:#2962ff;--cta:#000;--on-cta:#fff;font-family:-apple-system,BlinkMacSystemFont,"Trebuchet MS",Roboto,Ubuntu,"PingFang SC","Hiragino Sans GB","Noto Sans CJK SC","Microsoft YaHei",sans-serif}
+@media (prefers-color-scheme:dark){:root{color-scheme:dark;--ink:#dbdbdb;--heading:#fff;--canvas:#000;--surface:#0f0f0f;--card-border:#464646;--muted:#8c8c8c;--brand:#5b9cf6;--cta:#fff;--on-cta:#000}}
+*{box-sizing:border-box}body{margin:0;background:var(--canvas);color:var(--ink);font-size:15px;line-height:1.55}
+.page{min-height:100vh;display:grid;place-items:center;padding:24px}
+.card{width:100%;max-width:390px;padding:32px;border:1px solid var(--card-border);border-radius:16px;background:var(--surface)}
+.brand{display:flex;align-items:center;gap:10px;margin-bottom:32px;font-weight:600}
+.mark{display:grid;place-items:center;width:34px;height:34px;flex-shrink:0;border-radius:10px;background:var(--cta);color:var(--on-cta)}
+h1{margin:0;color:var(--heading);font-size:23px;font-weight:600;letter-spacing:-.03em}
+.message{margin:8px 0 0;color:var(--muted);font-size:14px;overflow-wrap:anywhere}
+.message a{color:var(--brand)}
+.button{display:flex;align-items:center;justify-content:center;width:100%;margin-top:24px;min-height:38px;padding:9px 14px;border-radius:999px;background:var(--cta);color:var(--on-cta);font-size:14px;font-weight:500;line-height:1.4;text-decoration:none}
+.button:hover{opacity:.85}.button:active{opacity:.75}
+a:focus-visible{outline:2px solid var(--brand);outline-offset:3px}
+@media (max-width:600px){.card{padding:26px}}`

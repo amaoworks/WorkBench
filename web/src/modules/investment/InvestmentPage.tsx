@@ -5,7 +5,8 @@ import { Button, ButtonLink } from "../../components/ui/Button";
 import { Notice } from "../../components/ui/Notice";
 import { Skeleton } from "../../components/ui/States";
 import { ThemeContext, type Theme } from "../../shared/theme";
-import { refreshSchwabToken, useRefreshInvestment, useSchwabSettings } from "./queries";
+import { refreshSchwabToken, useMarketDataStatus, useRefreshInvestment, useSchwabSettings } from "./queries";
+import { useIsAdmin } from "../../shared/auth";
 import { moduleQueryKey } from "../../shared/queryKeys";
 
 export default function InvestmentPage() {
@@ -22,6 +23,8 @@ export default function InvestmentPage() {
 }
 
 function InvestmentChart() {
+  const isAdmin = useIsAdmin();
+  const market = useMarketDataStatus();
   const schwab = useSchwabSettings(true);
   const refresh = useRefreshInvestment();
   const retry = useMutation({
@@ -32,8 +35,9 @@ function InvestmentChart() {
   const requestedSymbol = searchParams.get("symbol")?.trim().toUpperCase() ?? "";
   const symbol = /^[A-Z$/][A-Z0-9./-]{0,14}$/.test(requestedSymbol) ? requestedSymbol : undefined;
   const theme = useContext(ThemeContext);
-  const connected = schwab.data?.connected === true;
-  const reauthorizationRequired = schwab.data?.reauthorizationRequired === true;
+  const provider = market.data?.provider;
+  const connected = market.data?.schwabConnected === true;
+  const reauthorizationRequired = market.data?.reauthorizationRequired === true;
 
   const login = schwab.data?.configured && (
     <Button
@@ -62,23 +66,23 @@ function InvestmentChart() {
     <div className="investment-page">
       <h1 className="sr-only">投资</h1>
       <section className="investment-view" aria-label="投资终端">
-        {schwab.isPending && <Skeleton className="investment-terminal" />}
-        {schwab.isError && (
+        {market.isPending && <Skeleton className="investment-terminal" />}
+        {market.isError && (
           <div className="investment-gate">
             <Notice
               tone="danger"
-              title="投资配置加载失败"
+              title="行情配置加载失败"
               action={
-                <Button variant="secondary" onClick={() => schwab.refetch()}>
+                <Button variant="secondary" onClick={() => market.refetch()}>
                   重新加载
                 </Button>
               }
             >
-              {schwab.error.message}
+              {market.error.message}
             </Notice>
           </div>
         )}
-        {reauthorizationRequired && (
+        {provider === "none" && reauthorizationRequired && (
           <div className="investment-gate">
             <Notice
               tone="warning"
@@ -97,22 +101,34 @@ function InvestmentChart() {
             </Notice>
           </div>
         )}
-        {schwab.data && !connected && !reauthorizationRequired && (
+        {provider === "none" && !reauthorizationRequired && (
           <div className="investment-gate">
             <Notice
-              title="未连接 Schwab"
+              title="暂无可用行情源"
               action={
                 <>
-                  <ButtonLink variant="secondary" to="/settings?tab=modules&module=investment">
-                    券商连接
+                  <ButtonLink variant="secondary" to={isAdmin
+                    ? "/admin/settings?tab=modules&module=investment" : "/settings?tab=modules&module=investment"}>
+                    {isAdmin ? "后台设置" : "券商连接"}
                   </ButtonLink>
                   {login}
                 </>
               }
-            />
+            >
+              {isAdmin ? "启用富途行情，或绑定本人 Schwab。" : "绑定本人 Schwab，或联系管理员启用富途行情。"}
+            </Notice>
           </div>
         )}
-        {connected && <InvestmentTerminal theme={theme} symbol={symbol} />}
+        {(provider === "schwab" || provider === "futu") && <InvestmentTerminal key={provider} theme={theme} symbol={symbol} />}
+        {provider === "futu" && reauthorizationRequired && (
+          <div className="investment-banner">
+            <Notice tone="warning" title="Schwab 授权已失效" action={
+              <ButtonLink variant="secondary" to="/settings?tab=modules&module=investment">重新授权</ButtonLink>
+            }>
+              已切换富途看盘，账户与交易已暂停。
+            </Notice>
+          </div>
+        )}
         {banner && <div className="investment-banner">{banner}</div>}
       </section>
     </div>
@@ -173,7 +189,8 @@ function InvestmentTerminal({ theme, symbol }: { theme: Theme; symbol?: string }
         setLoad("failed");
         return;
       }
-      if (type !== "workbench.schwab.status_changed") return;
+      if (type !== "workbench.schwab.status_changed" && type !== "workbench.market-data.status_changed") return;
+      void client.invalidateQueries({ queryKey: moduleQueryKey("investment", "market-data") });
       void client.invalidateQueries({
         queryKey: moduleQueryKey("investment", "schwab"),
       });

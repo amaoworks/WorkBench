@@ -36,6 +36,12 @@ func futuKLTypes(resolution string) (klType, subType int, ok bool) {
 		return klType15Min, subTypeKL15Min, true
 	case "30":
 		return klType30Min, subTypeKL30Min, true
+	case "1D":
+		return klTypeDay, subTypeKLDay, true
+	case "1W":
+		return klTypeWeek, subTypeKLWeek, true
+	case "1M":
+		return klTypeMonth, subTypeKLMonth, true
 	default:
 		return 0, 0, false
 	}
@@ -51,6 +57,12 @@ func resolutionForKLType(klType int) string {
 		return "15"
 	case klType30Min:
 		return "30"
+	case klTypeDay:
+		return "1D"
+	case klTypeWeek:
+		return "1W"
+	case klTypeMonth:
+		return "1M"
 	default:
 		return ""
 	}
@@ -66,13 +78,16 @@ type futuBar struct {
 }
 
 type futuOvernightQuote struct {
-	Symbol string   `json:"symbol"`
-	Price  float64  `json:"lp"`
-	High   *float64 `json:"high,omitempty"`
-	Low    *float64 `json:"low,omitempty"`
-	Volume *float64 `json:"volume,omitempty"`
-	Ch     *float64 `json:"ch,omitempty"`
-	Chp    *float64 `json:"chp,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Time        *int64   `json:"time,omitempty"`
+	Session     string   `json:"session,omitempty"`
+	Symbol      string   `json:"symbol"`
+	Price       float64  `json:"lp"`
+	High        *float64 `json:"high,omitempty"`
+	Low         *float64 `json:"low,omitempty"`
+	Volume      *float64 `json:"volume,omitempty"`
+	Ch          *float64 `json:"ch,omitempty"`
+	Chp         *float64 `json:"chp,omitempty"`
 }
 
 func (c *opendClient) dispatchKL(body []byte) {
@@ -87,7 +102,7 @@ func (c *opendClient) dispatchKL(body []byte) {
 	if code == "" || resolution == "" {
 		return
 	}
-	for _, bar := range parseKLList(s2c["klList"]) {
+	for _, bar := range parseKLListAll(s2c["klList"]) {
 		if c.onKL != nil {
 			c.onKL(code, resolution, bar)
 		}
@@ -102,6 +117,9 @@ func (c *opendClient) dispatchQuote(body []byte) {
 	list, _ := s2c["basicQotList"].([]any)
 	for _, item := range list {
 		row, _ := item.(map[string]any)
+		if c.onMainQuote != nil {
+			c.onMainQuote(row)
+		}
 		q, ok := parseOvernightQuote(row)
 		if ok && c.onQuote != nil {
 			c.onQuote(q)
@@ -138,6 +156,10 @@ func optionalFutuNumber(value any) *float64 {
 }
 
 func parseKLList(raw any) []futuBar {
+	return filterFutuBars(parseKLListAll(raw), "night", "1")
+}
+
+func parseKLListAll(raw any) []futuBar {
 	list, _ := raw.([]any)
 	out := make([]futuBar, 0, len(list))
 	for _, item := range list {
@@ -149,7 +171,7 @@ func parseKLList(raw any) []futuBar {
 			continue
 		}
 		bar, ok := parseKLBar(row)
-		if !ok || !isOvernightET(time.UnixMilli(bar.Time).UTC()) {
+		if !ok {
 			continue
 		}
 		out = append(out, bar)
@@ -167,7 +189,7 @@ func parseKLBar(row map[string]any) (futuBar, bool) {
 	low, ok3 := asFloat(row["lowPrice"])
 	closePx, ok4 := asFloat(row["closePrice"])
 	vol, _ := asFloat(row["volume"])
-	if !ok1 || !ok2 || !ok3 || !ok4 {
+	if !ok1 || !ok2 || !ok3 || !ok4 || open <= 0 || high <= 0 || low <= 0 || closePx <= 0 || math.IsNaN(ts) || math.IsInf(ts, 0) || math.IsNaN(open+high+low+closePx+vol) || math.IsInf(open+high+low+closePx+vol, 0) {
 		return futuBar{}, false
 	}
 	ms := int64(ts * 1000)
@@ -217,6 +239,11 @@ func (c *opendClient) subscribe(ctx context.Context, code string, subTypes []int
 }
 
 func (c *opendClient) getKL(ctx context.Context, code string, klType, reqNum int) ([]futuBar, error) {
+	bars, err := c.getKLAll(ctx, code, klType, reqNum)
+	return filterFutuBars(bars, "night", resolutionForKLType(klType)), err
+}
+
+func (c *opendClient) getKLAll(ctx context.Context, code string, klType, reqNum int) ([]futuBar, error) {
 	s2c, err := c.call(ctx, protoQotGetKL, map[string]any{"c2s": map[string]any{
 		"security": map[string]any{"market": marketUS, "code": code},
 		"klType":   klType, "reqNum": reqNum, "rehabType": rehabNone,
@@ -224,7 +251,7 @@ func (c *opendClient) getKL(ctx context.Context, code string, klType, reqNum int
 	if err != nil {
 		return nil, err
 	}
-	return parseKLList(s2c["klList"]), nil
+	return parseKLListAll(s2c["klList"]), nil
 }
 
 func (c *opendClient) getOvernightQuote(ctx context.Context, code string) (futuOvernightQuote, bool, error) {
@@ -275,6 +302,11 @@ func historyKLList(raw any) ([]any, error) {
 }
 
 func (c *opendClient) requestHistoryKL(ctx context.Context, code string, klType int, begin, end string) ([]futuBar, error) {
+	bars, err := c.requestHistoryKLSession(ctx, code, klType, begin, end, sessionALL)
+	return filterFutuBars(bars, "night", resolutionForKLType(klType)), err
+}
+
+func (c *opendClient) requestHistoryKLSession(ctx context.Context, code string, klType int, begin, end string, session int) ([]futuBar, error) {
 	var (
 		all      []futuBar
 		key      any
@@ -287,7 +319,7 @@ func (c *opendClient) requestHistoryKL(ctx context.Context, code string, klType 
 		c2s := map[string]any{
 			"rehabType": rehabNone, "klType": klType,
 			"security":  map[string]any{"market": marketUS, "code": code},
-			"beginTime": begin, "endTime": end, "maxAckKLNum": 1000, "session": sessionALL,
+			"beginTime": begin, "endTime": end, "maxAckKLNum": 1000, "session": session,
 		}
 		if key != nil {
 			c2s["nextReqKey"] = key
@@ -301,7 +333,7 @@ func (c *opendClient) requestHistoryKL(ctx context.Context, code string, klType 
 		if err != nil {
 			return nil, err
 		}
-		all = append(all, parseKLList(list)...)
+		all = append(all, parseKLListAll(list)...)
 		next, ok := s2c["nextReqKey"]
 		if !ok || next == nil || next == "" {
 			break

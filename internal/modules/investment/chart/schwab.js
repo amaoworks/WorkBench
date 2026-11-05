@@ -26,6 +26,12 @@ export async function schwabFetch(path, init = {}) {
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const url = path.startsWith("http") ? path : PREFIX + path;
   const response = await fetch(url, { ...init, method, headers, credentials: "same-origin" });
+  if (response.status === 409) {
+    const body = await response.clone().json().catch(() => null);
+    if (['schwab_disconnected', 'schwab_reauthorization_required'].includes(body?.code)) {
+      window.dispatchEvent(new Event('terminal:market-data-changed'));
+    }
+  }
   if (response.status === 400) {
     const body = await response.clone().json().catch(() => null);
     if (body?.code === "csrf_failed") {

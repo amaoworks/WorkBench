@@ -31,6 +31,15 @@ export const schwabSettingsSchema = z.object({
 export type SchwabSettings = z.infer<typeof schwabSettingsSchema>;
 export type SchwabSettingsInput = { appKey: string; appSecret: string; callbackUrl: string };
 
+export const marketDataStatusSchema = z.object({
+  provider: z.enum(["schwab", "futu", "none"]),
+  schwabConnected: z.boolean(),
+  reauthorizationRequired: z.boolean(),
+  futuEnabled: z.boolean(),
+  overnightEnabled: z.boolean(),
+});
+export type MarketDataStatus = z.infer<typeof marketDataStatusSchema>;
+
 export const futuSettingsSchema = z.object({
   enabled: z.boolean(),
   overnightEnabled: z.boolean(),
@@ -79,9 +88,9 @@ export const overviewSnapshotSchema = z.object({
 });
 export type OverviewSnapshot = z.infer<typeof overviewSnapshotSchema>;
 export const overviewQuotesSchema = z.object({
-  status: overviewStatus, message: z.string().optional(), session: overviewSessionSchema,
+  status: overviewStatus, provider: z.enum(["schwab", "futu", "none"]), message: z.string().optional(), session: overviewSessionSchema,
   items: z.array(z.object({
-    symbol: z.string(), description: z.string(), price: z.number(), changePct: z.number(), session: overviewSessionSchema,
+    symbol: z.string(), description: z.string(), price: z.number(), changePct: z.number().optional(), session: overviewSessionSchema,
     extChangePct: z.number().optional(), held: z.boolean(), watched: z.boolean(), spark: z.array(z.number()).optional()
   })),
   updatedAt: z.string().optional()

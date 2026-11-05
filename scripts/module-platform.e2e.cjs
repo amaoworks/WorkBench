@@ -92,7 +92,7 @@ async function choose(page, trigger, option) {
     await page.getByRole("switch", { name: "投资", exact: true }).click();
     await page.getByRole("link", { name: "投资", exact: true }).click();
     await page.getByRole("region", { name: "投资终端", exact: true }).waitFor();
-    await page.getByRole("heading", { name: "未连接 Schwab", exact: true }).waitFor();
+    await page.getByRole("heading", { name: "暂无可用行情源", exact: true }).waitFor();
     assert.equal(await page.getByRole("button", { name: "生成 AI 摘要", exact: true }).count(), 0);
     await page.goto(baseURL);
     await page.getByRole("button", { name: "配置卡片", exact: true }).click();

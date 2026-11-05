@@ -120,7 +120,7 @@ docker compose up -d --no-build
 
 共享 AI 服务、Schwab 应用配置和富途账号在后台设置保存；个人 Wallos 连接、资讯偏好和 Schwab 授权在个人设置管理。OpenD 连接地址和非本机许可由部署配置管理。
 
-夜盘覆盖使用独立的 OpenD 容器，构建文件位于源码仓库的 [futu-opend](https://github.com/amaoworks/WorkBench/tree/main/futu-opend) 目录。Release 的部署包和二进制包均不包含该目录；使用部署包时，从同版本标签的源码归档中复制完整的 `futu-opend/` 目录到部署包根目录。
+富途主行情与夜盘覆盖可使用独立的 OpenD 容器，构建文件位于源码仓库的 [futu-opend](https://github.com/amaoworks/WorkBench/tree/main/futu-opend) 目录。Release 的部署包和二进制包均不包含该目录；使用部署包时，从同版本标签的源码归档中复制完整的 `futu-opend/` 目录到部署包根目录。
 
 ```bash
 # 当前目录须有源码仓库的 compose.yaml、futu-opend/ 和已配置的根目录 .env
@@ -129,7 +129,9 @@ docker compose -f compose.yaml -f futu-opend/compose.workbench.yaml --env-file .
 docker compose -f compose.image.yaml -f futu-opend/compose.workbench.yaml --env-file .env up -d --build
 ```
 
-管理员在「后台设置 → 业务管理 → 投资」填写 Futu 账号和登录密码，保存并启用 Futu，然后单独启用夜盘。主机、端口和非本机许可已由配套 Compose 配置；独立部署使用 `WORKBENCH_FUTU_OPEND_ADDRESS`、`WORKBENCH_FUTU_ALLOW_NON_LOCAL`。需要使用支持共享登录配置的当前工作台镜像和配套 OpenD 镜像。首次登录若要求验证码，telnet `127.0.0.1:22222`。独立 OpenD 与账号保留规则见源码中的 `futu-opend/README.md`；在线说明见 [OpenD 部署说明](https://github.com/amaoworks/WorkBench/blob/main/futu-opend/README.md)。
+管理员在「后台设置 → 业务管理 → 投资」（`/admin/settings?tab=modules&module=investment`）填写 Futu 账号和登录密码，保存并启用 Futu；需要夜盘时另行启用夜盘开关。主机、端口和非本机许可已由配套 Compose 配置；独立部署使用 `WORKBENCH_FUTU_OPEND_ADDRESS`、`WORKBENCH_FUTU_ALLOW_NON_LOCAL`。需要使用支持共享登录配置的当前工作台镜像和配套 OpenD 镜像。首次登录若要求验证码，telnet `127.0.0.1:22222`。独立 OpenD 与账号保留规则见源码中的 `futu-opend/README.md`；在线说明见 [OpenD 部署说明](https://github.com/amaoworks/WorkBench/blob/main/futu-opend/README.md)。
+
+Futu 可为未绑定 Schwab 或授权失效的已登录用户提供美股/ETF 只读行情，普通时段不依赖夜盘开关；本人 Schwab 授权有效时普通时段使用 Schwab，富途只补夜盘。实际可用性取决于 OpenD 登录、账号行情权限、标的及订阅和历史额度，部署方需确认行情许可允许多用户使用。Schwab App 配置也在后台维护，本人 OAuth 在 `/settings?tab=modules&module=investment`；持仓、订单、交易和价格监控仍只使用本人授权，不共享管理员令牌。
 
 配置宿主机反向代理后，通过 `.env` 中的 HTTPS 地址访问。Workbench 容器以 UID/GID `65532:65532` 运行，`/data` 挂载持久化卷，`/tmp` 使用容器文件系统。日志输出到 stderr，并由 Compose 配置滚动保存。命名卷首次创建时继承镜像中 `/data` 的权限。
 

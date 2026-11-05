@@ -28,6 +28,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     context.on("page", page => page.on("pageerror", error => errors.push(error.message)));
     const healthy = { appKey: "fixture", callbackUrl: "https://example.test/oauth/schwab", hasAppSecret: true, connected: true, reauthorizationRequired: false, lastError: "" };
     let state = { ...healthy }, loads = 0, authorizations = 0;
+    await context.route("**/api/modules/investment/market-data", route => route.fulfill({ json: {
+      provider: state.connected && !state.reauthorizationRequired ? "schwab" : "none",
+      schwabConnected: state.connected, reauthorizationRequired: state.reauthorizationRequired, futuEnabled: false, overnightEnabled: false,
+    } }));
     await context.route("**/api/modules/investment/schwab", route => route.fulfill({ json: state }));
     await context.route("**/api/modules/investment/schwab/oauth/refresh", route => {
       assert.equal(route.request().method(), "POST");

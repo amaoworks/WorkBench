@@ -156,10 +156,12 @@ export default class Broker {
     async _context() {
         let ready;
         do { ready = this._ready; await ready; } while (ready !== this._ready);
+        if (this._destroyed) throw new Error('交易连接已关闭，交易不可用');
         if (!this._account) throw new Error('尚未连接交易账户');
         return { account: this._account, epoch: this._epoch, signal: this._controller.signal };
     }
     _checkContext(context) {
+        if (this._destroyed) throw new Error('交易连接已关闭，交易不可用');
         if (context.epoch !== this._epoch || context.account !== this._account) throw new Error('账户已切换，请重试');
     }
     async _response(context, suffix, init = {}, action = '读取账户数据') {
@@ -529,6 +531,13 @@ export default class Broker {
     destroy() {
         this._destroyed = true;
         this._invalidate();
+        this._accounts = [];
+        this._account = '';
+        this._positionsInflight = undefined;
+        this._lastEquity = undefined;
+        this._equity?.setValue(0);
+        this._cash?.setValue(0);
+        this._buyingPower?.setValue(0);
         clearInterval(this._poll);
         clearTimeout(this._refreshTimer);
         clearTimeout(this._historyTimer);

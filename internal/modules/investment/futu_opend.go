@@ -32,6 +32,9 @@ const protoQotGetSubInfo uint32 = 3003
 
 const protoQotGetBasicQot uint32 = 3004
 
+// Official FutunnOpen/py-futu-api Qot_GetStaticInfo protocol.
+const protoQotGetStaticInfo uint32 = 3202
+
 const protoQotUpdateBasicQot uint32 = 3005
 
 const protoQotGetKL uint32 = 3006
@@ -47,6 +50,15 @@ const retSucceed = 0
 const packetEncNone = -1
 
 const sessionALL = 3
+const sessionRTH = 1
+const sessionETH = 2
+
+const klTypeDay = 2
+const klTypeWeek = 3
+const klTypeMonth = 4
+const subTypeKLDay = 6
+const subTypeKLWeek = 12
+const subTypeKLMonth = 13
 
 const marketUS = 11
 
@@ -82,7 +94,7 @@ var errOpendClosed = errors.New("OpenD 连接已关闭")
 
 var allowedSend = map[uint32]struct{}{
 	protoInitConnect: {}, protoGetGlobalState: {}, protoKeepAlive: {},
-	protoQotSub: {}, protoQotGetSubInfo: {}, protoQotGetBasicQot: {}, protoQotGetKL: {},
+	protoQotSub: {}, protoQotGetSubInfo: {}, protoQotGetBasicQot: {}, protoQotGetKL: {}, protoQotGetStaticInfo: {},
 	protoQotRequestHistoryKL: {}, protoQotRequestHistoryKLQuota: {},
 }
 
@@ -102,14 +114,15 @@ type opendReply struct {
 }
 
 type opendClient struct {
-	conn    net.Conn
-	mu      sync.Mutex
-	serial  uint32
-	pending map[uint32]chan opendReply
-	onKL    func(symbol, resolution string, bar futuBar)
-	onQuote func(futuOvernightQuote)
-	closed  bool
-	stop    chan struct{}
+	conn        net.Conn
+	mu          sync.Mutex
+	serial      uint32
+	pending     map[uint32]chan opendReply
+	onKL        func(symbol, resolution string, bar futuBar)
+	onQuote     func(futuOvernightQuote)
+	onMainQuote func(map[string]any)
+	closed      bool
+	stop        chan struct{}
 }
 
 func dialOpend(ctx context.Context, addr, clientID string) (*opendClient, error) {

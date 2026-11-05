@@ -193,7 +193,7 @@ test('quote listeners hold a separate Futu BASIC lease without releasing a bar l
     const events = new EventTarget();
     const commands = [];
     const feed = new Datafeed({
-        events, stream: { ready: false }, overnightRequest: enabledOvernight,
+        events, stream: { ready: false }, overnightRequest: enabledOvernight, now: () => nightTime,
         futuRequest: async (_path, init) => {
             commands.push(JSON.parse(init.body));
             return new Response(JSON.stringify({ success: true, applied: true }));
@@ -225,7 +225,7 @@ test('all Futu ADD commands including K-line and BASIC wait for stream readiness
     const commands = [];
     const futuStream = { ready: false, start() {}, stop() {} };
     const feed = new Datafeed({
-        events, stream: { ready: false }, futuStream, overnightRequest: enabledOvernight,
+        events, stream: { ready: false }, futuStream, overnightRequest: enabledOvernight, now: () => nightTime,
         futuRequest: async (_path, init) => {
             commands.push(JSON.parse(init.body));
             return new Response(JSON.stringify({ success: true, applied: true, generation: 'gateway:1', owner: 'owner:1' }));

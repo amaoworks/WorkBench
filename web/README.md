@@ -40,7 +40,8 @@ src/assets/fonts/       本地打包的 Outfit 标题字体（woff2 与 SIL OFL 
 - 业务设置弹窗最大宽度 480px，支持 Escape、遮罩及关闭按钮，接入 `useReportDirty` 拦截未保存草稿关闭，并将焦点还给触发按钮。
 - 通知的查看、已读、归档使用共享 Button/ButtonLink 的 ghost、sm 规格；业务只提供 actionRoute 和 actionLabel。
 - 宽度不超过 900px 时设置分类变为横向滚动胶囊，避免纵向溢出；新增页面检查桌面和窄屏宽度。
-- `/investment` 只显示图表（铺满导航下方区域，不叠加悬浮按钮；铺满/全屏/新窗口为后续计划），价格监控在 `/investment/monitor`。
+- `/investment` 只显示图表（铺满导航下方区域，不叠加悬浮按钮；铺满/全屏/新窗口为后续计划），价格监控在 `/investment/monitor`。行情入口读取 `/api/modules/investment/market-data` 的数据源与能力：本人 Schwab 授权有效时以 Schwab 为主、富途补夜盘，未授权或授权失效时使用可用的富途只读看盘；两种模式都要求工作台登录。富途主行情不受夜盘开关影响，价格监控仍要求本人 Schwab 授权。
+- 富途与 Schwab App 配置在 `/admin/settings?tab=modules&module=investment`，本人 OAuth 在 `/settings?tab=modules&module=investment`。只读行情不能启用账户、持仓、订单或交易；总览行情卡可显示本人自选及数据源，资产快照仍按券商授权状态展示。富途代码查询使用精确美股/ETF 代码，不提供全市场模糊搜索。
 
 ## 开发与构建
 

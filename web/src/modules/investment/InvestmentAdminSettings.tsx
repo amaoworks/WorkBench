@@ -182,7 +182,9 @@ function InvestmentAdminSettingsForm({
       <ConfirmDialog
         open={confirmDisable}
         title="停用富途牛牛行情？"
-        description={overnight.data?.enabled ? "富途牛牛服务将停止，夜盘行情也将停用。" : "富途牛牛服务将停止。"}
+        description={overnight.data?.enabled
+          ? "所有用户的富途行情与夜盘将停止，未绑定 Schwab 的用户将无法看盘。"
+          : "所有用户的富途行情将停止，未绑定 Schwab 的用户将无法看盘。"}
         busy={false}
         confirmLabel="停用并保存"
         onCancel={() => setConfirmDisable(false)}

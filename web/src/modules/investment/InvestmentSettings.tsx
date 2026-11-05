@@ -5,13 +5,13 @@ import { Skeleton } from "../../components/ui/States";
 import { useIsAdmin } from "../../shared/auth";
 import { useSettingsDialog } from "../../shared/settingsDialog";
 import { SchwabConnectionSection } from "./SchwabSettings";
-import { useOvernightSettings, useSchwabSettings } from "./queries";
+import { useMarketDataStatus, useSchwabSettings } from "./queries";
 
 export default function InvestmentSettings({ enabled }: { enabled: boolean }) {
   const isAdmin = useIsAdmin();
   const dialog = useSettingsDialog();
   const schwab = useSchwabSettings(enabled);
-  const overnight = useOvernightSettings(enabled);
+  const market = useMarketDataStatus(enabled);
   if (!enabled) {
     return (
       <Notice
@@ -22,7 +22,7 @@ export default function InvestmentSettings({ enabled }: { enabled: boolean }) {
       </Notice>
     );
   }
-  if (schwab.isPending || overnight.isPending) return <Skeleton className="h-64" />;
+  if (schwab.isPending || market.isPending) return <Skeleton className="h-64" />;
   return (
     <div className="investment-settings space-y-8">
       {schwab.isError ? (
@@ -32,19 +32,21 @@ export default function InvestmentSettings({ enabled }: { enabled: boolean }) {
       ) : (
         schwab.data && <SchwabConnectionSection initial={schwab.data} canManageApp={isAdmin} />
       )}
-      {overnight.isError ? (
-        <Notice tone="danger" title="夜盘设置读取失败">
-          {overnight.error.message}
-        </Notice>
-      ) : (
-        overnight.data && (
-          <div className="flex items-center justify-between gap-3 text-sm">
+      {market.isError ? (
+        <Notice tone="danger" title="行情配置读取失败">{market.error.message}</Notice>
+      ) : market.data && (
+        <div className="space-y-4 text-sm">
+          <div className="flex items-center justify-between gap-3">
+            <span>主行情源</span>
+            <Badge>{market.data.provider === "schwab" ? "Schwab" : market.data.provider === "futu" ? "富途" : "未配置"}</Badge>
+          </div>
+          <div className="flex items-center justify-between gap-3">
             <span>共享夜盘行情</span>
-            <Badge tone={overnight.data.enabled && overnight.data.providerEnabled ? "info" : "neutral"}>
-              {overnight.data.enabled && overnight.data.providerEnabled ? "已开放" : "未开放"}
+            <Badge tone={market.data.overnightEnabled ? "info" : "neutral"}>
+              {market.data.overnightEnabled ? "已开放" : "未开放"}
             </Badge>
           </div>
-        )
+        </div>
       )}
       {dialog && (
         <div className="settings-dialog-footer">

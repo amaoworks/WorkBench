@@ -22,6 +22,7 @@ const (
 )
 
 type futuWSClient struct {
+	main       bool
 	userID     string
 	sessionID  string
 	subsMu     sync.RWMutex
@@ -57,18 +58,19 @@ func (c *futuWSClient) writePump() {
 }
 
 type futuGateway struct {
-	deps       futuGatewayDeps
-	connectMu  sync.Mutex
-	enabled    bool
-	mu         sync.Mutex
-	client     *opendClient
-	instanceID string
-	generation uint64
-	nextOwner  uint64
-	closed     bool
-	refs       map[subKey]*subLease
-	subOps     map[subOperationKey]*subOperation
-	clients    map[*futuWSClient]struct{}
+	deps             futuGatewayDeps
+	connectMu        sync.Mutex
+	enabled          bool
+	overnightEnabled bool
+	mu               sync.Mutex
+	client           *opendClient
+	instanceID       string
+	generation       uint64
+	nextOwner        uint64
+	closed           bool
+	refs             map[subKey]*subLease
+	subOps           map[subOperationKey]*subOperation
+	clients          map[*futuWSClient]struct{}
 }
 
 type futuGatewayDeps struct {
@@ -159,7 +161,7 @@ func (g *futuGateway) ensureConnection(ctx context.Context, requireOvernight boo
 		if requireOvernight {
 			return nil, errOverlayOff
 		}
-		return nil, errors.New("富途牛牛未启用")
+		return nil, errFutuDisabled
 	}
 	if requireOvernight && !rec.OvernightEnabled {
 		return nil, errOverlayOff
@@ -197,8 +199,21 @@ func (g *futuGateway) ensureConnection(ctx context.Context, requireOvernight boo
 	if err != nil {
 		return nil, err
 	}
+	loggedIn, err := client.globalState(ctx)
+	if err != nil || !loggedIn {
+		client.close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, errors.New("富途行情尚未登录")
+	}
 	client.onKL = g.broadcastKL
 	client.onQuote = g.broadcastQuote
+	client.onMainQuote = func(row map[string]any) {
+		if quote, ok := parseMainFutuQuote(row, time.Now(), rec.OvernightEnabled); ok {
+			g.broadcastMainQuote(quote, false)
+		}
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.closed || g.generation != generation {
@@ -206,6 +221,7 @@ func (g *futuGateway) ensureConnection(ctx context.Context, requireOvernight boo
 		return nil, errors.New("富途牛牛配置已变更，请重试")
 	}
 	g.client = client
+	g.overnightEnabled = rec.OvernightEnabled
 	go func() {
 		<-client.stop
 		g.mu.Lock()
@@ -219,7 +235,7 @@ func (g *futuGateway) ensureConnection(ctx context.Context, requireOvernight boo
 }
 
 func (g *futuGateway) addWS(ctx context.Context, client *futuWSClient) error {
-	if _, err := g.ensureOverlay(ctx); err != nil {
+	if _, err := g.ensureConnection(ctx, !client.main); err != nil {
 		return err
 	}
 	g.mu.Lock()
@@ -270,6 +286,10 @@ func (g *futuGateway) removeWS(client *futuWSClient) {
 }
 
 func (g *futuGateway) broadcast(payload []byte) {
+	g.broadcastMode(payload, false)
+}
+
+func (g *futuGateway) broadcastMode(payload []byte, main bool) {
 	var message struct {
 		Data []struct {
 			Symbol     string `json:"symbol"`
@@ -284,6 +304,9 @@ func (g *futuGateway) broadcast(payload []byte) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	for client := range g.clients {
+		if client.main != main {
+			continue
+		}
 		client.subsMu.RLock()
 		subscribed := false
 		for key := range client.subs {
@@ -307,6 +330,15 @@ func (g *futuGateway) broadcastKL(symbol, resolution string, bar futuBar) {
 	payload, _ := json.Marshal(map[string]any{"data": []any{map[string]any{
 		"service": "FUTU_KL", "symbol": symbol, "resolution": resolution, "bar": bar,
 	}}})
+	g.mu.Lock()
+	overnightEnabled := g.overnightEnabled
+	g.mu.Unlock()
+	if overnightEnabled || !intradayFutuResolution(resolution) || !isOvernightET(time.UnixMilli(bar.Time)) {
+		g.broadcastMode(payload, true)
+	}
+	if !intradayFutuResolution(resolution) || !isOvernightET(time.UnixMilli(bar.Time)) {
+		return
+	}
 	g.broadcast(payload)
 	_ = g.deps.queries.UpsertFutuBar(context.Background(), investmentsqlc.UpsertFutuBarParams{
 		Symbol: symbol, Resolution: resolution, TimeMs: bar.Time, Open: bar.Open, High: bar.High, Low: bar.Low, Close: bar.Close, Volume: bar.Volume,
@@ -320,6 +352,11 @@ func (g *futuGateway) broadcastQuote(q futuOvernightQuote) {
 func (g *futuGateway) broadcastQuoteUpdate(q futuOvernightQuote, snapshot bool) {
 	payload, _ := json.Marshal(map[string]any{"data": []any{map[string]any{"service": "FUTU_QUOTE", "symbol": q.Symbol, "quote": q, "snapshot": snapshot}}})
 	g.broadcast(payload)
+}
+
+func (g *futuGateway) broadcastMainQuote(q futuOvernightQuote, snapshot bool) {
+	payload, _ := json.Marshal(map[string]any{"data": []any{map[string]any{"service": "FUTU_QUOTE", "symbol": q.Symbol, "quote": q, "snapshot": snapshot}}})
+	g.broadcastMode(payload, true)
 }
 
 var errOverlayOff = errors.New("夜盘覆盖未启用")

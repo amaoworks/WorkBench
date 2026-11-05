@@ -34,6 +34,10 @@ type fakeOpenD struct {
 	subActions     []bool
 	basicQotList   []map[string]any
 	quoteN         int
+	staticTypes    map[string]int
+	loggedOut      bool
+	historySession int
+	historyKLType  int
 }
 
 func startFakeOpenD(t *testing.T) *fakeOpenD {
@@ -96,7 +100,24 @@ func (f *fakeOpenD) serve(conn net.Conn) {
 		case protoKeepAlive:
 			s2c = map[string]any{"time": time.Now().Unix()}
 		case protoGetGlobalState:
-			s2c = map[string]any{"qotLogined": true, "trdLogined": false}
+			f.mu.Lock()
+			s2c = map[string]any{"qotLogined": !f.loggedOut, "trdLogined": false}
+			f.mu.Unlock()
+		case protoQotGetStaticInfo:
+			list := []any{}
+			securities, _ := c2s["securityList"].([]any)
+			f.mu.Lock()
+			for _, raw := range securities {
+				security, _ := raw.(map[string]any)
+				code, _ := security["code"].(string)
+				kind := 3
+				if value, ok := f.staticTypes[code]; ok {
+					kind = value
+				}
+				list = append(list, map[string]any{"basic": map[string]any{"security": security, "secType": kind, "name": code, "exchType": 5}})
+			}
+			f.mu.Unlock()
+			s2c = map[string]any{"staticInfoList": list}
 		case protoQotSub:
 			isSubscribe, _ := c2s["isSubOrUnSub"].(bool)
 			f.mu.Lock()
@@ -139,6 +160,8 @@ func (f *fakeOpenD) serve(conn net.Conn) {
 		case protoQotRequestHistoryKL:
 			f.mu.Lock()
 			f.historyN++
+			f.historySession, _ = asInt(c2s["session"])
+			f.historyKLType, _ = asInt(c2s["klType"])
 			f.historyBegin, _ = c2s["beginTime"].(string)
 			f.historyEnd, _ = c2s["endTime"].(string)
 			failed, nextKey, history, omitKL := f.historyFail, f.historyNextKey, f.histList, f.historyOmitKL

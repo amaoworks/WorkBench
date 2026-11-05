@@ -37,6 +37,9 @@ async function toggleTheme(page) {
     await context.route("**/api/modules/investment/schwab", route => route.fulfill({ json: {
       appKey: "fixture", callbackUrl: "https://example.test/oauth/schwab", hasAppSecret: true, connected: true, reauthorizationRequired: false, lastError: "",
     } }));
+    await context.route("**/api/modules/investment/market-data", route => route.fulfill({ json: {
+      provider: "schwab", schwabConnected: true, reauthorizationRequired: false, futuEnabled: false, overnightEnabled: false,
+    } }));
     let loads = 0;
     let releaseFirstTerminal, notifyFirstTerminal;
     const firstTerminalGate = new Promise(resolve => { releaseFirstTerminal = resolve; });

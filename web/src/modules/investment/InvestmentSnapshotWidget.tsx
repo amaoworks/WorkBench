@@ -33,7 +33,7 @@ export default function InvestmentSnapshotWidget({ widget }: { widget: Widget })
   if (data.status === "disconnected")
     return (
       <WidgetSetup action={<ButtonLink size="sm" variant="secondary" to="/settings?tab=modules&module=investment">连接券商</ButtonLink>}>
-        未连接 Schwab
+        未连接 Schwab 账户
       </WidgetSetup>
     );
   if (data.status === "reauth")

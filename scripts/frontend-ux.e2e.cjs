@@ -326,7 +326,7 @@ async function visitWithoutOverflow(page, url, label, ready) {
       });
       await visitWithoutOverflow(page, `${baseURL}/investment`, `Investment terminal at ${prefix}`, async () => {
         await page.getByRole("region", { name: "投资终端", exact: true }).waitFor();
-        await page.getByRole("heading", { name: "未连接 Schwab", exact: true }).waitFor();
+        await page.getByRole("heading", { name: "暂无可用行情源", exact: true }).waitFor();
       });
       await visitWithoutOverflow(page, `${baseURL}/investment/monitor`, `Investment monitor at ${prefix}`, async () => {
         await page.getByRole("button", { name: "添加规则", exact: true }).waitFor();

@@ -1,9 +1,9 @@
 import { schwabFetch } from './schwab.js';
-import { EQUITY_24H_SESSION, futuFetch, overnightFetch, NIGHT_RESOLUTIONS, seriesKey, usesFutuTicks } from './futu.js';
+import { EQUITY_24H_SESSION, futuFetch, futuResponseError, futuSessionContains, overnightFetch, NIGHT_RESOLUTIONS, seriesKey, usesFutuTicks } from './futu.js';
 import { identifyAssetType, getAssetSubsessions } from './datafeed-symbols.js';
 import { isSchwabTradeUpdate, mapSchwabQuote, seedSchwabVolumeBaseline, updateSchwabBars } from './datafeed-realtime.js';
-import { get24HourBars, getFutuNightBars, getSchwabBars } from './datafeed-bars.js';
-import { mergeQuoteValues, quoteData, schwabRestQuoteValues, schwabStreamQuoteValues } from './datafeed-quotes.js';
+import { futuBarTime, get24HourBars, getFutuBars, getFutuNightBars, getSchwabBars } from './datafeed-bars.js';
+import { futuQuoteValues, mergeQuoteValues, quoteData, schwabRestQuoteValues, schwabStreamQuoteValues } from './datafeed-quotes.js';
 
 const SUPPORTED_RESOLUTIONS = ['1', '5', '15', '30', '1D', '1W', '1M'];
 const SUBSCRIBE_BATCH_MS = 100;
@@ -22,9 +22,14 @@ function olderFutuGeneration(candidate, current) {
 // Owns TradingView callbacks, connection epochs, caches and subscription lifetime.
 // Provider conversion and history normalization live in the datafeed-* modules.
 export default class Datafeed {
-    constructor({ request = schwabFetch, futuRequest = futuFetch, overnightRequest = overnightFetch, events = window, stream = window.ws, futuStream, resetCharts = () => {}, onSessionResolved = () => {}, now = Date.now } = {}) {
-        this.request = request;
-        this.futuRequest = futuRequest;
+    constructor({ provider = 'schwab', request = schwabFetch, futuRequest = futuFetch, overnightRequest = overnightFetch, events = window, stream = window.ws, futuStream, resetCharts = () => {}, onSessionResolved = () => {}, now = Date.now } = {}) {
+        this.provider = provider;
+        this.controller = new AbortController();
+        const scoped = request => (path, init = {}) => request(path, {
+            ...init, signal: init.signal ? AbortSignal.any([init.signal, this.controller.signal]) : this.controller.signal,
+        });
+        this.request = scoped(request);
+        this.futuRequest = scoped(futuRequest);
         this.overnightRequest = overnightRequest;
         this.events = events;
         this.now = now;
@@ -52,6 +57,8 @@ export default class Datafeed {
 
         this.quote_cache = new Map();
         this.schwabQuotes = new Map();
+        this.futuQuotes = new Map();
+        this.futuQuoteTimes = new Map();
         this.futuOvernight = new Map();
         this.quoteRequests = new Map();
         this.snapshot_cache = new Map();
@@ -60,6 +67,7 @@ export default class Datafeed {
         this.cumulativeVolumes = new Map();
         this.cumulativeVolumeDates = new Map();
         this.onLevelOne = (e) => {
+            if (this.destroyed || this.provider !== 'schwab') return;
             const raw = e.detail;
             if (!raw || !Array.isArray(raw.content)) return;
             const timestamp = Number(raw.timestamp ?? Date.now());
@@ -104,6 +112,7 @@ export default class Datafeed {
             }
         };
         this.onStreamReady = () => {
+            if (this.destroyed || this.provider !== 'schwab') return;
             const firstReady = this.streamEpoch === 0 && !this.streamReady;
             this.streamReady = true;
             if (firstReady) {
@@ -124,14 +133,22 @@ export default class Datafeed {
             this.resetCharts();
             this.queueSubscriptions();
         };
-        this.onStreamClosed = () => { this.streamReady = false; this.streamEpoch++; this.SUB.clear(); };
+        this.onStreamClosed = () => {
+            if (this.provider !== 'schwab' || this.destroyed) return;
+            this.streamReady = false; this.streamEpoch++; this.SUB.clear();
+        };
         this.onFutuKL = (e) => {
             const item = e.detail;
             if (!item?.symbol || !item.bar) return;
-            const bar = { ...item.bar };
+            const bar = { ...item.bar, time: this.provider === 'futu' ? futuBarTime(item.resolution, Number(item.bar.time)) : item.bar.time };
+            if (this.destroyed || !Object.values(bar).every(Number.isFinite)) return;
             for (const listener of this.barListeners.values()) {
                 if (listener.symbol !== item.symbol || listener.resolution !== item.resolution) continue;
-                if (!usesFutuTicks(listener.subsessionId, bar.time)) continue;
+                if (this.provider === 'futu') {
+                    if (!NIGHT_RESOLUTIONS.has(item.resolution)) {
+                        if (listener.subsessionId !== 'regular') continue;
+                    } else if (!futuSessionContains(listener.subsessionId, bar.time, this.overlayCache.enabled)) continue;
+                } else if (!usesFutuTicks(listener.subsessionId, bar.time)) continue;
                 const key = seriesKey(item.symbol, listener.subsessionId);
                 const cache = this.latestBars.get(key) ?? this.latestBars.set(key, new Map()).get(key);
                 const previous = cache.get(item.resolution);
@@ -142,8 +159,19 @@ export default class Datafeed {
         };
         this.onFutuQuote = (e) => {
             const item = e.detail;
-            if (!item?.symbol || !item.quote) return;
+            if (this.destroyed || !item?.symbol || !item.quote) return;
             if (!this.hasFutuListener(item.symbol, '')) return;
+            if (this.provider === 'futu') {
+                const quote = futuQuoteValues(item.quote, this.overlayCache.enabled);
+                if (!Number.isFinite(quote.lp)) return;
+                const time = Number(item.quote.time);
+                if (Number.isFinite(time) && time < (this.futuQuoteTimes.get(item.symbol) ?? 0)) return;
+                if (item.snapshot && this.futuQuotes.has(item.symbol)) return;
+                if (Number.isFinite(time)) this.futuQuoteTimes.set(item.symbol, time);
+                this.futuQuotes.set(item.symbol, quote);
+                this.publishQuote(item.symbol);
+                return;
+            }
             if (this.mergedQuote(item.symbol).cs !== 'night') return;
             // A delayed initial snapshot cannot replace a live quote.
             if (item.snapshot && this.futuOvernight.has(item.symbol)) return;
@@ -153,11 +181,14 @@ export default class Datafeed {
         this.onFutuClosed = () => {
             this.futuEpoch++;
             this.futuConnected = false;
-            const symbols = [...this.futuOvernight.keys()];
+            const symbols = [...new Set([...this.futuOvernight.keys(), ...this.futuQuotes.keys()])];
             this.futuOvernight.clear();
+            this.futuQuotes.clear();
+            this.futuQuoteTimes.clear();
+            if (this.provider === 'futu') this.quoteRequests.clear();
             symbols.forEach(symbol => this.publishQuote(symbol));
             for (const [key] of this.latestBars) {
-                if (key.endsWith(`\0night`) || key.endsWith(`\0${EQUITY_24H_SESSION}`)) this.latestBars.delete(key);
+                if (this.provider === 'futu' || key.endsWith(`\0night`) || key.endsWith(`\0${EQUITY_24H_SESSION}`)) this.latestBars.delete(key);
             }
         };
         this.onFutuReady = (event) => {
@@ -168,11 +199,12 @@ export default class Datafeed {
             this.futuConnected = true;
             this.observeFutuGeneration(generation, owner);
             for (const listener of this.barListeners.values()) {
-                if (listener.subsessionId === 'night' || listener.subsessionId === EQUITY_24H_SESSION) {
+                if (this.provider === 'futu' || listener.subsessionId === 'night' || listener.subsessionId === EQUITY_24H_SESSION) {
                     this.latestBars.delete(seriesKey(listener.symbol, listener.subsessionId));
                     listener.onReset?.();
                 }
             }
+            if (this.provider === 'futu') this.resetCharts();
             this.queueFutuSubscriptions();
         };
         events.addEventListener('LEVELONE_ANY', this.onLevelOne);
@@ -195,16 +227,20 @@ export default class Datafeed {
                 const response = await this.overnightRequest();
                 if (!response.ok) throw new Error('读取夜盘设置失败');
                 const body = await response.json();
-                overlay = { enabled: body.enabled === true && body.providerEnabled === true };
+                overlay = { enabled: body.enabled === true && body.providerEnabled === true, providerEnabled: body.providerEnabled === true };
             } catch {
                 overlay = { enabled: false };
             }
+            if (this.destroyed) return overlay;
             this.overlayCache = overlay;
             this.overlayCachedAt = Date.now();
             if (!this.destroyed) {
-                if (overlay.enabled) this.futuStream?.start?.();
-                else this.futuStream?.stop?.();
-                if (!overlay.enabled) this.futuOvernight.clear();
+                if (this.provider === 'futu' && overlay.providerEnabled) this.futuStream?.start?.();
+                else if (!overlay.enabled) this.futuStream?.stop?.();
+                if (!overlay.enabled) {
+                    this.futuOvernight.clear();
+                    for (const [symbol, quote] of this.futuQuotes) if (quote.cs === 'night') this.futuQuotes.delete(symbol);
+                }
                 for (const symbol of this.quote_cache.keys()) this.publishQuote(symbol);
             }
             return overlay;
@@ -232,27 +268,31 @@ export default class Datafeed {
             return;
         }
 
-        const url = "/marketdata/v1/instruments?symbol=" + encodeURIComponent(userInput) + "&projection=symbol-search";
+        const epoch = this.streamEpoch;
+        const url = this.provider === 'futu' ? '/symbols?query=' + encodeURIComponent(userInput)
+            : '/marketdata/v1/instruments?symbol=' + encodeURIComponent(userInput) + '&projection=symbol-search';
         try {
-            const response = await this.request(url);
+            const response = await (this.provider === 'futu' ? this.futuRequest(url) : this.request(url));
+            if (this.destroyed || epoch !== this.streamEpoch) return;
             if (!response.ok) {
                 console.error("搜索请求失败: " + response.status);
                 onResult([]);
                 return;
             }
             const data = await response.json();
-            const items = Array.isArray(data) ? data : (data.instruments || []);
-            const searchResults = items.map((item) => {
+            if (this.destroyed || epoch !== this.streamEpoch) return;
+            const items = this.provider === 'futu' ? data.items : Array.isArray(data) ? data : (data.instruments || []);
+            const searchResults = (items || []).map((item) => {
                 return {
                     symbol: item.symbol,
                     description: item.description || item.symbol,
                     exchange: item.exchange || "NASDAQ",
-                    type: item.assetType || "stock",
+                    type: this.provider === 'futu' ? item.type : item.assetType || 'stock',
                 };
             });
             onResult(searchResults);
         } catch (err) {
-            onResult([]);
+            if (!this.destroyed && epoch === this.streamEpoch) onResult([]);
         }
     }
 
@@ -265,9 +305,20 @@ export default class Datafeed {
     }
 
     async resolveSymbol(symbolName, onResolve, onError, extension) {
+        const epoch = this.streamEpoch;
         try {
-            const cleanSymbol = symbolName.trim();
-
+            let cleanSymbol = symbolName.trim();
+            let instrument;
+            if (this.provider === 'futu') {
+                cleanSymbol = cleanSymbol.split(':').at(-1).toUpperCase();
+                if (this.identifyAssetType(cleanSymbol) !== 'EQUITIES') throw new Error('富途看盘仅支持美股和 ETF');
+                const response = await this.futuRequest('/symbols?query=' + encodeURIComponent(cleanSymbol));
+                if (!response.ok) throw await futuResponseError(response, '查询富途标的失败');
+                const body = await response.json();
+                instrument = body.items?.find(item => item.symbol === cleanSymbol);
+                if (!instrument) throw new Error('未找到美股或 ETF，请输入完整代码');
+            }
+            if (this.destroyed || epoch !== this.streamEpoch) return;
             const assetType = this.identifyAssetType(cleanSymbol);
             const overlay = await this.ensureFutuOverlay();
             const subsessions = this.getAssetSubsessions(assetType, overlay.enabled);
@@ -277,10 +328,10 @@ export default class Datafeed {
 
             const symbolInfo = {
                 name: cleanSymbol,
-                description: cleanSymbol,
-                type: assetType,
-                exchange: assetType === "FOREX" ? "FX" : "US",
-                listed_exchange: assetType === "FOREX" ? "FX" : "US",
+                description: instrument?.description || cleanSymbol,
+                type: instrument?.type || assetType,
+                exchange: instrument?.exchange || (assetType === 'FOREX' ? 'FX' : 'US'),
+                listed_exchange: instrument?.exchange || (assetType === 'FOREX' ? 'FX' : 'US'),
                 format: "price",
                 pricescale: assetType === "FOREX" ? 100000 : 100, // 外汇保留更多位小数
                 minmov: 1,
@@ -297,13 +348,14 @@ export default class Datafeed {
 
             // TradingView expects symbol resolution on a later task.
             setTimeout(() => {
+                if (this.destroyed || epoch !== this.streamEpoch) return;
                 onResolve(symbolInfo);
                 this.onSessionResolved({ symbol: cleanSymbol, session: foundSub.id, nightAvailable: subsessions.some(item => item.id === 'night'), fullDayAvailable: subsessions.some(item => item.id === EQUITY_24H_SESSION), requestedSession: requestedSessionId });
             }, 0);
 
         } catch (err) {
-            if (typeof onError === "function") {
-                onError(err);
+            if (!this.destroyed && epoch === this.streamEpoch && typeof onError === 'function') {
+                onError(String(err?.message || err));
             }
         }
     }
@@ -316,6 +368,19 @@ export default class Datafeed {
         try {
             if (!SUPPORTED_RESOLUTIONS.includes(resolution)) {
                 onResult([], { noData: true });
+                return;
+            }
+            if (this.provider === 'futu') {
+                if (this.identifyAssetType(name) !== 'EQUITIES') throw new Error('富途看盘仅支持美股和 ETF');
+                const overlay = await this.ensureFutuOverlay();
+                if (!overlay.providerEnabled) throw new Error('富途行情服务未启用');
+                if ((session === 'night' || session === EQUITY_24H_SESSION) && !overlay.enabled) throw new Error('夜盘行情未启用');
+                if (session !== 'regular' && !NIGHT_RESOLUTIONS.has(resolution)) throw new Error('扩展时段仅支持分钟 K 线');
+                const futuEpoch = this.futuEpoch;
+                const bars = await getFutuBars(path => this.futuRequest(path), name, resolution, periodParams, session,
+                    () => this.assertHistoryCurrent(epoch, futuEpoch), overlay.enabled);
+                this.seedLatest(name, session, resolution, bars);
+                onResult(bars, { noData: bars.length === 0 });
                 return;
             }
             if (session === 'night' || session === EQUITY_24H_SESSION) {
@@ -374,13 +439,13 @@ export default class Datafeed {
         if (!SUPPORTED_RESOLUTIONS.includes(resolution)) return;
         const subsessionId = symbolInfo.subsession_id || 'regular';
         this.barListeners.set(listenerGuid, { symbol: symbolInfo.name, resolution, onTick, onReset, subsessionId });
-        if (subsessionId !== 'night') this.queueSubscriptions();
-        if (subsessionId === 'night' || subsessionId === EQUITY_24H_SESSION) this.queueFutuSubscriptions();
+        if (this.provider === 'schwab' && subsessionId !== 'night') this.queueSubscriptions();
+        if (this.provider === 'futu' || subsessionId === 'night' || subsessionId === EQUITY_24H_SESSION) this.queueFutuSubscriptions();
     }
     unsubscribeBars(listenerGuid) {
         const listener = this.barListeners.get(listenerGuid);
         this.barListeners.delete(listenerGuid);
-        if (listener?.subsessionId === 'night' || listener?.subsessionId === EQUITY_24H_SESSION) {
+        if (listener && (this.provider === 'futu' || listener.subsessionId === 'night' || listener.subsessionId === EQUITY_24H_SESSION)) {
             this.setFutuSubscriptionDesired(listener.symbol, listener.resolution, this.hasFutuListener(listener.symbol, listener.resolution));
         }
     }
@@ -393,21 +458,28 @@ export default class Datafeed {
         this.queueFutuSubscriptions();
         if (!this.quotesListeners.size) { clearInterval(this.quoteSessionTimer); this.quoteSessionTimer = undefined; }
     }
+    quoteSymbol(symbol) {
+        return this.provider === 'futu' ? String(symbol).trim().split(':').at(-1).toUpperCase() : symbol;
+    }
     subscribeQuotes(symbols, fastSymbols, callback, listenerGuid) {
-        this.quotesListeners.set(listenerGuid, { symbols: new Set([...symbols, ...fastSymbols]), callback });
+        const names = new Map([...symbols, ...fastSymbols].map(symbol => [this.quoteSymbol(symbol), symbol]));
+        this.quotesListeners.set(listenerGuid, {
+            symbols: new Set(names.keys()), callback: values => callback(values.map(quote => ({ ...quote, n: names.get(quote.n) ?? quote.n }))),
+        });
         this.queueSubscriptions();
         this.queueFutuSubscriptions();
         // Keep the market phase current even when no trades arrive at a boundary.
         this.quoteSessionTimer ??= setInterval(() => {
             const symbols = new Set([...this.quotesListeners.values()].flatMap(listener => [...listener.symbols]));
             for (const symbol of symbols) this.publishQuote(symbol);
+            this.queueFutuSubscriptions();
         }, 30_000);
     }
     // Widgets subscribe one after another while the terminal starts (watchlist,
     // chart, details, order panel). A short batch window sends their symbols in
     // one ADD per service instead of one command per widget.
     queueSubscriptions(delay = SUBSCRIBE_BATCH_MS) {
-        if (!this.streamReady || this.subscribeTimer || this.destroyed) return;
+        if (this.provider !== 'schwab' || !this.streamReady || this.subscribeTimer || this.destroyed) return;
         this.subscribeTimer = setTimeout(async () => {
             this.subscribeTimer = undefined;
             if (!this.streamReady || this.destroyed) return;
@@ -526,11 +598,25 @@ export default class Datafeed {
         this.resetFutuLeaseState();
     }
 
+    wantsFutuQuote(symbol) {
+        return this.identifyAssetType(symbol) === 'EQUITIES' &&
+            (this.provider === 'futu' || this.mergedQuote(symbol).cs === 'night');
+    }
+
+    usesFutuBars(listener) {
+        return this.provider === 'futu'
+            ? SUPPORTED_RESOLUTIONS.includes(listener.resolution) && this.identifyAssetType(listener.symbol) === 'EQUITIES'
+            : (listener.subsessionId === 'night' || listener.subsessionId === EQUITY_24H_SESSION) && NIGHT_RESOLUTIONS.has(listener.resolution);
+    }
+
+    futuAvailable(overlay) {
+        return this.provider === 'futu' ? overlay.providerEnabled === true : overlay.enabled;
+    }
+
     hasFutuListener(symbol, resolution) {
-        if (resolution === '') return this.identifyAssetType(symbol) === 'EQUITIES' &&
+        if (resolution === '') return this.wantsFutuQuote(symbol) &&
             [...this.quotesListeners.values()].some(listener => listener.symbols.has(symbol));
-        return [...this.barListeners.values()].some(listener => listener.symbol === symbol && listener.resolution === resolution &&
-            (listener.subsessionId === 'night' || listener.subsessionId === EQUITY_24H_SESSION) && NIGHT_RESOLUTIONS.has(listener.resolution));
+        return [...this.barListeners.values()].some(listener => listener.symbol === symbol && listener.resolution === resolution && this.usesFutuBars(listener));
     }
 
     setFutuSubscriptionDesired(symbol, resolution, desired) {
@@ -596,7 +682,7 @@ export default class Datafeed {
                     return;
                 }
                 if (!this.isCurrentFutuIdentity(requestGeneration, requestOwner)) return;
-                if (!overlay.enabled) {
+                if (!this.futuAvailable(overlay)) {
                     this.futuDesired.delete(key);
                     this.futuSUB.delete(key);
                     return;
@@ -614,7 +700,7 @@ export default class Datafeed {
                             owner: requestOwner,
                         }),
                     });
-                    if (!response.ok) throw new Error('夜盘订阅失败');
+                    if (!response.ok) throw new Error('富途订阅失败');
                     const payload = await response.clone().json().catch(() => null);
                     if (!this.isCurrentFutuIdentity(requestGeneration, requestOwner)) return;
                     if (!this.acceptFutuCommandResponse(payload, requestGeneration, requestOwner)) {
@@ -644,7 +730,7 @@ export default class Datafeed {
                 if (!this.isCurrentFutuIdentity(requestGeneration, requestOwner)) return;
                 // Disabling overnight coverage closes the gateway and drops its
                 // leases; no HTTP UNSUB is possible or needed after that.
-                if (!overlay.enabled) {
+                if (!this.futuAvailable(overlay)) {
                     this.futuSUB.delete(key);
                     return;
                 }
@@ -660,7 +746,7 @@ export default class Datafeed {
                             owner: requestOwner,
                         }),
                     });
-                    if (!response.ok && response.status !== 409) throw new Error('夜盘取消订阅失败');
+                    if (!response.ok && response.status !== 409) throw new Error('富途取消订阅失败');
                     const payload = response.ok ? await response.clone().json().catch(() => null) : null;
                     if (!this.isCurrentFutuIdentity(requestGeneration, requestOwner)) return;
                     if (response.ok && !this.acceptFutuCommandResponse(payload, requestGeneration, requestOwner)) {
@@ -685,12 +771,14 @@ export default class Datafeed {
             if (this.destroyed) return;
             const overlay = await this.ensureFutuOverlay();
             if (this.destroyed) return;
-            if (!overlay.enabled) {
+            if (!this.futuAvailable(overlay)) {
                 this.futuSUB.clear();
                 this.futuDesired.clear();
                 return;
             }
             const desired = this.desiredFutuSubscriptions();
+            if (desired.size) this.futuStream?.start?.();
+            else if (this.provider !== 'futu') this.futuStream?.stop?.();
             const known = new Set([...this.futuDesired, ...this.futuSUB.keys(), ...desired]);
             for (const key of known) {
                 const [symbol, resolution] = key.split('\0');
@@ -700,15 +788,19 @@ export default class Datafeed {
     }
     desiredFutuSubscriptions() {
         const desired = new Set([...this.barListeners.values()]
-            .filter(listener => (listener.subsessionId === 'night' || listener.subsessionId === EQUITY_24H_SESSION) && NIGHT_RESOLUTIONS.has(listener.resolution))
+            .filter(listener => this.usesFutuBars(listener))
             .map(listener => listener.symbol + '\0' + listener.resolution));
         for (const listener of this.quotesListeners.values()) for (const symbol of listener.symbols) {
-            if (this.identifyAssetType(symbol) === 'EQUITIES') desired.add(symbol + '\0');
+            if (this.wantsFutuQuote(symbol)) desired.add(symbol + '\0');
         }
         return desired;
     }
     destroy() {
+        if (this.destroyed) return;
         this.destroyed = true;
+        this.streamEpoch++;
+        this.futuEpoch++;
+        this.controller.abort();
         clearTimeout(this.subscribeTimer);
         clearTimeout(this.futuTimer);
         clearInterval(this.quoteSessionTimer);
@@ -726,7 +818,7 @@ export default class Datafeed {
             ...this.futuSUB.keys(),
             ...this.futuOperations.keys(),
             ...[...this.barListeners.values()]
-                .filter(listener => listener.subsessionId === 'night' || listener.subsessionId === EQUITY_24H_SESSION)
+                .filter(listener => this.usesFutuBars(listener))
                 .map(listener => listener.symbol + '\0' + listener.resolution),
         ]);
         for (const key of futuSubscriptions) {
@@ -738,9 +830,12 @@ export default class Datafeed {
         this.quotesListeners.clear();
         this.futuStream?.stop?.();
         this.quoteRequests.clear();
+        for (const cache of [this.quote_cache, this.schwabQuotes, this.futuQuotes, this.futuQuoteTimes, this.futuOvernight,
+            this.snapshot_cache, this.snapshotTimes, this.latestBars, this.cumulativeVolumes, this.cumulativeVolumeDates, this.SUB]) cache.clear();
     }
 
     mergedQuote(symbol) {
+        if (this.provider === 'futu') return this.futuQuotes.get(symbol) || {};
         return mergeQuoteValues(this.schwabQuotes.get(symbol), this.futuOvernight.get(symbol), {
             equity: this.identifyAssetType(symbol) === 'EQUITIES', overnightEnabled: this.overlayCache.enabled, now: this.now(),
         });
@@ -749,14 +844,49 @@ export default class Datafeed {
     publishQuote(symbol) {
         if (this.destroyed) return;
         const quote = this.mergedQuote(symbol);
-        if (quote.cs && quote.cs !== 'night') this.futuOvernight.delete(symbol);
+        if (this.provider === 'schwab' && quote.cs && quote.cs !== 'night') this.futuOvernight.delete(symbol);
         this.quote_cache.set(symbol, quote);
         for (const { symbols, callback } of this.quotesListeners.values()) {
             if (symbols.has(symbol)) callback?.([quoteData(symbol, quote)]);
         }
     }
 
+    async loadFutuQuotes(symbols) {
+        const epoch = this.streamEpoch, futuEpoch = this.futuEpoch;
+        const overlay = await this.ensureFutuOverlay();
+        this.assertHistoryCurrent(epoch, futuEpoch);
+        if (!overlay.providerEnabled) throw new Error('富途行情服务未启用');
+        const missing = [...new Set(symbols)].filter(symbol => this.identifyAssetType(symbol) === 'EQUITIES' &&
+            !Number.isFinite(this.futuQuotes.get(symbol)?.lp) && !this.quoteRequests.has(symbol));
+        for (let offset = 0; offset < missing.length; offset += 50) {
+            const batch = missing.slice(offset, offset + 50);
+            const pending = (async () => {
+                try {
+                    const response = await this.futuRequest('/quotes?' + new URLSearchParams({ symbols: batch.join(',') }));
+                    if (!response.ok) throw await futuResponseError(response, '读取富途报价失败');
+                    const data = await response.json();
+                    this.assertHistoryCurrent(epoch, futuEpoch);
+                    if (!Array.isArray(data.items)) throw new Error('富途报价格式无效');
+                    for (const item of data.items) {
+                        if (!batch.includes(item.symbol) || this.futuQuotes.has(item.symbol)) continue;
+                        const quote = futuQuoteValues(item, overlay.enabled);
+                        if (!Number.isFinite(quote.lp)) continue;
+                        this.futuQuotes.set(item.symbol, quote);
+                        if (Number.isFinite(Number(item.time))) this.futuQuoteTimes.set(item.symbol, Number(item.time));
+                        this.publishQuote(item.symbol);
+                    }
+                } finally {
+                    for (const symbol of batch) if (this.quoteRequests.get(symbol) === pending) this.quoteRequests.delete(symbol);
+                }
+            })();
+            for (const symbol of batch) this.quoteRequests.set(symbol, pending);
+        }
+        await Promise.all(symbols.map(symbol => this.quoteRequests.get(symbol)));
+        this.assertHistoryCurrent(epoch, futuEpoch);
+    }
+
     async loadQuotes(symbols) {
+        if (this.provider === 'futu') return this.loadFutuQuotes(symbols);
         const missing = [...new Set(symbols)].filter(symbol => !Number.isFinite(this.schwabQuotes.get(symbol)?.lp) && !this.quoteRequests.has(symbol));
         const epoch = this.streamEpoch;
         for (let offset = 0; offset < missing.length; offset += 50) {
@@ -790,14 +920,14 @@ export default class Datafeed {
     async getQuotes(symbols, onDataCallback, onErrorCallback) {
         const epoch = this.streamEpoch;
         try {
-            await this.loadQuotes(symbols);
+            await this.loadQuotes(symbols.map(symbol => this.quoteSymbol(symbol)));
             if (this.destroyed) return;
             if (epoch !== this.streamEpoch) throw new Error('行情连接已变更，请重新读取报价');
             setTimeout(() => {
-                if (!this.destroyed && epoch === this.streamEpoch) onDataCallback(symbols.map(symbol => quoteData(symbol, this.mergedQuote(symbol))));
+                if (!this.destroyed && epoch === this.streamEpoch) onDataCallback(symbols.map(symbol => quoteData(symbol, this.mergedQuote(this.quoteSymbol(symbol)))));
             }, 0);
         } catch (error) {
-            onErrorCallback(error);
+            if (!this.destroyed) onErrorCallback(error);
         }
     }
 }

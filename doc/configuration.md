@@ -112,7 +112,7 @@ export WORKBENCH_DATA='./data/data.db'
 | 分区 | `tab` | 内容 |
 |---|---|---|
 | 外观 | `appearance` | 风格 宝蓝（默认）或 陶橙；浅色、深色、跟随系统（默认）主题；减少动态效果，自动保存 |
-| 业务 | `modules` | Wallos 连接与提醒、资讯 AI 处理及语言/存储/简报偏好、Schwab 本人授权与断开、共享夜盘只读状态 |
+| 业务 | `modules` | Wallos 连接与提醒、资讯 AI 处理及语言/存储/简报偏好、Schwab 本人授权与断开、主行情源和共享夜盘只读状态 |
 | 通知推送 | `notifications` | 本人接收开关、目标展示、测试消息和投递状态，见[外部通知](notifications.md) |
 | 账户安全 | `security` | 验证当前密码后修改本人密码、管理本人登录设备；改密使本人的已有登录失效 |
 
@@ -128,7 +128,9 @@ export WORKBENCH_DATA='./data/data.db'
 | 通知服务 | `notifications` | Telegram Bot Token 和共享服务开关；接收目标在用户管理中分配 |
 | 数据与运行 | `data` | 日志等级、数据库类型和部署参数；SQLite 全库在线备份，PostgreSQL 外部备份提示 |
 
-旧 `/settings?tab=ai|users|data` 对管理员以 `replace` 跳转到后台相应分区，普通用户留在个人设置；原 `/settings?module=investment` 仍打开本人授权。共享投资配置使用 `/admin/settings?tab=modules&module=investment`。
+旧 `/settings?tab=ai|users|data` 对管理员以 `replace` 跳转到后台相应分区，普通用户留在个人设置；原 `/settings?module=investment` 仍打开本人授权。共享投资配置使用 `/admin/settings?tab=modules&module=investment`，本人 OAuth 使用 `/settings?tab=modules&module=investment`。富途和 Schwab App 在后台配置；个人投资设置只读显示「主行情源」和共享夜盘状态。
+
+未绑定 Schwab 或授权失效时，可通过已启用且行情可用的富途服务只读看盘；本人授权有效时，普通时段使用本人的 Schwab，富途只补夜盘。富途主行情不受夜盘开关影响，实际数据取决于账号行情权限、支持标的、OpenD 登录及历史额度，保存凭据不保证实时可用。账户、持仓、订单、交易及价格监控仍要求本人 Schwab 授权，详情见[投资模块](modules/investment.md#行情来源与权限)。
 
 在分区间切换不会丢失当前页面内的表单草稿；刷新或离开页面不会持久化未保存输入。AI、Wallos、Schwab 和 Telegram 密钥只写入、不回显，留空通常保留已有值；更换端点、App Key 或回调须重新提供密钥。详细边界见[安全说明](security.md)。
 

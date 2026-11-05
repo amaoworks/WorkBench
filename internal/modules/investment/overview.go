@@ -21,8 +21,8 @@ import (
 	investmentsqlc "workbench/internal/modules/investment/sqlc"
 )
 
-// Overview cards read Schwab through short-lived caches so opening the
-// dashboard never fans out to the broker on every request.
+// Overview cards use short-lived, per-user caches so opening the dashboard
+// never fans out to the market data provider on every request.
 const (
 	overviewSnapshotTTL  = 45 * time.Second
 	overviewQuotesTTL    = 30 * time.Second
@@ -40,19 +40,21 @@ const (
 var overviewSymbolPattern = regexp.MustCompile(`^[A-Z$/][A-Z0-9./-]{0,14}$`)
 
 type overviewState struct {
-	snapshotMu sync.Mutex // serializes snapshot refreshes
-	quotesMu   sync.Mutex // serializes quote refreshes
-	mu         sync.Mutex
-	snapshot   *overviewSnapshot
-	connection string
-	quotes     map[string]overviewQuotesEntry
-	sparks     map[string]overviewSparkEntry
-	futu       *overviewFutuEntry
+	snapshotMu  sync.Mutex // serializes snapshot refreshes
+	quotesMu    sync.Mutex // serializes quote refreshes
+	mu          sync.Mutex
+	snapshot    *overviewSnapshot
+	connection  string
+	quoteSource string
+	quotes      map[string]overviewQuotesEntry
+	sparks      map[string]overviewSparkEntry
+	futu        *overviewFutuEntry
 }
 
 type overviewQuotesEntry struct {
-	at    time.Time
-	items []overviewQuote
+	at        time.Time
+	updatedAt *time.Time
+	items     []overviewQuote
 }
 
 type overviewSparkEntry struct {
@@ -94,7 +96,7 @@ type overviewQuote struct {
 	Symbol       string    `json:"symbol"`
 	Description  string    `json:"description"`
 	Price        float64   `json:"price"`
-	ChangePct    float64   `json:"changePct"`
+	ChangePct    *float64  `json:"changePct,omitempty"`
 	Session      string    `json:"session"` // pre, regular, post, overnight, closed
 	ExtChangePct *float64  `json:"extChangePct,omitempty"`
 	Held         bool      `json:"held"`
@@ -104,6 +106,7 @@ type overviewQuote struct {
 
 type overviewQuotes struct {
 	Status    string          `json:"status"`
+	Provider  string          `json:"provider"` // schwab, futu, none
 	Message   string          `json:"message,omitempty"`
 	Session   string          `json:"session"`
 	Items     []overviewQuote `json:"items"`
@@ -230,7 +233,7 @@ func (m *Module) overviewSnapshot(ctx context.Context) overviewSnapshot {
 	defer state.snapshotMu.Unlock()
 	now := m.now()
 	state.mu.Lock()
-	key := fmt.Sprintf("%d:%d", rec.AppVersion, rec.AuthorizedAt.UnixMilli())
+	key := fmt.Sprintf("%s:%d:%d:%d", contracts.UserID(ctx), rec.AppVersion, rec.ConnectionVersion, rec.AuthorizedAt.UnixMilli())
 	if state.connection != key {
 		state.connection = key
 		state.snapshot = nil
@@ -254,7 +257,7 @@ func (m *Module) overviewSnapshot(ctx context.Context) overviewSnapshot {
 		return overviewSnapshot{Status: "error", Message: err.Error(), Movers: []overviewMover{}, Symbols: []string{}}
 	}
 	current, loadErr := m.loadSchwab(ctx)
-	if loadErr != nil || current.AppVersion != rec.AppVersion || !current.AuthorizedAt.Equal(rec.AuthorizedAt) || current.RefreshToken == "" {
+	if loadErr != nil || current.AppVersion != rec.AppVersion || !current.AuthorizedAt.Equal(rec.AuthorizedAt) || !current.view().Connected {
 		return overviewSnapshot{Status: "disconnected", Movers: []overviewMover{}, Symbols: []string{}}
 	}
 	state.mu.Lock()
@@ -425,23 +428,25 @@ func quoteFromSchwab(symbol string, entry schwabQuoteEntry, phase string) (overv
 	q := overviewQuote{Symbol: symbol, Description: entry.Reference.Description, Session: phase}
 	regular := entry.Regular.RegularMarketLastPrice
 	last := entry.Quote.LastPrice
+	var changePct float64
 	switch phase {
 	case "regular":
-		q.Price, q.ChangePct = firstPositive(regular, last), entry.Regular.RegularMarketPercentChange
+		q.Price, changePct = firstPositive(regular, last), entry.Regular.RegularMarketPercentChange
 		if regular == 0 {
-			q.ChangePct = entry.Quote.NetPercentChange
+			changePct = entry.Quote.NetPercentChange
 		}
 	case "pre":
-		q.Price, q.ChangePct = firstPositive(last, regular), entry.Quote.NetPercentChange
+		q.Price, changePct = firstPositive(last, regular), entry.Quote.NetPercentChange
 		ext := entry.Quote.NetPercentChange
 		q.ExtChangePct = &ext
 	default:
-		q.Price, q.ChangePct = firstPositive(last, regular), entry.Regular.RegularMarketPercentChange
+		q.Price, changePct = firstPositive(last, regular), entry.Regular.RegularMarketPercentChange
 		if phase == "post" || phase == "overnight" {
 			ext := entry.Quote.PostMarketPercentChange
 			q.ExtChangePct = &ext
 		}
 	}
+	q.ChangePct = &changePct
 	if q.Price <= 0 || math.IsNaN(q.Price) || math.IsInf(q.Price, 0) {
 		return overviewQuote{}, false
 	}
@@ -460,20 +465,67 @@ func firstPositive(values ...float64) float64 {
 func (m *Module) overviewQuotes(ctx context.Context) overviewQuotes {
 	now := m.now()
 	phase := marketPhase(now, m.marketLocation)
-	snapshot := m.overviewSnapshot(ctx)
-	if snapshot.Status == "disconnected" || snapshot.Status == "reauth" {
-		return overviewQuotes{Status: snapshot.Status, Message: snapshot.Message, Session: phase, Items: []overviewQuote{}}
+	out := overviewQuotes{Status: "error", Provider: "none", Session: phase, Items: []overviewQuote{}}
+	state := &m.overview
+	state.quotesMu.Lock()
+	defer state.quotesMu.Unlock()
+	rec, err := m.loadSchwab(ctx)
+	if err != nil {
+		out.Message = "无法读取 Schwab 配置"
+		return out
 	}
 	held := map[string]bool{}
 	symbols := []string{}
-	for _, symbol := range snapshot.Symbols {
-		if len(symbols) >= overviewMaxHoldings {
-			break
+	if rec.view().Connected {
+		snapshot := m.overviewSnapshot(ctx)
+		// A rejected refresh during the account request can invalidate this
+		// user's grant. Re-evaluate it before selecting a quote provider.
+		rec, err = m.loadSchwab(ctx)
+		if err != nil {
+			out.Message = "无法读取 Schwab 配置"
+			return out
 		}
-		if symbol = normalizeOverviewSymbol(symbol); symbol != "" && !held[symbol] {
-			held[symbol] = true
-			symbols = append(symbols, symbol)
+		if rec.view().Connected {
+			for _, symbol := range snapshot.Symbols {
+				if len(symbols) >= overviewMaxHoldings {
+					break
+				}
+				if symbol = normalizeOverviewSymbol(symbol); symbol != "" && !held[symbol] {
+					held[symbol] = true
+					symbols = append(symbols, symbol)
+				}
+			}
 		}
+	}
+	var source string
+	if rec.view().Connected {
+		out.Provider = "schwab"
+		source = fmt.Sprintf("schwab:%s:%d:%d:%d", contracts.UserID(ctx), rec.AppVersion, rec.ConnectionVersion, rec.AuthorizedAt.UnixMilli())
+	} else {
+		futu, err := m.loadFutu(ctx)
+		if err != nil {
+			out.Message = "无法读取富途配置"
+			return out
+		}
+		if futu.Enabled {
+			out.Provider = "futu"
+			source = fmt.Sprintf("futu:%s:%s:%d:%d", contracts.UserID(ctx), futu.Host, futu.Port, futu.UpdatedAt.UnixMilli())
+		}
+	}
+	state.mu.Lock()
+	if state.quoteSource != source {
+		state.quoteSource = source
+		state.quotes = nil
+		state.sparks = nil
+	}
+	state.mu.Unlock()
+	if out.Provider == "none" {
+		out.Status = "disconnected"
+		if rec.ReauthorizationRequired {
+			out.Status = "reauth"
+		}
+		out.Message = "行情不可用，请联系管理员启用富途，或在个人设置中绑定 Schwab。"
+		return out
 	}
 	watched := map[string]bool{}
 	for _, symbol := range m.watchlistSymbols(ctx) {
@@ -482,39 +534,86 @@ func (m *Module) overviewQuotes(ctx context.Context) overviewQuotes {
 			symbols = append(symbols, symbol)
 		}
 	}
+	out.Status = "ok"
 	if len(symbols) == 0 {
-		return overviewQuotes{Status: "ok", Session: phase, Items: []overviewQuote{}}
+		return out
 	}
-	key := strings.Join(symbols, ",")
-	state := &m.overview
-	state.quotesMu.Lock()
-	defer state.quotesMu.Unlock()
+	key := phase + ":" + strings.Join(symbols, ",")
 	state.mu.Lock()
 	cached, ok := state.quotes[key]
 	state.mu.Unlock()
+	decorate := func(items []overviewQuote) []overviewQuote {
+		copy := append([]overviewQuote{}, items...)
+		for i := range copy {
+			copy[i].Held, copy[i].Watched = held[copy[i].Symbol], watched[copy[i].Symbol]
+		}
+		return copy
+	}
 	if ok && now.Sub(cached.at) < overviewQuotesTTL {
-		return overviewQuotes{Status: "ok", Session: phase, Items: cached.items, UpdatedAt: &cached.at}
+		out.Items, out.UpdatedAt = decorate(cached.items), cached.updatedAt
+		return out
 	}
 	fetchCtx, cancel := overviewDetached(ctx, overviewFetchTimeout)
 	defer cancel()
-	items, err := m.fetchOverviewQuotes(fetchCtx, symbols, phase)
+	var items []overviewQuote
+	var updatedAt *time.Time
+	if out.Provider == "futu" {
+		items, updatedAt, err = m.fetchOverviewFutuQuotes(fetchCtx, symbols)
+	} else {
+		items, err = m.fetchOverviewQuotes(fetchCtx, symbols, phase)
+		at := now.UTC()
+		updatedAt = &at
+	}
 	if err != nil {
-		if ok && now.Sub(cached.at) < overviewStaleLimit {
-			return overviewQuotes{Status: "ok", Message: err.Error(), Session: phase, Items: cached.items, UpdatedAt: &cached.at}
+		out.Message = err.Error()
+		// Only the existing Schwab path has stale-cache semantics. Shared
+		// Futu failures must report the actual upstream state, not old prices.
+		if out.Provider == "schwab" && ok && now.Sub(cached.at) < overviewStaleLimit {
+			out.Items, out.UpdatedAt = decorate(cached.items), cached.updatedAt
+			return out
 		}
-		return overviewQuotes{Status: "error", Message: err.Error(), Session: phase, Items: []overviewQuote{}}
+		out.Status = "error"
+		return out
 	}
-	for i := range items {
-		items[i].Held, items[i].Watched = held[items[i].Symbol], watched[items[i].Symbol]
-	}
-	at := now.UTC()
 	state.mu.Lock()
 	if state.quotes == nil || len(state.quotes) > 16 {
 		state.quotes = map[string]overviewQuotesEntry{}
 	}
-	state.quotes[key] = overviewQuotesEntry{at: at, items: items}
+	state.quotes[key] = overviewQuotesEntry{at: now.UTC(), updatedAt: updatedAt, items: items}
 	state.mu.Unlock()
-	return overviewQuotes{Status: "ok", Session: phase, Items: items, UpdatedAt: &at}
+	out.Items, out.UpdatedAt = decorate(items), updatedAt
+	return out
+}
+
+func (m *Module) fetchOverviewFutuQuotes(ctx context.Context, symbols []string) ([]overviewQuote, *time.Time, error) {
+	quotes, err := m.futuQuotes(ctx, symbols)
+	if err != nil {
+		return nil, nil, err
+	}
+	items := make([]overviewQuote, 0, len(quotes))
+	var updatedAt *time.Time
+	for _, quote := range quotes {
+		if !slices.Contains(symbols, quote.Symbol) || quote.Price <= 0 || math.IsNaN(quote.Price) || math.IsInf(quote.Price, 0) {
+			continue
+		}
+		phase := quote.Session
+		switch phase {
+		case "premarket":
+			phase = "pre"
+		case "postmarket":
+			phase = "post"
+		case "night":
+			phase = "overnight"
+		}
+		items = append(items, overviewQuote{Symbol: quote.Symbol, Description: quote.Description, Price: quote.Price, ChangePct: quote.ChangePct, Session: phase})
+		if quote.Time != nil && *quote.Time > 0 {
+			at := time.UnixMilli(*quote.Time).UTC()
+			if updatedAt == nil || at.Before(*updatedAt) {
+				updatedAt = &at
+			}
+		}
+	}
+	return items, updatedAt, nil
 }
 
 func (m *Module) fetchOverviewQuotes(ctx context.Context, symbols []string, phase string) ([]overviewQuote, error) {

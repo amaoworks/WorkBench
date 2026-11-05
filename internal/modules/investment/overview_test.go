@@ -45,11 +45,11 @@ func TestQuoteFromSchwabPicksSessionPrice(t *testing.T) {
 		t.Fatal(err)
 	}
 	regular, _ := quoteFromSchwab("AAPL", entry, "regular")
-	if regular.Price != 200 || regular.ChangePct != 1 || regular.ExtChangePct != nil {
+	if regular.Price != 200 || regular.ChangePct == nil || *regular.ChangePct != 1 || regular.ExtChangePct != nil {
 		t.Fatalf("regular: %+v", regular)
 	}
 	post, _ := quoteFromSchwab("AAPL", entry, "post")
-	if post.Price != 201 || post.ChangePct != 1 || post.ExtChangePct == nil || *post.ExtChangePct != 0.5 {
+	if post.Price != 201 || post.ChangePct == nil || *post.ChangePct != 1 || post.ExtChangePct == nil || *post.ExtChangePct != 0.5 {
 		t.Fatalf("post: %+v", post)
 	}
 	if _, ok := quoteFromSchwab("AAPL", schwabQuoteEntry{}, "regular"); ok {
@@ -110,7 +110,7 @@ func TestOverviewSnapshotAndQuotesUseCache(t *testing.T) {
 		t.Fatalf("symbols: %v", snapshot.Symbols)
 	}
 	quotes := module.overviewQuotes(testContext(context.Background()))
-	if quotes.Status != "ok" || quotes.Session != "regular" || len(quotes.Items) != 2 || !quotes.Items[0].Held || len(quotes.Items[0].Spark) != 3 || quotes.Items[1].Spark != nil {
+	if quotes.Status != "ok" || quotes.Provider != "schwab" || quotes.Session != "regular" || len(quotes.Items) != 2 || !quotes.Items[0].Held || len(quotes.Items[0].Spark) != 3 || quotes.Items[1].Spark != nil {
 		t.Fatalf("quotes: %+v", quotes)
 	}
 	now = now.Add(20 * time.Second)
@@ -141,7 +141,7 @@ func TestOverviewDisconnectedDoesNotCallSchwab(t *testing.T) {
 	if got := module.overviewSnapshot(testContext(context.Background())); got.Status != "disconnected" {
 		t.Fatalf("snapshot: %+v", got)
 	}
-	if got := module.overviewQuotes(testContext(context.Background())); got.Status != "disconnected" || len(got.Items) != 0 {
+	if got := module.overviewQuotes(testContext(context.Background())); got.Status != "disconnected" || got.Provider != "none" || len(got.Items) != 0 {
 		t.Fatalf("quotes: %+v", got)
 	}
 	alerts, err := module.overviewAlerts(testContext(context.Background()))

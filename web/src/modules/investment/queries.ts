@@ -4,7 +4,7 @@ import { api, apiValidated } from "../../shared/api";
 import type { Widget } from "../../shared/schema";
 import { moduleQueryKey } from "../../shared/queryKeys";
 import { widgetSeed } from "../../shared/dashboard";
-import { overviewAlertsSchema, overviewQuotesSchema, overviewSnapshotSchema, positionsResponseSchema, ordersResponseSchema, netWorthHistorySchema, futuSettingsSchema, overnightSettingsSchema, schwabSettingsSchema, priceMonitorSchema, priceHistorySchema, priceRuleSchema, investmentViewPreferencesSchema, investmentPreferenceSavedSchema, type InvestmentView, type PriceRuleInput, type FutuSettingsInput, type SchwabSettingsInput } from "./schema";
+import { marketDataStatusSchema, overviewAlertsSchema, overviewQuotesSchema, overviewSnapshotSchema, positionsResponseSchema, ordersResponseSchema, netWorthHistorySchema, futuSettingsSchema, overnightSettingsSchema, schwabSettingsSchema, priceMonitorSchema, priceHistorySchema, priceRuleSchema, investmentViewPreferencesSchema, investmentPreferenceSavedSchema, type InvestmentView, type PriceRuleInput, type FutuSettingsInput, type SchwabSettingsInput } from "./schema";
 
 const PREFERENCES = "/api/modules/investment/preferences";
 const investmentKey = (...parts: readonly unknown[]) => moduleQueryKey("investment", ...parts);
@@ -61,6 +61,11 @@ export function useOverviewQuotes(widget: Widget) {
 export function useOverviewAlerts(widget: Widget) {
   return useQuery({ queryKey: investmentKey("widget", widget.id), ...widgetSeed(widget, overviewAlertsSchema),
     queryFn: () => apiValidated(widget.dataRoute, overviewAlertsSchema), refetchInterval: 60_000 });
+}
+
+export function useMarketDataStatus(enabled = true) {
+  return useQuery({ queryKey: investmentKey("market-data"), enabled,
+    queryFn: () => apiValidated("/api/modules/investment/market-data", marketDataStatusSchema), refetchInterval: 15_000 });
 }
 
 export function useSchwabSettings(enabled: boolean) {

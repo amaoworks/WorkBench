@@ -141,7 +141,7 @@ func TestSchwabOAuthLoginAndCallback(t *testing.T) {
 
 	callback := httptest.NewRecorder()
 	module.oauthCallback(callback, testRequest(http.MethodGet, "/oauth/schwab?code=abc&state="+state, nil))
-	if callback.Code != 200 || !strings.Contains(callback.Body.String(), "授权成功") {
+	if callback.Code != 200 || !strings.Contains(callback.Body.String(), "授权成功") || !strings.Contains(callback.Body.String(), "返回投资") {
 		t.Fatalf("callback: %d %s", callback.Code, callback.Body.String())
 	}
 	if !strings.Contains(callback.Body.String(), `content="0;url=/investment"`) || callback.Header().Get("Referrer-Policy") != "no-referrer" {
@@ -622,8 +622,11 @@ func TestSchwabLoginRejectsLegacyHTTPCallback(t *testing.T) {
 				if !strings.Contains(body, `href="/admin/settings?tab=modules&amp;module=investment"`) || strings.Contains(body, "联系管理员") {
 					t.Fatalf("admin must receive the shared application settings link: %s", body)
 				}
-			} else if !strings.Contains(body, "联系管理员修正回调地址") || strings.Contains(body, "href=") || strings.Contains(body, "/admin/settings") {
+			} else if !strings.Contains(body, "联系管理员修正回调地址") || strings.Contains(body, "/admin/settings") {
 				t.Fatalf("ordinary user must not be directed to administrator settings: %s", body)
+			}
+			if !strings.Contains(body, "授权未完成") || !strings.Contains(body, `href="/investment"`) || !strings.Contains(body, "返回投资") {
+				t.Fatalf("oauth result must return to investment: %s", body)
 			}
 		})
 	}

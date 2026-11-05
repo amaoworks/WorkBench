@@ -32,7 +32,10 @@ async function verifyInvestmentChart(page) {
     appKey: "fixture", callbackUrl: "https://example.test/oauth/schwab", hasAppSecret: true,
     connected: true, reauthorizationRequired: false, lastError: "",
   } }));
-  await page.routeWebSocket("**/trader/ws", socket => {
+  await page.route("**/api/modules/investment/market-data", route => route.fulfill({ json: {
+    provider: "schwab", schwabConnected: true, reauthorizationRequired: false, futuEnabled: false, overnightEnabled: false,
+  } }));
+  await page.routeWebSocket("**/trader/ws*", socket => {
     socket.send(JSON.stringify({ stream: { status: "ready" } }));
   });
   await page.route("**/api/modules/investment/schwab/**", async route => {

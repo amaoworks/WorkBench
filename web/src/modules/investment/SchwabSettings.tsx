@@ -111,7 +111,7 @@ export function SchwabConnectionSection({ initial, canManageApp }: { initial: Se
       )}
       {initial.reauthorizationRequired && (
         <Notice tone="warning" title="Schwab 授权已失效">
-          行情和交易已暂停。
+          账户与交易已暂停。
         </Notice>
       )}
       {!initial.configured && (
@@ -159,7 +159,7 @@ export function SchwabConnectionSection({ initial, canManageApp }: { initial: Se
       <ConfirmDialog
         open={confirmDisconnect}
         title="断开 Schwab？"
-        description="断开后行情和交易将暂停，需要重新登录 Schwab 授权。"
+        description="断开后账户与交易将暂停；富途已启用时仍可看盘。"
         busy={disconnect.isPending}
         confirmLabel="断开"
         busyLabel="断开中…"

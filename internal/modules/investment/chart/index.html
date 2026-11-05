@@ -34,6 +34,7 @@
   <link rel="modulepreload" href="/investment/terminal/stream.js">
   <link rel="modulepreload" href="/investment/terminal/websocket.js">
   <link rel="modulepreload" href="/investment/terminal/futu.js">
+  <link rel="modulepreload" href="/investment/terminal/market-data.js">
   <link rel="modulepreload" href="/investment/terminal/session-menu.js">
   <link rel="modulepreload" href="/investment/terminal/theme.js">
   <link rel="modulepreload" href="/investment/terminal/watchlists.js">
@@ -55,7 +56,7 @@
     <p id="terminal-loading-step">当前步骤：加载图表库…</p>
     <div id="terminal-loading-actions" hidden><button id="terminal-retry" type="button">重新加载</button></div>
   </div>
-  <div id="stream-status" role="status" style="position:fixed;top:0;left:0;right:0;z-index:10000;background:#fff3cd;color:#664d03;padding:8px;text-align:center">正在连接 Schwab，实时行情与订单状态等待更新…</div>
+  <div id="stream-status" role="status" style="position:fixed;top:0;left:0;right:0;z-index:10000;background:#fff3cd;color:#664d03;padding:8px;text-align:center">正在连接行情源…</div>
   <div id="session-toast" role="status" aria-live="polite" hidden></div>
   <div id="tv_chart_container"></div>
   <div id="watchlist-status" role="alert" hidden><span id="watchlist-message"></span><button id="watchlist-retry" type="button">重试保存</button></div>
@@ -72,9 +73,13 @@
     import { loadWatchlists, bindWatchlists } from "/investment/terminal/watchlists.js";
     import { loadChartState, saveChartState, requiresMinuteResolution } from "/investment/terminal/chart-state.js";
     import { loadPreferences } from "/investment/terminal/preferences.js";
+    import { loadMarketData, watchMarketData } from "/investment/terminal/market-data.js";
 
     async function startTerminal() {
     await window.terminalIdentity.ready;
+    const market = await loadMarketData();
+    if (market.provider === 'none') throw new Error('暂无可用行情源，启用富途行情或绑定本人 Schwab。');
+    const trading = market.provider === 'schwab';
     window.terminalLoad.step('preferences');
     const params = new URLSearchParams(location.search);
     const theme = params.get("theme") === "dark" ? "dark" : "light";
@@ -104,15 +109,22 @@
     preferences = await loadPreferences({ report: reportPreferences, request });
     const initialChartState = loadChartState(preferences);
     const initialSymbol = params.get("symbol") || initialChartState.symbol;
-    window.ws = new SchwabStream();
-    window.futu = new FutuStream();
+    window.ws = trading ? new SchwabStream() : undefined;
+    window.futu = new FutuStream({ mode: trading ? 'night' : 'main' });
     const status = document.getElementById('stream-status');
-    window.addEventListener('SCHWAB_STREAM_READY', () => { status.hidden = true; });
-    window.addEventListener('SCHWAB_STREAM_CLOSED', () => {
+    status.textContent = trading ? '正在连接 Schwab，实时行情与订单状态等待更新…' : '正在连接富途，只读看盘…';
+    const streamReady = () => { status.hidden = true; };
+    const streamClosed = () => {
       status.hidden = false;
-      window.parent.postMessage({ type: 'workbench.schwab.status_changed' }, location.origin);
-    });
-    let broker, widget, unbindTheme, watchlistSync, sessionMenu, intervalSubscription, symbolSubscription, sessionResolutionTimer, sessionToastTimer, disposed = false, chartInitialized = false;
+      status.textContent = trading ? 'Schwab 实时连接已断开，正在重连…' : '富途实时连接已断开，正在重连…';
+      window.parent.postMessage({ type: 'workbench.market-data.status_changed' }, location.origin);
+    };
+    const readyEvent = trading ? 'SCHWAB_STREAM_READY' : 'FUTU_STREAM_READY';
+    const closedEvent = trading ? 'SCHWAB_STREAM_CLOSED' : 'FUTU_STREAM_CLOSED';
+    window.addEventListener(readyEvent, streamReady);
+    window.addEventListener(closedEvent, streamClosed);
+    let broker, widget, unbindTheme, unwatchMarket, brokerStartTimer, watchlistSync, sessionMenu, intervalSubscription, symbolSubscription;
+    let sessionResolutionTimer, sessionToastTimer, disposed = false, chartInitialized = false;
     let resolvedSession = initialChartState.session, pendingSession = null, latestSessionResolution;
     const sessionToast = document.getElementById('session-toast');
     const showSessionToast = message => {
@@ -181,7 +193,7 @@
     };
     const savedWatchlists = loadWatchlists(request).then(value => ({ value }), error => ({ error }));
     void savedWatchlists.then(() => { delete prefetched["/api/auth/csrf"]; });
-    const datafeed = new Datafeed({ futuStream: window.futu, onSessionResolved: resolution => {
+    const datafeed = new Datafeed({ provider: market.provider, futuStream: window.futu, onSessionResolved: resolution => {
       if (disposed) return;
       const symbolKey = value => String(value || '').trim().split(':').at(-1);
       try {
@@ -206,7 +218,7 @@
       persistChartState();
     }, resetCharts: () => {
       widget.chartReady().then(() => {
-        if (disposed || !window.ws.ready) return;
+        if (disposed || !(trading ? window.ws?.ready : window.futu.ready)) return;
         widget.resetCache();
         for (let i = 0; i < widget.chartsCount(); i++) widget.chart(i).resetData();
       }).catch(() => { status.hidden = false; });
@@ -279,13 +291,23 @@
       intervalSubscription?.unsubscribe(null, onIntervalChanged);
       symbolSubscription?.unsubscribe(null, onSymbolChanged);
       sessionMenu?.dispose();
-      unbindTheme?.(); watchlistSync?.dispose({ discard }); window.ws.close(); window.futu.close(); datafeed.destroy(); broker?.destroy();
+      clearTimeout(brokerStartTimer);
+      unwatchMarket?.();
+      window.removeEventListener(readyEvent, streamReady);
+      window.removeEventListener(closedEvent, streamClosed);
+      unbindTheme?.(); watchlistSync?.dispose({ discard }); window.ws?.close(); window.futu.close(); datafeed.destroy(); broker?.destroy();
       if (discard) {
         widget?.remove();
         document.getElementById('tv_chart_container').replaceChildren();
         window.terminalLoad.fail('登录用户已变更，请重新加载。');
       }
     };
+    unwatchMarket = watchMarketData(market, () => {
+      if (disposed || !window.terminalIdentity.active) return;
+      window.parent.postMessage({ type: 'workbench.market-data.status_changed' }, location.origin);
+      dispose(false);
+      location.reload();
+    }, { onError: () => { status.hidden = false; status.textContent = '行情源状态读取失败，等待重试…'; } });
     window.addEventListener('terminal:identity-lost', () => dispose(true));
     window.addEventListener('pagehide', () => dispose(!window.terminalIdentity.active));
     document.addEventListener('visibilitychange', () => {
@@ -314,7 +336,8 @@
     let releaseBroker;
     const brokerStart = new Promise(resolve => {
       releaseBroker = resolve;
-      setTimeout(resolve, BROKER_START_CAP_MS);
+      if (trading) brokerStartTimer = setTimeout(resolve, BROKER_START_CAP_MS);
+      else resolve();
     });
     const pad2 = value => String(value).padStart(2, "0");
     widget = new tvWidget({
@@ -357,7 +380,7 @@
       disabled_features: ["header_saveload", "study_templates", "use_localstorage_for_settings"],
       enabled_features: ["pre_post_market_sessions", "iframe_loading_same_origin", "items_favoriting"],
       widgetbar: { details: true, watchlist: true, news: false, datawindow: true },
-      broker_factory: function (host) {
+      ...(trading ? { broker_factory: function (host) {
         broker = new Broker(host, {
           startAfter: brokerStart,
           preferredAccount: preferences.get('account') || '',
@@ -379,7 +402,7 @@
           supportOrdersHistory: true,
           supportExecutions: true
         }
-      }
+      } } : {})
     });
     window.terminalLoad.step('chart');
     sessionMenu = createSessionMenu(widget, {

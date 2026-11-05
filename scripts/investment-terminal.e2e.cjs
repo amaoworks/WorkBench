@@ -162,11 +162,11 @@ async function pollUntil(check, message, timeout = 30000) {
       if (message.location().url?.endsWith('/api/modules/investment/watchlists') && /503|409/.test(message.text())) return;
       errors.push(message.text());
     });
-    await targetPage.routeWebSocket("**/trader/ws", socket => {
+    await targetPage.routeWebSocket("**/trader/ws*", socket => {
       sockets.push(socket);
       socket.send(JSON.stringify({ stream: { status: "ready" } }));
     });
-    if (testSessions || testChartState || testPreferences) await targetPage.routeWebSocket("**/futu/quote/ws", socket => {
+    if (testSessions || testChartState || testPreferences) await targetPage.routeWebSocket("**/futu/quote/ws*", socket => {
       socket.send(JSON.stringify({ stream: { status: "ready", generation: "fixture-futu-1" } }));
     });
     await targetPage.route(`${origin}/**`, async route => {
@@ -308,6 +308,9 @@ async function pollUntil(check, message, timeout = 30000) {
             return await route.fulfill({ json: { revision: watchlists.revision, sequence: watchlistSequence } });
           }
           return await route.fulfill({ json: watchlists });
+        }
+        if (path === "/api/modules/investment/market-data") {
+          return await route.fulfill({ json: { provider: "schwab", schwabConnected: true, reauthorizationRequired: false, futuEnabled: overnightEnabled, overnightEnabled } });
         }
         if (useApp && path === "/api/modules/investment/schwab") {
           return await route.fulfill({ json: { appKey: "fixture", callbackUrl: "https://example.test/oauth/schwab", hasAppSecret: true, connected: true, reauthorizationRequired: false, lastError: "" } });

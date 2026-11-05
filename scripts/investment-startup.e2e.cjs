@@ -78,6 +78,9 @@ async function fixtureInvestmentAPI(route) {
   const method = request.method();
   const visit = activeVisit;
   try {
+    if (path === "/api/modules/investment/market-data" && method === "GET") {
+      return await route.fulfill({ json: { provider: "schwab", schwabConnected: true, reauthorizationRequired: false, futuEnabled: false, overnightEnabled: false } });
+    }
     if (path === "/api/modules/investment/schwab" && method === "GET") {
       return await route.fulfill({ json: { appKey: "fixture", callbackUrl: "https://example.test/oauth/schwab", hasAppSecret: true, connected: true, reauthorizationRequired: false, lastError: "" } });
     }
@@ -253,7 +256,7 @@ async function run() {
     });
     await page.route("**/api/auth/csrf", route => route.fulfill({ json: { token: "startup-test-csrf" } }));
     await page.route("**/api/modules/investment/**", fixtureInvestmentAPI);
-    await page.routeWebSocket("**/trader/ws", socket => {
+    await page.routeWebSocket("**/trader/ws*", socket => {
       sockets.push(socket);
       socket.send(JSON.stringify({ stream: { status: "ready" } }));
     });

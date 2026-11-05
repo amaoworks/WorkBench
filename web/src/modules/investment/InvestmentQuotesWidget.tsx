@@ -49,7 +49,9 @@ export default function InvestmentQuotesWidget({ widget }: { widget: Widget }) {
     );
   const data = quotes.data;
   // Setup and authorization prompts live on the snapshot card; an empty quote card stays hidden.
-  if (data.items.length === 0) return null;
+  if (data.items.length === 0) return data.status === "error"
+    ? <Notice tone="danger" title="行情暂不可用">{data.message}</Notice>
+    : null;
   const active: Tab = counts[tab] > 0 ? tab : counts.held > 0 ? "held" : "watched";
   const rows = data.items.filter((item) => (active === "held" ? item.held : item.watched && !item.held));
   const session = sessions[data.session];
@@ -92,14 +94,16 @@ export default function InvestmentQuotesWidget({ widget }: { widget: Widget }) {
                   </td>
                   <td>{item.price.toFixed(2)}</td>
                   <td>
-                    <span className={cn("ov-chg", item.changePct >= 0 ? "ov-chg-up" : "ov-chg-down")}>{formatSignedPct(item.changePct)}</span>
+                    <span className={cn("ov-chg", item.changePct !== undefined && (item.changePct >= 0 ? "ov-chg-up" : "ov-chg-down"))}>
+                      {item.changePct === undefined ? "—" : formatSignedPct(item.changePct)}
+                    </span>
                   </td>
                   <td className="ov-hide-sm">
                     {badge && <Badge tone={badge.tone}>{badge.label}</Badge>}
                     {item.extChangePct !== undefined && <span className={cn("ov-ext", item.extChangePct >= 0 ? "ov-up" : "ov-down")}>{formatSignedPct(item.extChangePct)}</span>}
                   </td>
                   <td>
-                    <Sparkline points={item.spark ?? []} up={item.changePct >= 0} />
+                    <Sparkline points={item.spark ?? []} up={(item.changePct ?? 0) >= 0} />
                   </td>
                 </tr>
               );
@@ -109,8 +113,8 @@ export default function InvestmentQuotesWidget({ widget }: { widget: Widget }) {
       </div>
       <div className="ov-card-foot">
         <span>
-          报价来自 Schwab{data.updatedAt ? ` · ${formatClock(data.updatedAt)} 更新` : ""}
-          {data.status !== "ok" ? " · 数据可能滞后" : ""}
+          报价来自 {data.provider === "futu" ? "富途" : "Schwab"}{data.updatedAt ? ` · ${formatClock(data.updatedAt)} 更新` : ""}
+          {data.status !== "ok" || data.message ? " · 数据可能滞后" : ""}
         </span>
       </div>
     </>

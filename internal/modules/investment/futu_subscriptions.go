@@ -59,14 +59,14 @@ func (g *futuGateway) browserCommand(ctx context.Context, command, owner, genera
 		if err := g.reserveBrowserSub(client, key); err != nil {
 			return g.currentGeneration(), false, err
 		}
-		current, applied, err = g.addSub(ctx, symbol, resolution, generation)
+		current, applied, err = g.addSub(ctx, symbol, resolution, generation, client.main)
 		if !applied || err != nil {
 			client.subsMu.Lock()
 			delete(client.subs, key)
 			client.subsMu.Unlock()
 		}
 	} else {
-		current, applied, err = g.releaseSub(ctx, symbol, resolution, generation)
+		current, applied, err = g.releaseSub(ctx, symbol, resolution, generation, client.main)
 		if applied && err == nil {
 			client.subsMu.Lock()
 			delete(client.subs, key)
@@ -169,7 +169,7 @@ func (g *futuGateway) currentGeneration() string {
 // commandClient gates the underlying lease operations by connection generation.
 // Browser commands additionally require an online owner via browserCommand.
 // Internal bootstrap ADDs may omit a token; unversioned UNSUBs are no-ops.
-func (g *futuGateway) commandClient(ctx context.Context, requestGeneration string, allowBootstrap bool) (*opendClient, string, bool, error) {
+func (g *futuGateway) commandClient(ctx context.Context, requestGeneration string, allowBootstrap bool, mainMode ...bool) (*opendClient, string, bool, error) {
 	g.mu.Lock()
 	current := g.generationTokenLocked()
 	closed := g.closed
@@ -184,7 +184,8 @@ func (g *futuGateway) commandClient(ctx context.Context, requestGeneration strin
 		return nil, current, false, nil
 	}
 
-	client, err := g.ensureOverlay(ctx)
+	main := len(mainMode) > 0 && mainMode[0]
+	client, err := g.ensureConnection(ctx, !main)
 	if err != nil {
 		return nil, g.currentGeneration(), false, err
 	}
@@ -206,14 +207,20 @@ func (g *futuGateway) commandGenerationAfter(client *opendClient) (string, bool)
 	return generation, true
 }
 
-func (g *futuGateway) addSub(ctx context.Context, symbol, resolution, requestGeneration string) (string, bool, error) {
+func (g *futuGateway) addSub(ctx context.Context, symbol, resolution, requestGeneration string, mainMode ...bool) (string, bool, error) {
 	_, subType, ok := futuKLTypes(resolution)
 	if !ok && resolution != "" {
 		return g.currentGeneration(), true, nil
 	}
-	client, current, applied, err := g.commandClient(ctx, requestGeneration, true)
+	main := len(mainMode) > 0 && mainMode[0]
+	client, current, applied, err := g.commandClient(ctx, requestGeneration, true, main)
 	if err != nil || !applied {
 		return current, applied, err
+	}
+	if main {
+		if _, err := client.requireEquities(ctx, []string{symbol}); err != nil {
+			return current, false, err
+		}
 	}
 	if err := g.hold(ctx, client, symbol, subTypeBasic, true); err != nil {
 		if generation, stillCurrent := g.commandGenerationAfter(client); !stillCurrent {
@@ -224,7 +231,27 @@ func (g *futuGateway) addSub(ctx context.Context, symbol, resolution, requestGen
 	if resolution == "" {
 		// A quote listener needs BASIC only, without consuming a K-line lease.
 		// Read the initial snapshot even if another tab already holds BASIC.
-		quote, available, err := client.getOvernightQuote(ctx, symbol)
+		var quote futuOvernightQuote
+		var available bool
+		var err error
+		if main {
+			var rows []map[string]any
+			rows, err = client.basicQuotes(ctx, []string{symbol})
+			g.mu.Lock()
+			overnightEnabled := g.overnightEnabled
+			g.mu.Unlock()
+			for _, row := range rows {
+				if q, ok := parseMainFutuQuote(row, time.Now(), overnightEnabled); ok && q.Symbol == symbol {
+					quote, available = q, true
+					break
+				}
+			}
+			if err == nil && !available {
+				err = errors.New("暂无可用富途行情，请检查行情权限和订阅额度")
+			}
+		} else {
+			quote, available, err = client.getOvernightQuote(ctx, symbol)
+		}
 		if err != nil {
 			_ = g.release(ctx, client, symbol, subTypeBasic)
 			if generation, stillCurrent := g.commandGenerationAfter(client); !stillCurrent {
@@ -234,7 +261,11 @@ func (g *futuGateway) addSub(ctx context.Context, symbol, resolution, requestGen
 		}
 		generation, stillCurrent := g.commandGenerationAfter(client)
 		if stillCurrent && available {
-			g.broadcastQuoteUpdate(quote, true)
+			if main {
+				g.broadcastMainQuote(quote, true)
+			} else {
+				g.broadcastQuoteUpdate(quote, true)
+			}
 		}
 		return generation, stillCurrent, nil
 	}
@@ -249,12 +280,12 @@ func (g *futuGateway) addSub(ctx context.Context, symbol, resolution, requestGen
 	return generation, stillCurrent, nil
 }
 
-func (g *futuGateway) releaseSub(ctx context.Context, symbol, resolution, requestGeneration string) (string, bool, error) {
+func (g *futuGateway) releaseSub(ctx context.Context, symbol, resolution, requestGeneration string, mainMode ...bool) (string, bool, error) {
 	_, subType, ok := futuKLTypes(resolution)
 	if !ok && resolution != "" {
 		return g.currentGeneration(), true, nil
 	}
-	client, current, applied, err := g.commandClient(ctx, requestGeneration, false)
+	client, current, applied, err := g.commandClient(ctx, requestGeneration, false, mainMode...)
 	if err != nil || !applied {
 		return current, applied, err
 	}

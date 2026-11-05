@@ -50,10 +50,21 @@ export async function futuFetch(path = "", init = {}) {
     return response;
 }
 
+export async function futuResponseError(response, fallback) {
+    const body = await response.clone().json().catch(() => null);
+    return new Error(typeof body?.message === 'string' ? body.message : `${fallback} [HTTP ${response.status}]`);
+}
+
 export async function overnightFetch() {
     return fetch("/api/modules/investment/overnight", {
         method: "GET",
         credentials: "same-origin",
+    });
+}
+
+export async function marketDataFetch() {
+    return fetch("/api/modules/investment/market-data", {
+        credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(10000),
     });
 }
 
@@ -111,11 +122,26 @@ export function usesFutuTicks(subsessionId, timestamp) {
     return false;
 }
 
+export function futuSessionContains(subsessionId, timestamp, overnightEnabled = true) {
+    const minutes = etMinuteOfDay(timestamp);
+    if (!Number.isFinite(minutes)) return false;
+    switch (subsessionId || 'regular') {
+        case 'regular': return minutes >= 570 && minutes < 960;
+        case 'premarket': return minutes >= 240 && minutes < 570;
+        case 'postmarket': return minutes >= 960 && minutes < 1200;
+        case 'extended': return minutes >= 240 && minutes < 1200;
+        case 'night': return overnightEnabled && isOvernightET(timestamp);
+        case EQUITY_24H_SESSION: return overnightEnabled || isSchwabExtendedET(timestamp);
+        default: return false;
+    }
+}
+
 export class FutuStream {
-    constructor({ events = window, socket = createWebSocket, url = FUTU_WS, retryDelay = 3000, status = overnightFetch } = {}) {
+    constructor({ events = window, socket = createWebSocket, mode = 'night', url = FUTU_WS, retryDelay = 3000, status = mode === 'main' ? marketDataFetch : overnightFetch } = {}) {
         this.events = events;
         this.socket = socket;
-        this.url = url;
+        this.mode = mode;
+        this.url = mode === 'main' ? `${url}?mode=main` : url;
         this.retryDelay = retryDelay;
         this.status = status;
         this.ready = false;
@@ -145,10 +171,10 @@ export class FutuStream {
                 this.wanted = false;
                 return;
             }
-            if (!response.ok) throw new Error("无法读取夜盘设置");
+            if (!response.ok) throw new Error("无法读取富途设置");
             const body = await response.clone().json().catch(() => ({}));
             if (this.closed || !this.wanted) return;
-            if (!body.enabled || !body.providerEnabled) {
+            if (this.mode === 'main' ? !body.futuEnabled : !body.enabled || !body.providerEnabled) {
                 this.wanted = false;
                 return;
             }
@@ -160,7 +186,7 @@ export class FutuStream {
         const ws = this.socket(this.url);
         this.ws = ws;
         ws.onmessage = ({ data }) => {
-            if (this.closed || this.ws !== ws) return;
+            if (this.closed || !this.wanted || this.ws !== ws) return;
             let message;
             try { message = JSON.parse(data); } catch { return; }
             if (message.stream?.status === "ready") {

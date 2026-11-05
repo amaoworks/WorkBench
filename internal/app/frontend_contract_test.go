@@ -113,6 +113,15 @@ func TestFrontendContracts(t *testing.T) {
 	capture("wallos.saved", "saved", "PUT", "/api/modules/todo/wallos", `{"enabled":false,"baseUrl":"","apiKey":"","daysBefore":3,"reminderHour":9,"timeZone":"UTC"}`, 200)
 	capture("wallos.sync", "wallosSync", "POST", "/api/modules/todo/wallos/sync", `{}`, 200)
 	capture("schwab", "schwab", "GET", "/api/modules/investment/schwab", "", 200)
+	capture("market-data.none", "marketDataStatus", "GET", "/api/modules/investment/market-data", "", 200)
+	if _, err := a.DB().Exec(`UPDATE investment_futu SET enabled=1, overnight_enabled=0 WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	capture("market-data.futu", "marketDataStatus", "GET", "/api/modules/investment/market-data", "", 200)
+	capture("overview.quotes.futu-empty", "investmentQuotes", "GET", "/api/modules/investment/overview/quotes", "", 200)
+	if _, err := a.DB().Exec(`UPDATE investment_futu SET enabled=0 WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
 	capture("schwab.saved", "schwab", "PUT", "/api/modules/investment/schwab", `{"appKey":"fixture","appSecret":"fixture-secret","callbackUrl":"https://127.0.0.1:8080/oauth/schwab"}`, 200)
 	capture("overview.snapshot.disconnected", "investmentSnapshot", "GET", "/api/modules/investment/overview/snapshot", "", 200)
 	capture("overview.quotes.disconnected", "investmentQuotes", "GET", "/api/modules/investment/overview/quotes", "", 200)

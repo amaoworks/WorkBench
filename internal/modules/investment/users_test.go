@@ -267,8 +267,8 @@ func TestSharedFutuBindsUserAndSessionAndFiltersStreams(t *testing.T) {
 	if !command(investorContext("alice"), a, "AAPL") || !command(investorContext("bob"), b, "MSFT") {
 		t.Fatal("own subscription rejected")
 	}
-	root.futu.broadcastKL("AAPL", "5", futuBar{Time: 1, Close: 10})
-	root.futu.broadcastKL("MSFT", "5", futuBar{Time: 2, Close: 20})
+	root.futu.broadcastKL("AAPL", "5", futuBar{Time: time.Date(2026, 11, 4, 2, 0, 0, 0, time.UTC).UnixMilli(), Close: 10})
+	root.futu.broadcastKL("MSFT", "5", futuBar{Time: time.Date(2026, 11, 4, 2, 5, 0, 0, time.UTC).UnixMilli(), Close: 20})
 	readSymbol := func(browser futuBrowser) string {
 		t.Helper()
 		var message struct{ Data []struct{ Symbol string } }
@@ -292,7 +292,7 @@ func TestSharedFutuBindsUserAndSessionAndFiltersStreams(t *testing.T) {
 		t.Fatal("disabled user's stream remained open or received Bob's subscription")
 	}
 	waitFutuBrowserRemoved(t, root.futu, a.owner, 0, 0)
-	root.futu.broadcastKL("MSFT", "5", futuBar{Time: 3, Close: 21})
+	root.futu.broadcastKL("MSFT", "5", futuBar{Time: time.Date(2026, 11, 4, 2, 10, 0, 0, time.UTC).UnixMilli(), Close: 21})
 	_ = b.conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	if got := readSymbol(b); got != "MSFT" {
 		t.Fatal(got)

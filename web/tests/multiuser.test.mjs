@@ -127,6 +127,9 @@ function renderAs(t, role, component, { path = "/settings", seed } = {}) {
     callbackUrl: role === "admin" ? "https://workbench.test/oauth/schwab" : "", connected: false,
     reauthorizationRequired: false, lastError: "",
   });
+  client.setQueryData(["investment", "market-data"], {
+    provider: "futu", schwabConnected: false, reauthorizationRequired: false, futuEnabled: true, overnightEnabled: true,
+  });
   client.setQueryData(["investment", "overnight"], { enabled: true, provider: "futu", providerEnabled: true });
   client.setQueryData(["investment", "futu"], {
     enabled: true, overnightEnabled: true, managed: true, serviceState: "running", serviceError: "",
@@ -175,6 +178,8 @@ for (const role of ["user", "admin"]) {
     assert.match(html, /登录 Schwab/);
     assert.equal(client.getQueryCache().find({ queryKey: ["investment", "futu"], exact: true }), undefined, "personal authorization must not mount shared-provider queries");
     assert.match(html, /共享夜盘行情/);
+    assert.match(html, /主行情源/);
+    assert.match(html, />富途</);
     assert.doesNotMatch(html, /App Key|App Secret|Bot Token|futu-admin-account|OAuth 回调地址|启用夜盘行情|启用富途牛牛行情/);
   });
 
