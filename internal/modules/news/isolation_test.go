@@ -362,6 +362,10 @@ func (u *checkedUsers) IsUserActive(_ context.Context, id string) (bool, error) 
 	return !u.disabled[id], nil
 }
 
+func (u *checkedUsers) IsUserActiveTx(ctx context.Context, _ *sql.Tx, id string) (bool, error) {
+	return u.IsUserActive(ctx, id)
+}
+
 func TestPrivateNewsJobsEnumerateActiveUsers(t *testing.T) {
 	m, _, ai := openModule(t)
 	m.notifications = &recipientNotifications{NotificationService: m.notifications}

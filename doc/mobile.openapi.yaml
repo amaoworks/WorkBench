@@ -338,6 +338,61 @@ paths:
               example: { code: password_changed, message: 密码已被修改，请重新登录 }
         '429':
           $ref: '#/components/responses/RateLimited'
+  /api/ai/status:
+    get:
+      tags: [Conversations]
+      summary: 可用对话模型
+      responses:
+        '200':
+          description: 当前配置的模型，不包含凭据
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [available, models, defaultModel]
+                properties:
+                  available: { type: boolean }
+                  models: { type: array, items: { type: string } }
+                  defaultModel: { type: string }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/chat:
+    post:
+      tags: [Conversations]
+      summary: 发送对话消息
+      description: model 指定已添加的模型，可在同一会话每轮切换并保留历史；省略时使用默认模型。未配置或已移除的模型返回 400 invalid_request，不保存用户消息。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChatRequest' }
+      responses:
+        '200':
+          description: 对话回复，包含 conversationId、messageId、text、usage 和可选 tools
+        '400':
+          description: invalid_request，消息、模型或上下文无效
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/chat/stream:
+    post:
+      tags: [Conversations]
+      summary: 流式对话
+      description: 模型选择与 /api/chat 相同；成功响应为 SSE，事件包含 chat.started、chat.delta、chat.tool、chat.completed 或 chat.error。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChatRequest' }
+      responses:
+        '200':
+          description: 流式回复
+          content:
+            text/event-stream:
+              schema: { type: string }
+        '400':
+          description: invalid_request；在建立流和保存消息之前校验模型
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /api/conversations:
     get:
       tags: [Conversations]
@@ -382,9 +437,11 @@ paths:
               schema: { $ref: '#/components/schemas/MessagePage' }
               example:
                 messages:
-                  - role: user
+                  - id: msg_user_01
+                    role: user
                     content: 整理今天的任务
-                  - role: assistant
+                  - id: msg_assistant_01
+                    role: assistant
                     content: 今天有三项任务。
                 nextCursor: eyJ0aW1lc3RhbXAiOjE3NjIwNzA0MDAwMDAsImlkIjoibXNnXzAxIn0
         '400':
@@ -834,6 +891,26 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/DeviceSession' }
+    ChatRequest:
+      type: object
+      required: [message]
+      properties:
+        conversationId: { type: string }
+        message: { type: string, minLength: 1, maxLength: 50000 }
+        model:
+          type: string
+          maxLength: 200
+          description: /api/ai/status 返回的模型 ID；省略或空字符串使用默认模型
+        profile:
+          type: string
+          description: 原生调用的配置名称；显式 model 优先
+        timeZone: { type: string, example: Asia/Shanghai }
+        context:
+          type: object
+          required: [route, label]
+          properties:
+            route: { type: string, maxLength: 2048 }
+            label: { type: string, maxLength: 200 }
     Conversation:
       type: object
       additionalProperties: false
@@ -855,10 +932,11 @@ components:
     AIMessage:
       type: object
       additionalProperties: false
-      required: [role, content]
+      required: [id, role, content]
       properties:
-        role: { type: string }
-        content: {}
+        id: { type: string, minLength: 1 }
+        role: { type: string, enum: [user, assistant] }
+        content: { type: string }
     MessagePage:
       type: object
       additionalProperties: false

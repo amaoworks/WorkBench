@@ -2,6 +2,7 @@ package notifications
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -222,6 +223,9 @@ func (u *changingUser) ActiveUserIDs(context.Context) ([]string, error) { return
 func (u *changingUser) IsUserActive(context.Context, string) (bool, error) {
 	return u.active.Load(), nil
 }
+func (u *changingUser) IsUserActiveTx(ctx context.Context, _ *sql.Tx, id string) (bool, error) {
+	return u.IsUserActive(ctx, id)
+}
 
 func TestHubClosesDisabledUserStream(t *testing.T) {
 	hub := NewHub()
@@ -250,3 +254,6 @@ type allUsers struct{}
 
 func (allUsers) ActiveUserIDs(context.Context) ([]string, error)    { return nil, nil }
 func (allUsers) IsUserActive(context.Context, string) (bool, error) { return true, nil }
+func (u allUsers) IsUserActiveTx(ctx context.Context, _ *sql.Tx, id string) (bool, error) {
+	return u.IsUserActive(ctx, id)
+}

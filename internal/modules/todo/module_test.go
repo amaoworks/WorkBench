@@ -38,6 +38,10 @@ func (users todoUsers) IsUserActive(_ context.Context, id string) (bool, error) 
 	return false, nil
 }
 
+func (users todoUsers) IsUserActiveTx(ctx context.Context, _ *sql.Tx, id string) (bool, error) {
+	return users.IsUserActive(ctx, id)
+}
+
 type failingPublisher struct{}
 
 func (failingPublisher) Publish(context.Context, contracts.NewEvent) (contracts.EventID, error) {

@@ -3,7 +3,7 @@ import { apiValidated } from "../../shared/api";
 import { savedSchema } from "../../shared/schema";
 
 import {
-  appearanceSchema, createdUserSchema, managedUsersSchema, resetUserPasswordSchema, settingsSchema,
+  aiModelsSchema, aiTestSchema, appearanceSchema, createdUserSchema, managedUsersSchema, resetUserPasswordSchema, settingsSchema,
   telegramRecipientSchema, telegramSettingsSchema, telegramTestSchema, updatedUserSchema,
   type Appearance, type ManagedUser, type Settings,
 } from "./schema";
@@ -11,6 +11,17 @@ export type { Appearance, AISettings, LoggingSettings, Settings } from "./schema
 
 export function useSettings() {
   return useQuery({ queryKey: ["settings"], queryFn: () => apiValidated("/api/settings", settingsSchema) });
+}
+export type AIConnectionInput = { baseUrl: string; apiKey: string; clearApiKey?: boolean };
+export type AISettingsInput = AIConnectionInput & { enabled: boolean; model: string; models: string[] };
+export function fetchAIModels(input: AIConnectionInput) {
+  return apiValidated("/api/settings/ai/models", aiModelsSchema, { method: "POST", body: JSON.stringify(input) });
+}
+export function saveAISettings(input: AISettingsInput) {
+  return apiValidated("/api/settings/ai", savedSchema, { method: "PUT", body: JSON.stringify(input) });
+}
+export function testAISettings(input: AISettingsInput) {
+  return apiValidated("/api/settings/ai/test", aiTestSchema, { method: "POST", body: JSON.stringify(input) });
 }
 const usersKey = ["admin", "users"] as const;
 export function useManagedUsers() {

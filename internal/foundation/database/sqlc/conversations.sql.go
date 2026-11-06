@@ -60,37 +60,6 @@ func (q *Queries) GetActiveConversation(ctx context.Context, arg GetActiveConver
 	return i, err
 }
 
-const insertAssistantMessage = `-- name: InsertAssistantMessage :execrows
-INSERT INTO ai_messages(id, conversation_id, role, content_json, provider, model, created_at)
-SELECT ?1, c.id, 'assistant', ?2, 'openai', ?3, ?4
-FROM ai_conversations c
-WHERE c.id = ?5 AND c.user_id = ?6 AND c.archived_at IS NULL
-`
-
-type InsertAssistantMessageParams struct {
-	ID             string         `json:"id"`
-	ContentJson    string         `json:"content_json"`
-	Model          sql.NullString `json:"model"`
-	CreatedAt      int64          `json:"created_at"`
-	ConversationID string         `json:"conversation_id"`
-	UserID         string         `json:"user_id"`
-}
-
-func (q *Queries) InsertAssistantMessage(ctx context.Context, arg InsertAssistantMessageParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, insertAssistantMessage,
-		arg.ID,
-		arg.ContentJson,
-		arg.Model,
-		arg.CreatedAt,
-		arg.ConversationID,
-		arg.UserID,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
 const insertConversation = `-- name: InsertConversation :exec
 INSERT INTO ai_conversations(id, user_id, title, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?)
@@ -334,6 +303,39 @@ func (q *Queries) RenameConversation(ctx context.Context, arg RenameConversation
 		arg.Title,
 		arg.UpdatedAt,
 		arg.ID,
+		arg.UserID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const saveAssistantMessage = `-- name: SaveAssistantMessage :execrows
+INSERT INTO ai_messages(id, conversation_id, role, content_json, provider, model, created_at)
+SELECT ?1, c.id, 'assistant', ?2, 'openai', ?3, ?4
+FROM ai_conversations c
+WHERE c.id = ?5 AND c.user_id = ?6 AND c.archived_at IS NULL
+ON CONFLICT(id) DO UPDATE SET content_json = excluded.content_json
+WHERE ai_messages.conversation_id = excluded.conversation_id AND ai_messages.role = 'assistant'
+`
+
+type SaveAssistantMessageParams struct {
+	ID             string         `json:"id"`
+	ContentJson    string         `json:"content_json"`
+	Model          sql.NullString `json:"model"`
+	CreatedAt      int64          `json:"created_at"`
+	ConversationID string         `json:"conversation_id"`
+	UserID         string         `json:"user_id"`
+}
+
+func (q *Queries) SaveAssistantMessage(ctx context.Context, arg SaveAssistantMessageParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, saveAssistantMessage,
+		arg.ID,
+		arg.ContentJson,
+		arg.Model,
+		arg.CreatedAt,
+		arg.ConversationID,
 		arg.UserID,
 	)
 	if err != nil {

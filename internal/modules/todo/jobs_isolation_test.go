@@ -2,6 +2,7 @@ package todo
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -20,6 +21,10 @@ func (*disablingDirectory) ActiveUserIDs(context.Context) ([]string, error) {
 func (d *disablingDirectory) IsUserActive(context.Context, string) (bool, error) {
 	d.checks++
 	return d.checks == 1, nil
+}
+
+func (d *disablingDirectory) IsUserActiveTx(ctx context.Context, _ *sql.Tx, id string) (bool, error) {
+	return d.IsUserActive(ctx, id)
 }
 
 func TestDueScanRechecksDisabledUserBeforeDelivery(t *testing.T) {

@@ -15,9 +15,13 @@ import (
 	"time"
 )
 
-func overviewWatchlist(t *testing.T, m *Module, ctx context.Context, symbol string) {
+func overviewWatchlist(t *testing.T, m *Module, ctx context.Context, symbols ...string) {
 	t.Helper()
-	body := fmt.Sprintf(`{"revision":0,"writer":"overview-test","sequence":1,"state":{"lists":[{"id":"active","title":"自选","symbols":["###分类",%q]},{"id":"inactive","title":"其他","symbols":["NVDA"]}],"activeId":"active"}}`, symbol)
+	encoded, err := json.Marshal(append([]string{"###分类"}, symbols...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`{"revision":0,"writer":"overview-test","sequence":1,"state":{"lists":[{"id":"active","title":"自选","symbols":%s},{"id":"inactive","title":"其他","symbols":["NVDA"]}],"activeId":"active"}}`, encoded)
 	response := httptest.NewRecorder()
 	m.saveWatchlists(response, httptest.NewRequest("PUT", "/", strings.NewReader(body)).WithContext(ctx))
 	requireStatus(t, response, http.StatusOK)
@@ -53,7 +57,11 @@ func (f *overviewOpenD) serve(conn net.Conn) {
 		case protoQotGetStaticInfo:
 			list := []any{}
 			for _, row := range f.basicQotList {
-				list = append(list, map[string]any{"basic": map[string]any{"security": row["security"], "secType": 3, "name": row["name"], "exchType": 5}})
+				secType := row["secType"]
+				if secType == nil {
+					secType = 3
+				}
+				list = append(list, map[string]any{"basic": map[string]any{"security": row["security"], "secType": secType, "name": row["name"], "exchType": 5}})
 			}
 			payload = map[string]any{"staticInfoList": list}
 		case protoQotGetBasicQot:
@@ -149,6 +157,54 @@ func TestOverviewFutuQuotesWithoutPersonalSchwab(t *testing.T) {
 				t.Fatal(response.Body.String())
 			}
 		})
+	}
+}
+
+func TestOverviewFutuMixedWatchlistKeepsEquitiesAndUpstreamErrors(t *testing.T) {
+	m := openInvestmentModule(t)
+	now := time.Date(2026, 10, 26, 15, 0, 0, 0, time.UTC)
+	m.now = func() time.Time { return now }
+	fake := overviewFutuFixture(t, m, now)
+	fake.mu.Lock()
+	fake.basicQotList[1]["security"] = map[string]any{"market": marketUS, "code": "SPY"}
+	fake.basicQotList[1]["secType"] = 4
+	fake.mu.Unlock()
+	ctx := testContext(context.Background())
+	overviewWatchlist(t, m, ctx, "NASDAQ:AAPL", "/ES", "$SPX", "AMEX:SPY")
+	got := m.overviewQuotes(ctx)
+	if got.Status != "ok" || got.Provider != "futu" || len(got.Items) != 2 || got.Items[0].Symbol != "AAPL" || got.Items[1].Symbol != "SPY" {
+		t.Fatalf("mixed watchlist: %+v", got)
+	}
+	for _, item := range got.Items {
+		if !item.Watched || item.Held || item.Price <= 0 {
+			t.Fatalf("equity/ETF quote: %+v", item)
+		}
+	}
+	// The public quote endpoint still rejects unsupported input.
+	if _, err := m.futuQuotes(ctx, []string{"AAPL", "/ES", "$SPX"}); err == nil {
+		t.Fatal("public Futu quotes accepted unsupported symbols")
+	}
+	fake.mu.Lock()
+	fake.quoteError = "行情权限不足，订阅额度已用完"
+	fake.mu.Unlock()
+	now = now.Add(overviewQuotesTTL + time.Second)
+	got = m.overviewQuotes(ctx)
+	if got.Status != "error" || len(got.Items) != 0 || !strings.Contains(got.Message, "行情权限不足，订阅额度已用完") {
+		t.Fatalf("mixed watchlist hid upstream failure: %+v", got)
+	}
+}
+
+func TestOverviewFutuUnsupportedWatchlistDoesNotFetch(t *testing.T) {
+	m := openInvestmentModule(t)
+	m.deps.FutuOpenDAddress = "127.0.0.1:1"
+	ctx := testContext(context.Background())
+	if err := m.storeFutu(ctx, futuRecord{Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	overviewWatchlist(t, m, ctx, "/ES", "$SPX")
+	got := m.overviewQuotes(ctx)
+	if got.Status != "ok" || got.Provider != "futu" || len(got.Items) != 0 || got.UpdatedAt != nil {
+		t.Fatalf("unsupported watchlist must not request upstream: %+v", got)
 	}
 }
 

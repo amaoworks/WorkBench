@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -55,6 +57,36 @@ func NewOpenAIProvider(config OpenAIConfig) (*OpenAIProvider, error) {
 		config.Timeout = 2 * time.Minute
 	}
 	return &OpenAIProvider{client: openai.NewClient(options...), profiles: config.Profiles, timeout: config.Timeout}, nil
+}
+
+// Models exposes only configured chat model IDs, never provider credentials.
+func (p *OpenAIProvider) Models() ([]string, string) {
+	defaultModel := p.profiles["default"].Model
+	allowed := map[string]bool{}
+	if defaultModel != "" {
+		allowed[defaultModel] = true
+	}
+	for key, profile := range p.profiles {
+		if profile.Model != "" && key == "model:"+profile.Model {
+			allowed[profile.Model] = true
+		}
+	}
+	models := make([]string, 0, len(allowed))
+	for model := range allowed {
+		models = append(models, model)
+	}
+	sort.Strings(models)
+	return models, defaultModel
+}
+
+func (p *OpenAIProvider) ProfileModel(profile string) string {
+	if model := p.profiles[profile].Model; model != "" {
+		return model
+	}
+	if profile == "model:"+p.profiles["default"].Model {
+		return p.profiles["default"].Model
+	}
+	return strings.TrimPrefix(profile, "model:")
 }
 
 func (p *OpenAIProvider) Generate(ctx context.Context, request contracts.GenerateRequest) (contracts.GenerateResult, error) {
@@ -152,6 +184,9 @@ func (p *OpenAIProvider) Stream(ctx context.Context, request contracts.GenerateR
 
 func (p *OpenAIProvider) params(request contracts.GenerateRequest) (responses.ResponseNewParams, error) {
 	profile, exists := p.profiles[request.Profile]
+	if !exists && request.Profile == "model:"+p.profiles["default"].Model && p.profiles["default"].Model != "" {
+		profile, exists = p.profiles["default"], true
+	}
 	if !exists {
 		return responses.ResponseNewParams{}, fmt.Errorf("unknown AI profile %q", request.Profile)
 	}

@@ -39,11 +39,13 @@ SELECT sqlc.arg(id), c.id, 'user', sqlc.arg(content_json), sqlc.arg(created_at)
 FROM ai_conversations c
 WHERE c.id = sqlc.arg(conversation_id) AND c.user_id = sqlc.arg(user_id) AND c.archived_at IS NULL;
 
--- name: InsertAssistantMessage :execrows
+-- name: SaveAssistantMessage :execrows
 INSERT INTO ai_messages(id, conversation_id, role, content_json, provider, model, created_at)
 SELECT sqlc.arg(id), c.id, 'assistant', sqlc.arg(content_json), 'openai', sqlc.narg(model), sqlc.arg(created_at)
 FROM ai_conversations c
-WHERE c.id = sqlc.arg(conversation_id) AND c.user_id = sqlc.arg(user_id) AND c.archived_at IS NULL;
+WHERE c.id = sqlc.arg(conversation_id) AND c.user_id = sqlc.arg(user_id) AND c.archived_at IS NULL
+ON CONFLICT(id) DO UPDATE SET content_json = excluded.content_json
+WHERE ai_messages.conversation_id = excluded.conversation_id AND ai_messages.role = 'assistant';
 
 -- name: ListRecentConversationMessages :many
 SELECT role, content_json FROM (

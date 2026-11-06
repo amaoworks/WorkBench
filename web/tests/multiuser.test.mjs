@@ -137,7 +137,7 @@ function renderAs(t, role, component, { path = "/settings", seed } = {}) {
   });
   client.setQueryData(["settings"], {
     appearance,
-    ai: { enabled: false, model: "fixture-model", baseUrl: "https://ai.invalid/v1", hasApiKey: false },
+    ai: { enabled: false, model: "fixture-model", models: ["fixture-model"], baseUrl: "https://ai.invalid/v1", hasApiKey: false },
     logging: { level: "info" },
     deployment: {
       listenAddress: "127.0.0.1:9090", dataPath: "/workspace/data.db", databaseDriver: "sqlite",

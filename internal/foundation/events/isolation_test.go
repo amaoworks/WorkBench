@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"workbench/internal/contracts"
@@ -19,6 +20,9 @@ func (u eventUsers) ActiveUserIDs(context.Context) ([]string, error) {
 	return ids, nil
 }
 func (u eventUsers) IsUserActive(_ context.Context, id string) (bool, error) { return u[id], nil }
+func (u eventUsers) IsUserActiveTx(ctx context.Context, _ *sql.Tx, id string) (bool, error) {
+	return u.IsUserActive(ctx, id)
+}
 func eventContext(id string) context.Context {
 	return contracts.WithPrincipal(context.Background(), contracts.Principal{UserID: id, Role: contracts.RoleAdmin})
 }

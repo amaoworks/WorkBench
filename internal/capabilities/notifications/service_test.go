@@ -2,6 +2,7 @@ package notifications
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -22,6 +23,9 @@ func (activeUsers) ActiveUserIDs(context.Context) ([]string, error) {
 }
 func (activeUsers) IsUserActive(_ context.Context, id string) (bool, error) {
 	return id == "owner" || id == "alice" || id == "bob", nil
+}
+func (u activeUsers) IsUserActiveTx(ctx context.Context, _ *sql.Tx, id string) (bool, error) {
+	return u.IsUserActive(ctx, id)
 }
 
 func openService(t *testing.T) (*Service, *workbenchdb.Database) {

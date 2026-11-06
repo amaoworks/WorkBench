@@ -69,7 +69,7 @@ func (s *Service) CreateTx(ctx context.Context, tx *sql.Tx, input contracts.NewN
 		if s.users == nil {
 			return contracts.Notification{}, errors.New("notification user directory is unavailable")
 		}
-		active, err := s.users.IsUserActive(ctx, input.RecipientID)
+		active, err := s.users.IsUserActiveTx(ctx, tx, input.RecipientID)
 		if err != nil || !active {
 			return contracts.Notification{}, errors.New("notification recipient is inactive")
 		}

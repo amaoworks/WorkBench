@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ChatTool } from "../../shared/schema";
 
 export const conversationSchema = z.object({
   id: z.string().min(1),
@@ -13,6 +14,7 @@ export const conversationsPageSchema = z.object({
 });
 
 const conversationMessageSchema = z.object({
+  id: z.string().min(1),
   role: z.enum(["user", "assistant"]),
   content: z.string(),
 });
@@ -23,3 +25,7 @@ export const conversationMessagesPageSchema = z.object({
 });
 
 export type Conversation = z.infer<typeof conversationSchema>;
+export type ConversationMessage = z.infer<typeof conversationMessageSchema> & { tools?: ChatTool[]; active?: boolean };
+export type ConversationMessagesPage = Omit<z.infer<typeof conversationMessagesPageSchema>, "messages"> & {
+  messages: ConversationMessage[];
+};

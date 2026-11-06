@@ -35,7 +35,26 @@ func (g *Gateway) snapshot() contracts.AIProvider {
 	return g.provider
 }
 
+// Snapshot binds a turn to the current provider while sharing the tool runtime.
+func (g *Gateway) Snapshot() *Gateway {
+	return &Gateway{provider: g.snapshot(), runtime: g.runtime}
+}
+
 func (g *Gateway) Available() bool { return g.snapshot() != nil }
+
+func (g *Gateway) Models() ([]string, string) {
+	if catalog, ok := g.snapshot().(interface{ Models() ([]string, string) }); ok {
+		return catalog.Models()
+	}
+	return []string{}, ""
+}
+
+func (g *Gateway) ProfileModel(profile string) string {
+	if catalog, ok := g.snapshot().(interface{ ProfileModel(string) string }); ok {
+		return catalog.ProfileModel(profile)
+	}
+	return profile
+}
 
 func (g *Gateway) Generate(ctx context.Context, request contracts.GenerateRequest) (contracts.GenerateResult, error) {
 	if _, err := contracts.RequireUserID(ctx); err != nil {
@@ -48,6 +67,9 @@ func (g *Gateway) Generate(ctx context.Context, request contracts.GenerateReques
 	var executions []contracts.ToolExecution
 	var usage contracts.AIUsage
 	for round := 0; round <= 4; round++ {
+		if err := ctx.Err(); err != nil {
+			return contracts.GenerateResult{}, err
+		}
 		request.Tools = g.roundTools(round)
 		result, err := provider.Generate(ctx, request)
 		if err != nil {
@@ -91,6 +113,10 @@ func (g *Gateway) runStream(ctx context.Context, provider contracts.AIProvider, 
 	var executions []contracts.ToolExecution
 	var usage contracts.AIUsage
 	for round := 0; round <= 4; round++ {
+		if err := ctx.Err(); err != nil {
+			sendStreamError(ctx, events, err)
+			return
+		}
 		request.Tools = g.roundTools(round)
 		upstream, err := provider.Stream(ctx, request)
 		if err != nil {
@@ -166,6 +192,9 @@ func (g *Gateway) roundTools(round int) []contracts.AITool {
 func (g *Gateway) executeTools(ctx context.Context, request *contracts.GenerateRequest, result contracts.GenerateResult, report func(contracts.ToolExecution)) error {
 	request.Items = append(request.Items, result.OutputItems...)
 	for _, call := range result.ToolCalls {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		call.ConversationID, call.MessageID = request.ConversationID, request.MessageID
 		// Model output is not a user confirmation, even if it names the user.
 		call.ConfirmedBy = ""
@@ -180,7 +209,14 @@ func (g *Gateway) executeTools(ctx context.Context, request *contracts.GenerateR
 		if err != nil {
 			execution.Status, execution.Error = "failed", truncateToolError(err)
 		}
+		var recordErr error
+		if request.OnToolCompleted != nil {
+			recordErr = request.OnToolCompleted(ctx, execution, toolResult)
+		}
 		report(execution)
+		if recordErr != nil {
+			return fmt.Errorf("record tool %q result: %w", call.Name, recordErr)
+		}
 		if err != nil {
 			return fmt.Errorf("execute tool %q: %w", call.Name, err)
 		}

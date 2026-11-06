@@ -498,6 +498,57 @@ func TestSchwabMobileOAuthStatusExpires(t *testing.T) {
 	}
 }
 
+func TestSchwabProxyForwardsAccountTransactions(t *testing.T) {
+	var gotPath, gotQuery, gotAuth string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/trader/v1/accounts/accountNumbers":
+			_, _ = io.WriteString(w, `[{"accountNumber":"123","hashValue":"hash"}]`)
+		case "/trader/v1/accounts/hash/transactions":
+			gotPath, gotQuery, gotAuth = r.URL.Path, r.URL.RawQuery, r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `[{"activityId":1}]`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+	module := openInvestmentModule(t)
+	module.schwabAPI = upstream.URL
+	seedSchwab(t, module, schwabRecord{
+		AppKey: "key", AppSecret: "secret", CallbackURL: "https://127.0.0.1:8080/oauth/schwab",
+		AccessToken: "access-token", RefreshToken: "refresh", TokenExpiresAt: module.now().UTC().Add(time.Hour),
+	})
+	router := chi.NewRouter()
+	router.Method(http.MethodGet, "/api/modules/investment/schwab/trader/v1/*", module.proxySchwab("/trader/v1"))
+	router.Method(http.MethodPost, "/api/modules/investment/schwab/trader/v1/*", module.proxySchwab("/trader/v1"))
+
+	ok := httptest.NewRecorder()
+	router.ServeHTTP(ok, testRequest(http.MethodGet, "/api/modules/investment/schwab/trader/v1/accounts/hash/transactions?startDate=2025-11-06T00:00:00.000Z&endDate=2026-11-06T00:00:00.000Z&types=TRADE&symbol=SOXL", nil))
+	if ok.Code != 200 || !strings.Contains(ok.Body.String(), `"activityId":1`) {
+		t.Fatalf("transactions: %d %s", ok.Code, ok.Body.String())
+	}
+	if gotPath != "/trader/v1/accounts/hash/transactions" || gotAuth != "Bearer access-token" || !strings.Contains(gotQuery, "symbol=SOXL") || !strings.Contains(gotQuery, "types=TRADE") {
+		t.Fatalf("upstream path=%s query=%s auth=%s", gotPath, gotQuery, gotAuth)
+	}
+
+	write := httptest.NewRecorder()
+	router.ServeHTTP(write, testRequest(http.MethodPost, "/api/modules/investment/schwab/trader/v1/accounts/hash/transactions", strings.NewReader(`{}`)))
+	if write.Code != http.StatusBadRequest {
+		t.Fatalf("write: %d %s", write.Code, write.Body.String())
+	}
+	detail := httptest.NewRecorder()
+	router.ServeHTTP(detail, testRequest(http.MethodGet, "/api/modules/investment/schwab/trader/v1/accounts/hash/transactions/1", nil))
+	if detail.Code != http.StatusBadRequest {
+		t.Fatalf("detail: %d %s", detail.Code, detail.Body.String())
+	}
+	foreign := httptest.NewRecorder()
+	router.ServeHTTP(foreign, testRequest(http.MethodGet, "/api/modules/investment/schwab/trader/v1/accounts/other/transactions", nil))
+	if foreign.Code != http.StatusForbidden {
+		t.Fatalf("foreign: %d %s", foreign.Code, foreign.Body.String())
+	}
+}
+
 func TestSchwabProxyInjectsBearerAndBlocksTraversal(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/marketdata/v1/instruments" || r.URL.Query().Get("symbol") != "AAPL" {
@@ -646,6 +697,9 @@ func (testInvestmentUsers) ActiveUserIDs(context.Context) ([]string, error) {
 }
 func (testInvestmentUsers) IsUserActive(_ context.Context, id string) (bool, error) {
 	return id != "", nil
+}
+func (u testInvestmentUsers) IsUserActiveTx(ctx context.Context, _ *sql.Tx, id string) (bool, error) {
+	return u.IsUserActive(ctx, id)
 }
 func testAuthenticated(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) { handler(w, r.WithContext(testContext(r.Context()))) }

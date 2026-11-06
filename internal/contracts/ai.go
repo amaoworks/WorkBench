@@ -20,6 +20,9 @@ type GenerateRequest struct {
 	Items          []json.RawMessage
 	ConversationID string
 	MessageID      string
+	// OnToolCompleted records executed results before the gateway starts another tool or round.
+	// An error stops generation. The callback also runs when cancellation occurred during execution.
+	OnToolCompleted func(context.Context, ToolExecution, ToolResult) error `json:"-"`
 }
 
 type AIMessage struct {

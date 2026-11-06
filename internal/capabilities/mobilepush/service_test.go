@@ -2,6 +2,7 @@ package mobilepush
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -30,6 +31,9 @@ func (activePushUsers) ActiveUserIDs(context.Context) ([]string, error) {
 }
 func (activePushUsers) IsUserActive(_ context.Context, id string) (bool, error) {
 	return id == "owner" || id == "alice" || id == "bob", nil
+}
+func (u activePushUsers) IsUserActiveTx(ctx context.Context, _ *sql.Tx, id string) (bool, error) {
+	return u.IsUserActive(ctx, id)
 }
 
 type stubProvider struct {

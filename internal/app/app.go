@@ -351,6 +351,7 @@ func (a *App) routes(
 		protected.With(a.auth.RequireAdmin).Put("/api/settings/telegram/recipients/{userID}", a.telegram.SaveRecipientMapping)
 		protected.With(a.auth.RequireAdmin).Put("/api/settings/ai", a.saveAISettings)
 		protected.With(a.auth.RequireAdmin).Post("/api/settings/ai/test", a.testAISettings)
+		protected.With(a.auth.RequireAdmin).Post("/api/settings/ai/models", a.listAIModels)
 		protected.Put("/api/settings/appearance", a.saveAppearance)
 		protected.With(a.auth.RequireAdmin).Put("/api/settings/logging", a.saveLoggingSettings)
 		protected.Put("/api/settings/password", a.auth.ChangePasswordHandler)

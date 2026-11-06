@@ -5,7 +5,11 @@ export const appearanceSchema = z.object({
   motion: z.enum(["full", "reduced"]),
   palette: z.enum(["default", "claude"]).default("default"),
 });
-export const aiSettingsSchema = z.object({ enabled: z.boolean(), model: z.string(), baseUrl: z.string(), hasApiKey: z.boolean() });
+export const aiModelIdSchema = z.string().trim().min(1).max(200);
+export const aiModelsSchema = z.object({ models: z.array(aiModelIdSchema) });
+export const aiSettingsSchema = z.object({
+  enabled: z.boolean(), model: z.string(), models: z.array(aiModelIdSchema).max(50), baseUrl: z.string(), hasApiKey: z.boolean(),
+});
 export const loggingSettingsSchema = z.object({ level: z.enum(["debug", "info", "warn", "error"]) });
 export const settingsSchema = z.object({
   ai: aiSettingsSchema.optional(), appearance: appearanceSchema, logging: loggingSettingsSchema.optional(),

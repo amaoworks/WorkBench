@@ -36,6 +36,10 @@ func (u testUsers) IsUserActive(_ context.Context, id string) (bool, error) {
 	return false, nil
 }
 
+func (u testUsers) IsUserActiveTx(ctx context.Context, _ *sql.Tx, id string) (bool, error) {
+	return u.IsUserActive(ctx, id)
+}
+
 type roundTrip func(*http.Request) (*http.Response, error)
 
 func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

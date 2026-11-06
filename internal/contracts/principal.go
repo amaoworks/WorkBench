@@ -2,6 +2,7 @@ package contracts
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 )
 
@@ -57,4 +58,6 @@ func IsAdmin(ctx context.Context) bool {
 type UserDirectory interface {
 	ActiveUserIDs(context.Context) ([]string, error)
 	IsUserActive(context.Context, string) (bool, error)
+	// IsUserActiveTx reuses the caller's connection for checks inside a transaction.
+	IsUserActiveTx(context.Context, *sql.Tx, string) (bool, error)
 }

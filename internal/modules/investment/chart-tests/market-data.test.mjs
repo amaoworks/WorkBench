@@ -69,6 +69,86 @@ test('Futu live subscription routes are owner-bound, session-filtered and preser
  feed.destroy(); assert.equal(feed.latestBars.size,0);assert.equal(feed.futuQuotes.size,0);assert.equal(feed.quotesListeners.size,0);
 });
 
+test('Futu snapshots replace cached quotes only with a newer timestamp', async t => {
+ const { feed, events } = setup(t);
+ await feed.ensureFutuOverlay();
+ const updates = [];
+ feed.subscribeQuotes(['AAPL'], [], values => updates.push(...values), 'watch');
+ await feed.loadQuotes(['AAPL']);
+ assert.equal(feed.mergedQuote('AAPL').lp, 101);
+ const emit = (price, time, snapshot = true) => events.dispatchEvent(new CustomEvent('FUTU_QUOTE', { detail: {
+  symbol: 'AAPL', snapshot, quote: { lp: price, time, session: 'regular' },
+ } }));
+ emit(120, regular + 60_000);
+ assert.equal(updates.at(-1).v.lp, 120, 'a newer snapshot must replace a cached REST quote');
+ emit(100, regular);
+ emit(110, regular + 60_000);
+ emit(90, undefined);
+ emit(80, null);
+ emit(70, regular - 1, false);
+ assert.equal(updates.at(-1).v.lp, 120, 'delayed, equal-time and undated snapshots cannot regress the quote');
+ assert.equal(feed.futuQuoteTimes.get('AAPL'), regular + 60_000);
+});
+
+test('Futu switching away and back clears only the final listener cache and refetches quotes', async t => {
+ let requests = 0;
+ const { feed, events } = setup(t, { futuRequest: async path => {
+  assert.ok(path.startsWith('/quotes'));
+  requests++;
+  return json({ items: [{ symbol: 'AAPL', price: 90 + requests * 10, time: regular + (requests - 1) * 30_000, session: 'regular' }] });
+ } });
+ await feed.ensureFutuOverlay();
+ feed.subscribeQuotes(['AAPL'], [], () => {}, 'chart');
+ feed.subscribeQuotes(['AAPL'], [], () => {}, 'details');
+ await feed.loadQuotes(['AAPL']);
+ assert.equal(feed.mergedQuote('AAPL').lp, 100);
+ feed.unsubscribeQuotes('chart');
+ assert.equal(feed.mergedQuote('AAPL').lp, 100, 'another listener still owns the quote');
+ feed.unsubscribeQuotes('details');
+ for (const cache of [feed.futuQuotes, feed.futuQuoteTimes, feed.quote_cache]) assert.equal(cache.has('AAPL'), false);
+ events.dispatchEvent(new CustomEvent('FUTU_QUOTE', { detail: {
+  symbol: 'AAPL', quote: { lp: 95, time: regular, session: 'regular' },
+ } }));
+ assert.equal(feed.futuQuotes.has('AAPL'), false, 'unsolicited updates cannot refill the cache');
+ feed.subscribeQuotes(['MSFT'], [], () => {}, 'chart');
+ feed.unsubscribeQuotes('chart');
+ const updates = [];
+ feed.subscribeQuotes(['AAPL'], [], values => updates.push(...values), 'chart');
+ await feed.loadQuotes(['AAPL']);
+ assert.equal(requests, 2, 'returning to a symbol must fetch a fresh REST snapshot');
+ assert.equal(feed.mergedQuote('AAPL').lp, 110);
+ const snapshot = (price, time) => events.dispatchEvent(new CustomEvent('FUTU_QUOTE', { detail: {
+  symbol: 'AAPL', snapshot: true, quote: { lp: price, time, session: 'regular' },
+ } }));
+ snapshot(120, regular + 60_000);
+ snapshot(100, regular);
+ assert.equal(updates.at(-1).v.lp, 120, 'the updated subscription snapshot wins over the old delayed snapshot');
+});
+
+test('Futu REST snapshots from a released subscription cannot refill the cache after returning', async t => {
+ const responses = [];
+ const { feed } = setup(t, { futuRequest: path => {
+  assert.ok(path.startsWith('/quotes'));
+  const pending = Promise.withResolvers();
+  responses.push(pending);
+  return pending.promise;
+ } });
+ await feed.ensureFutuOverlay();
+ feed.subscribeQuotes(['AAPL'], [], () => {}, 'chart');
+ const first = feed.loadQuotes(['AAPL']);
+ await waitFor(() => responses.length === 1);
+ feed.unsubscribeQuotes('chart');
+ assert.equal(feed.quoteRequests.has('AAPL'), false);
+ feed.subscribeQuotes(['AAPL'], [], () => {}, 'chart');
+ const second = feed.loadQuotes(['AAPL']);
+ await waitFor(() => responses.length === 2);
+ responses[1].resolve(json({ items: [{ symbol: 'AAPL', price: 120, session: 'regular' }] }));
+ await second;
+ responses[0].resolve(json({ items: [{ symbol: 'AAPL', price: 100, time: regular, session: 'regular' }] }));
+ await first;
+ assert.equal(feed.mergedQuote('AAPL').lp, 120, 'even an undated current quote must not be replaced by a released request');
+});
+
 test('Schwab regular quotes never subscribe Futu during regular hours',async t=>{
  const commands=[];
  const {feed}=setup(t,{provider:'schwab',now:()=>regular,overnightRequest:async()=>json({enabled:true,providerEnabled:true}),

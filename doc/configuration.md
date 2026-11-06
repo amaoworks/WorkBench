@@ -55,7 +55,7 @@ Go 版本以 [go.mod](../go.mod) 为准，当前为 1.27.1。前端使用 Node.j
 | — | `WORKBENCH_PASSWORD` | 兼容配置；仅在密码模式尚无凭据时显式提供初始密码，留空则自动生成 |
 | — | `OPENAI_API_KEY` | 尚未保存 AI 页面配置时的初始密钥；非空时初始启用 AI |
 | — | `OPENAI_BASE_URL` | 初始 AI 端点；未设置时为 `https://api.openai.com/v1` |
-| — | `OPENAI_MODEL` | 初始模型；代码默认值为 `gpt-5.2` |
+| — | `OPENAI_MODEL` | 初始默认模型，并作为首个可用模型；代码默认值为 `gpt-5.2` |
 | `-version` | — | 输出版本、提交号和构建时间后退出 |
 | `-healthcheck` | — | 按当前监听和 Host 配置检查运行中的 HTTP 服务；不打开数据库、不启动服务 |
 
@@ -124,9 +124,13 @@ export WORKBENCH_DATA='./data/data.db'
 |---|---|---|
 | 用户管理 | `users` | 创建用户、角色、禁用、重置密码及分配通知目标 |
 | 业务管理 | `modules` | 业务启停、运行重试、历史外部业务管理；投资的 Schwab 应用凭据与回调、富途登录及 OpenD、夜盘总开关 |
-| AI 服务 | `ai` | 开关、端点、模型、密钥、测试连接；端点须兼容 Responses API，保存后新请求使用新 Provider |
+| AI 服务 | `ai` | 开关、端点、密钥、模型获取与添加、默认模型、测试连接；端点须兼容 Responses API，保存后新请求使用新 Provider |
 | 通知服务 | `notifications` | Telegram Bot Token 和共享服务开关；接收目标在用户管理中分配 |
 | 数据与运行 | `data` | 日志等级、数据库类型和部署参数；SQLite 全库在线备份，PostgreSQL 外部备份提示 |
+
+AI 服务共用一个接口地址和 API Key。点击「获取模型」读取该端点的 `/models`，将所需模型添加到可用列表；也可手动输入模型 ID，最多添加 50 个。获取列表不保存配置，也不验证模型是否支持 Responses API；「测试连接」使用所选默认模型。默认模型用于新对话与资讯等自动任务，对话中可逐轮切换模型并沿用历史。旧的单模型配置自动作为默认模型和首个可用模型。
+
+更换接口地址后，获取模型、测试连接和保存均须重新填写该服务的 API Key；服务商返回的模型列表与已添加模型分开管理，获取失败不改动已保存配置。
 
 旧 `/settings?tab=ai|users|data` 对管理员以 `replace` 跳转到后台相应分区，普通用户留在个人设置；原 `/settings?module=investment` 仍打开本人授权。共享投资配置使用 `/admin/settings?tab=modules&module=investment`，本人 OAuth 使用 `/settings?tab=modules&module=investment`。富途和 Schwab App 在后台配置；个人投资设置只读显示「主行情源」和共享夜盘状态。
 

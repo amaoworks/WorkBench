@@ -2,6 +2,7 @@ package investment
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -38,6 +39,9 @@ func (u *investmentUsers) IsUserActive(_ context.Context, id string) (bool, erro
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return u.active[id], nil
+}
+func (u *investmentUsers) IsUserActiveTx(ctx context.Context, _ *sql.Tx, id string) (bool, error) {
+	return u.IsUserActive(ctx, id)
 }
 func (u *investmentUsers) disable(id string) { u.mu.Lock(); defer u.mu.Unlock(); u.active[id] = false }
 func investorContext(id string) context.Context {

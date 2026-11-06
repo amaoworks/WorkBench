@@ -43,7 +43,15 @@ func (s *Service) ActiveUserIDs(ctx context.Context) ([]string, error) {
 	return s.queries.ActiveAuthUserIDs(ctx)
 }
 func (s *Service) IsUserActive(ctx context.Context, id string) (bool, error) {
-	u, err := s.queries.GetAuthUser(ctx, id)
+	return isUserActive(ctx, s.queries, id)
+}
+
+func (s *Service) IsUserActiveTx(ctx context.Context, tx *sql.Tx, id string) (bool, error) {
+	return isUserActive(ctx, s.queries.WithTx(tx), id)
+}
+
+func isUserActive(ctx context.Context, queries *dbsqlc.Queries, id string) (bool, error) {
+	u, err := queries.GetAuthUser(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}

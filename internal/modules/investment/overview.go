@@ -586,7 +586,18 @@ func (m *Module) overviewQuotes(ctx context.Context) overviewQuotes {
 }
 
 func (m *Module) fetchOverviewFutuQuotes(ctx context.Context, symbols []string) ([]overviewQuote, *time.Time, error) {
-	quotes, err := m.futuQuotes(ctx, symbols)
+	// Watchlists also contain Schwab-only assets, such as futures and indices.
+	// Filter those locally; supported symbols must still report upstream errors.
+	codes := make([]string, 0, len(symbols))
+	for _, symbol := range symbols {
+		if code, err := normalizeFutuSymbol(symbol); err == nil {
+			codes = append(codes, code)
+		}
+	}
+	if len(codes) == 0 {
+		return []overviewQuote{}, nil, nil
+	}
+	quotes, err := m.futuQuotes(ctx, codes)
 	if err != nil {
 		return nil, nil, err
 	}

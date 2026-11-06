@@ -35,6 +35,8 @@ Manifest 声明 ID、显示名称、业务版本、契约版本、图标和导�
 | [NotificationService](../internal/contracts/notification.go) | 创建、事务内创建、分页、标已读、全部已读、归档、未读数 |
 | `NotificationChannel` | 外部投递接口，已装配 Telegram；投递业务显式选择外发的通知 |
 
+`UserDirectory.IsUserActiveTx` 使用调用方事务校验用户状态；`PublishTx` 与 `CreateTx` 复用该事务连接，不另从连接池取连接。
+
 通知内容为纯文本，`actionRoute` 为站内路径，`actionLabel` 为跳转文案，幂等键由业务提供并在收件人范围内唯一。通知使用 `RecipientID`，个人调用的收件人必须与可信身份一致。列表、状态操作、SSE 和外部推送均按收件人隔离。`External` 默认关闭，业务显式设置后进入外部投递；该标志持久化且不在用户通知 API 中暴露。`ExpiresAt` 控制投递截止期，未指定时 Telegram 与移动推送使用 15 分钟。APNs/FCM payload 携带 `notificationId` 与 `actionRoute`，原生客户端只把已知站内路径映射为页面，未知路径回到通知列表。SSE 发布 `core.notification.created`、`core.notification.updated` 和 `core.notification.archived`，客户端收到后刷新查询。连接有心跳，不实现基于 Last-Event-ID 的历史补发。
 
 Telegram 使用独立 dispatcher 和已有 `event_deliveries` 持久化投递。移动推送以 `core.notification.created` 事件消费者接入独立 dispatcher，并复用相同的投递重试记录。消费者可通过 `RetryAfterError` 请求更晚的重试时间，通过 `PermanentDeliveryError` 直接终止为 `dead`；详情及设置接口见 [Telegram 通知](notifications.md)。
@@ -45,9 +47,9 @@ Telegram 使用独立 dispatcher 和已有 `event_deliveries` 持久化投递。
 
 [AIProvider 与 AITool](../internal/contracts/ai.go) 服务于平台 Gateway。Provider 提供普通与流式生成；Gateway 暴露当前启用模块的工具，最多执行四轮工具调用，再进行一次无工具的结果收尾。Responses 请求使用 `store: false`，每轮按顺序重传原始消息、模型输出（含加密推理项）和工具结果，不使用 `previous_response_id`。工具参数在服务端校验，执行审计持久化。会话与工具审计归调用用户；工具继承可信身份，模型参数不能指定执行用户，幂等记录按用户隔离。
 
-Tool 风险分为 read_only、low_write、high_write。写工具需要幂等键；high_write 还需要 `ConfirmedBy`。当前注册工具只含查询和低风险写入，没有券商交易或删除工具。已注册待办创建、查询、更新和完成，通知查询与标记已读，投资持仓、订单、监控查询与监控创建，以及资讯查询、详情和简报生成；资讯简报工具不提交外部推送。Gateway 不提供通用高风险确认交互。聊天请求可附带 `context: { route, label }`，后端校验后仅用于本轮导航上下文；`timeZone` 用于提供当前时间和解析相对日期，默认 UTC。原始用户消息独立保存。
+Tool 风险分为 read_only、low_write、high_write。写工具需要幂等键；high_write 还需要 `ConfirmedBy`。当前注册工具只含查询和低风险写入，没有券商交易或删除工具。已注册待办创建、查询、更新和完成，通知查询与标记已读，投资持仓、订单、监控查询与监控创建，以及资讯查询、详情和简报生成；资讯简报工具不提交外部推送。Gateway 不提供通用高风险确认交互。聊天请求可附带 `context: { route, label }`，后端校验后仅用于本轮导航上下文；`timeZone` 用于提供当前时间和解析相对日期，默认 UTC。原始用户消息独立保存。后台 AI 设置的 `models` 是同一端点允许使用的模型 ID 列表，`model` 为其中的默认模型。自动文本生成使用默认模型；对话请求可通过 `model` 逐轮选择已添加模型，未指定时沿用 `profile` 的默认行为。显式指定未添加或已移除的模型返回 HTTP 400，且不写入本轮用户消息。
 
-对话请求包含 `conversationId`（可省略以新建）、`message` 和 `profile`（默认 default），响应包含对话 ID、消息 ID、文本、各轮合计用量和工具执行状态。流式 HTTP 事件为 `chat.started`、`chat.delta`、`chat.tool`、`chat.completed` 或 `chat.error`；每次工具执行后立即发送状态，后续请求失败时仍保留已完成操作的反馈。`GET /api/conversations` 默认每页 20 条，`GET /api/conversations/{id}/messages` 默认每页 50 条，二者支持 `limit=1..100` 和 opaque `cursor`；返回 `nextCursor` 时继续读取。`PATCH /api/conversations/{id}` 重命名，`DELETE` 归档。消息页按时间正序返回，客户端恢复并展示历史后才允许续聊。
+对话请求包含 `conversationId`（可省略以新建）、`message`、`profile`（默认 default）及可选的 `model`。选择 `model` 时使用该模型处理整轮请求及工具续轮，并保留会话历史；响应包含对话 ID、消息 ID、文本、各轮合计用量和工具执行状态。流式 HTTP 事件为 `chat.started`、`chat.delta`、`chat.tool`、`chat.completed` 或 `chat.error`；每次工具执行后先保存工具状态与结果，再发送状态；断开连接仍保留已完成操作，取消后不再启动后续工具。工具摘要与最终回答使用同一条助手消息，正常完成时更新为最终回答。`GET /api/conversations` 默认每页 20 条，`GET /api/conversations/{id}/messages` 默认每页 50 条，二者支持 `limit=1..100` 和 opaque `cursor`；返回 `nextCursor` 时继续读取。`PATCH /api/conversations/{id}` 重命名，`DELETE` 归档。消息页包含稳定的消息 `id`，按时间正序返回；`chat.started` 提供用户消息 `messageId` 和预分配的 `assistantMessageId`，`chat.completed.messageId` 对应同一助手消息。客户端按消息 ID 合并流式内容与历史，恢复并展示历史后才允许续聊；重新打开面板或窗口重新聚焦时刷新当前会话。
 
 ## 页面和 Widget
 
@@ -95,7 +97,7 @@ JSON 错误使用 `code`、`message`，并可含 `details`、`requestId`，定�
 | PUT | `/api/notifications/read`、`/api/notifications/archive` | 提交 `{ ids }` |
 | PUT | `/api/notifications/read-all` | 标记当前已有通知为已读 |
 | POST / PUT / DELETE | `/api/mobile/push-token` | 注册、更新、删除当前设备的 APNs/FCM token；成功返回 204 |
-| GET | `/api/ai/status` | AI 是否可用 |
+| GET | `/api/ai/status` | AI 是否可用、可选 `models` 与 `defaultModel`，不含端点或密钥 |
 | POST | `/api/chat`、`/api/chat/stream` | 对话、流式对话 |
 | GET | `/api/conversations` | 分页列出未归档对话 |
 | GET | `/api/conversations/{id}/messages` | 分页读取当前对话消息，不存在时返回 404 |
@@ -103,7 +105,8 @@ JSON 错误使用 `code`、`message`，并可含 `details`、`requestId`，定�
 | GET | `/api/settings` | 本人外观；仅管理员额外获得 AI、日志等级和部署信息，密钥不回显 |
 | PUT | `/api/settings/ai`、`/api/settings/appearance` | 保存 AI 或外观 |
 | PUT | `/api/settings/logging` | 保存 `{ "level": "info" }` 并立即生效；支持 debug/info/warn/error，返回规范化等级 |
-| POST | `/api/settings/ai/test` | 测试候选 AI 配置，不保存 |
+| POST | `/api/settings/ai/test` | 使用候选默认模型测试 AI 配置，不保存 |
+| POST | `/api/settings/ai/models` | 管理员以 `{ baseUrl, apiKey, clearApiKey? }` 获取端点模型列表，返回 `{ models }`，不保存 |
 | GET / PUT | `/api/settings/telegram` | 读取脱敏配置和状态 / 保存 Telegram 配置 |
 | POST | `/api/settings/telegram/test` | 发送一条测试消息，不保存候选配置 |
 | PUT | `/api/settings/password` | 验证当前密码并修改 |

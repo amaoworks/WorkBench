@@ -162,14 +162,7 @@ export default class Datafeed {
             if (this.destroyed || !item?.symbol || !item.quote) return;
             if (!this.hasFutuListener(item.symbol, '')) return;
             if (this.provider === 'futu') {
-                const quote = futuQuoteValues(item.quote, this.overlayCache.enabled);
-                if (!Number.isFinite(quote.lp)) return;
-                const time = Number(item.quote.time);
-                if (Number.isFinite(time) && time < (this.futuQuoteTimes.get(item.symbol) ?? 0)) return;
-                if (item.snapshot && this.futuQuotes.has(item.symbol)) return;
-                if (Number.isFinite(time)) this.futuQuoteTimes.set(item.symbol, time);
-                this.futuQuotes.set(item.symbol, quote);
-                this.publishQuote(item.symbol);
+                this.cacheFutuQuote(item.symbol, item.quote, item.snapshot === true);
                 return;
             }
             if (this.mergedQuote(item.symbol).cs !== 'night') return;
@@ -453,7 +446,14 @@ export default class Datafeed {
         const listener = this.quotesListeners.get(listenerGuid);
         this.quotesListeners.delete(listenerGuid);
         for (const symbol of listener?.symbols ?? []) {
-            if (!this.hasFutuListener(symbol, '') && this.futuOvernight.delete(symbol)) this.publishQuote(symbol);
+            if (this.hasFutuListener(symbol, '')) continue;
+            if (this.provider === 'futu') {
+                this.futuQuotes.delete(symbol);
+                this.futuQuoteTimes.delete(symbol);
+                this.quote_cache.delete(symbol);
+                this.quoteRequests.delete(symbol);
+            }
+            if (this.futuOvernight.delete(symbol)) this.publishQuote(symbol);
         }
         this.queueFutuSubscriptions();
         if (!this.quotesListeners.size) { clearInterval(this.quoteSessionTimer); this.quoteSessionTimer = undefined; }
@@ -851,6 +851,20 @@ export default class Datafeed {
         }
     }
 
+    cacheFutuQuote(symbol, item, snapshot = false) {
+        const quote = futuQuoteValues(item, this.overlayCache.enabled);
+        if (!Number.isFinite(quote.lp)) return;
+        const time = Number(item.time), currentTime = this.futuQuoteTimes.get(symbol);
+        const timed = Number.isFinite(time) && time > 0;
+        if (timed && currentTime !== undefined && time < currentTime) return;
+        // Snapshots may replace a cached value only when demonstrably newer.
+        if (snapshot && this.futuQuotes.has(symbol) && (!timed || currentTime === undefined || time <= currentTime)) return;
+        if (timed) this.futuQuoteTimes.set(symbol, time);
+        else this.futuQuoteTimes.delete(symbol);
+        this.futuQuotes.set(symbol, quote);
+        this.publishQuote(symbol);
+    }
+
     async loadFutuQuotes(symbols) {
         const epoch = this.streamEpoch, futuEpoch = this.futuEpoch;
         const overlay = await this.ensureFutuOverlay();
@@ -868,12 +882,8 @@ export default class Datafeed {
                     this.assertHistoryCurrent(epoch, futuEpoch);
                     if (!Array.isArray(data.items)) throw new Error('富途报价格式无效');
                     for (const item of data.items) {
-                        if (!batch.includes(item.symbol) || this.futuQuotes.has(item.symbol)) continue;
-                        const quote = futuQuoteValues(item, overlay.enabled);
-                        if (!Number.isFinite(quote.lp)) continue;
-                        this.futuQuotes.set(item.symbol, quote);
-                        if (Number.isFinite(Number(item.time))) this.futuQuoteTimes.set(item.symbol, Number(item.time));
-                        this.publishQuote(item.symbol);
+                        if (!batch.includes(item.symbol) || this.quoteRequests.get(item.symbol) !== pending) continue;
+                        this.cacheFutuQuote(item.symbol, item, true);
                     }
                 } finally {
                     for (const symbol of batch) if (this.quoteRequests.get(symbol) === pending) this.quoteRequests.delete(symbol);

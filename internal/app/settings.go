@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -19,10 +18,11 @@ import (
 
 // APIKey is stored in the private workspace database, never returned by settings APIs.
 type AISettings struct {
-	Enabled bool   `json:"enabled"`
-	BaseURL string `json:"baseUrl"`
-	Model   string `json:"model"`
-	APIKey  string `json:"apiKey"`
+	Enabled bool     `json:"enabled"`
+	BaseURL string   `json:"baseUrl"`
+	Model   string   `json:"model"`
+	Models  []string `json:"models"`
+	APIKey  string   `json:"apiKey"`
 }
 
 type Appearance struct {
@@ -53,6 +53,11 @@ func (a *App) loadSettings(ctx context.Context) error {
 			return err
 		}
 	}
+	models, err := normalizeAIModels(a.aiSettings.Model, a.aiSettings.Models)
+	if err != nil {
+		return err
+	}
+	a.aiSettings.Models = models
 	level, err := logging.ParseLevel(a.logging.Level)
 	if err != nil {
 		return err
@@ -87,7 +92,10 @@ func (a *App) getSettings(w http.ResponseWriter, r *http.Request) {
 	result := map[string]any{"appearance": appearance}
 	if contracts.IsAdmin(r.Context()) {
 		a.settingsMu.Lock()
-		result["ai"] = map[string]any{"enabled": a.aiSettings.Enabled, "baseUrl": a.aiSettings.BaseURL, "model": a.aiSettings.Model, "hasApiKey": a.aiSettings.APIKey != ""}
+		result["ai"] = map[string]any{
+			"enabled": a.aiSettings.Enabled, "baseUrl": a.aiSettings.BaseURL, "model": a.aiSettings.Model,
+			"models": a.aiSettings.Models, "hasApiKey": a.aiSettings.APIKey != "",
+		}
 		result["logging"] = a.logging
 		a.settingsMu.Unlock()
 		result["deployment"] = map[string]any{"listenAddress": a.config.ListenAddress, "dataPath": a.config.DataPath, "databaseDriver": a.database.Driver(), "backupSupported": a.database.BackupSupported(), "authMode": a.config.AuthMode, "publicUrl": a.config.PublicURL, "allowedHosts": a.config.AllowedHosts}
@@ -116,41 +124,28 @@ func (a *App) userAppearance(ctx context.Context) (Appearance, error) {
 
 func (a *App) readAIInput(w http.ResponseWriter, r *http.Request) (AISettings, error) {
 	var input struct {
-		Enabled     *bool  `json:"enabled"`
-		BaseURL     string `json:"baseUrl"`
-		Model       string `json:"model"`
-		APIKey      string `json:"apiKey"`
-		ClearAPIKey bool   `json:"clearApiKey"`
+		Enabled     *bool    `json:"enabled"`
+		BaseURL     string   `json:"baseUrl"`
+		Model       string   `json:"model"`
+		Models      []string `json:"models"`
+		APIKey      string   `json:"apiKey"`
+		ClearAPIKey bool     `json:"clearApiKey"`
 	}
-	if err := httpapi.Decode(w, r, &input, 16384); err != nil {
+	if err := httpapi.Decode(w, r, &input, 32768); err != nil {
 		return AISettings{}, errors.New("配置格式不正确")
 	}
 	if input.Enabled == nil {
 		return AISettings{}, errors.New("请选择是否启用 AI")
 	}
-	value := AISettings{Enabled: *input.Enabled, BaseURL: strings.TrimRight(strings.TrimSpace(input.BaseURL), "/"), Model: strings.TrimSpace(input.Model), APIKey: strings.TrimSpace(input.APIKey)}
-	if value.BaseURL == "" {
-		value.BaseURL = "https://api.openai.com/v1"
+	value := AISettings{Enabled: *input.Enabled, Model: strings.TrimSpace(input.Model)}
+	var err error
+	value.BaseURL, value.APIKey, err = resolveAIEndpoint(input.BaseURL, input.APIKey, input.ClearAPIKey, a.aiSettings)
+	if err != nil {
+		return value, err
 	}
-	u, err := url.Parse(value.BaseURL)
-	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return value, errors.New("接口地址必须是完整的 HTTP 或 HTTPS 地址，不能包含账号、查询参数或片段")
-	}
-	if len(value.BaseURL) > 2048 || len(value.Model) > 200 || len(value.APIKey) > 8192 {
-		return value, errors.New("配置内容过长")
-	}
-	if value.Model == "" {
-		return value, errors.New("请输入模型名称")
-	}
-	if input.ClearAPIKey && value.APIKey != "" {
-		return value, errors.New("不能同时清除和替换 API Key")
-	}
-	if value.APIKey == "" && !input.ClearAPIKey {
-		// A stored secret must not be forwarded to a newly selected endpoint silently.
-		if value.BaseURL != a.aiSettings.BaseURL && a.aiSettings.APIKey != "" {
-			return value, errors.New("更换接口地址时，请重新填写该服务的 API Key")
-		}
-		value.APIKey = a.aiSettings.APIKey
+	value.Models, err = normalizeAIModels(value.Model, input.Models)
+	if err != nil {
+		return value, err
 	}
 	if value.Enabled && value.APIKey == "" {
 		return value, errors.New("启用 AI 前请填写 API Key")
@@ -162,10 +157,18 @@ func settingsProvider(value AISettings) (contracts.AIProvider, error) {
 	if !value.Enabled {
 		return nil, nil
 	}
+	models, err := normalizeAIModels(value.Model, value.Models)
+	if err != nil {
+		return nil, err
+	}
+	profiles := map[string]ai.Profile{"default": {Model: value.Model, MaxOutputTokens: 2048}}
+	for _, model := range models {
+		profiles["model:"+model] = ai.Profile{Model: model, MaxOutputTokens: 2048}
+	}
 	return ai.NewOpenAIProvider(ai.OpenAIConfig{
 		APIKey: value.APIKey, BaseURL: value.BaseURL,
 		HTTPClient: &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }},
-		Profiles:   map[string]ai.Profile{"default": {Model: value.Model, MaxOutputTokens: 2048}},
+		Profiles:   profiles,
 	})
 }
 

@@ -296,12 +296,12 @@ func TestConversationMessagesHTTPReturnsVisibleHistory(t *testing.T) {
 		t.Fatalf("history status/header = %d %v", recorder.Code, recorder.Header())
 	}
 	var history struct {
-		Messages []contracts.AIMessage `json:"messages"`
+		Messages []Message `json:"messages"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &history); err != nil {
 		t.Fatal(err)
 	}
-	if len(history.Messages) != 2 || history.Messages[0].Role != "user" || string(history.Messages[0].Content) != `"saved question"` || history.Messages[1].Role != "assistant" {
+	if len(history.Messages) != 2 || history.Messages[0].ID == "" || history.Messages[1].ID != response.MessageID || history.Messages[0].Role != "user" || string(history.Messages[0].Content) != `"saved question"` || history.Messages[1].Role != "assistant" {
 		t.Fatalf("history = %+v", history.Messages)
 	}
 	missing := httptest.NewRecorder()
@@ -392,13 +392,13 @@ func TestConversationMessagesSupportCursorPagination(t *testing.T) {
 	request := conversationRequest(http.MethodGet, "/api/conversations/conversation-page/messages?limit=2", nil)
 	router.ServeHTTP(first, request)
 	var firstPage struct {
-		Messages   []contracts.AIMessage `json:"messages"`
-		NextCursor string                `json:"nextCursor"`
+		Messages   []Message `json:"messages"`
+		NextCursor string    `json:"nextCursor"`
 	}
 	if err := json.Unmarshal(first.Body.Bytes(), &firstPage); err != nil {
 		t.Fatal(err)
 	}
-	if first.Code != http.StatusOK || len(firstPage.Messages) != 2 || string(firstPage.Messages[0].Content) != `"message-4"` ||
+	if first.Code != http.StatusOK || len(firstPage.Messages) != 2 || firstPage.Messages[0].ID != "message-4" || firstPage.Messages[1].ID != "message-5" || string(firstPage.Messages[0].Content) != `"message-4"` ||
 		string(firstPage.Messages[1].Content) != `"message-5"` || firstPage.NextCursor == "" {
 		t.Fatalf("first message page = %d %+v", first.Code, firstPage)
 	}
@@ -406,13 +406,13 @@ func TestConversationMessagesSupportCursorPagination(t *testing.T) {
 	request = conversationRequest(http.MethodGet, "/api/conversations/conversation-page/messages?limit=2&cursor="+firstPage.NextCursor, nil)
 	router.ServeHTTP(second, request)
 	var secondPage struct {
-		Messages   []contracts.AIMessage `json:"messages"`
-		NextCursor string                `json:"nextCursor"`
+		Messages   []Message `json:"messages"`
+		NextCursor string    `json:"nextCursor"`
 	}
 	if err := json.Unmarshal(second.Body.Bytes(), &secondPage); err != nil {
 		t.Fatal(err)
 	}
-	if second.Code != http.StatusOK || len(secondPage.Messages) != 2 || string(secondPage.Messages[0].Content) != `"message-2"` ||
+	if second.Code != http.StatusOK || len(secondPage.Messages) != 2 || secondPage.Messages[0].ID != "message-2" || secondPage.Messages[1].ID != "message-3" || string(secondPage.Messages[0].Content) != `"message-2"` ||
 		string(secondPage.Messages[1].Content) != `"message-3"` || secondPage.NextCursor == "" {
 		t.Fatalf("second message page = %d %+v", second.Code, secondPage)
 	}

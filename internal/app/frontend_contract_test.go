@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -70,6 +71,12 @@ func TestFrontendContracts(t *testing.T) {
 	capture("appearance.saved", "appearance", "PUT", "/api/settings/appearance", `{"theme":"dark","motion":"reduced"}`, 200)
 	capture("logging.saved", "logging", "PUT", "/api/settings/logging", `{"level":"warn"}`, 200)
 	capture("ai.status", "aiStatus", "GET", "/api/ai/status", "", 200)
+	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"id":"model-a"},{"id":"model-b"}]}`))
+	}))
+	defer modelServer.Close()
+	modelInput, _ := json.Marshal(map[string]string{"baseUrl": modelServer.URL, "apiKey": "fixture-key"})
+	capture("ai.models", "aiModels", "POST", "/api/settings/ai/models", string(modelInput), 200)
 	conversationTime := now.Add(-2 * time.Hour).UnixMilli()
 	if _, err := a.DB().Exec(`
 		INSERT INTO ai_conversations(id,title,created_at,updated_at) VALUES

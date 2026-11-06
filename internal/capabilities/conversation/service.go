@@ -27,6 +27,7 @@ type ChatRequest struct {
 	ConversationID string       `json:"conversationId"`
 	Message        string       `json:"message"`
 	Profile        string       `json:"profile"`
+	Model          string       `json:"model,omitempty"`
 	TimeZone       string       `json:"timeZone,omitempty"`
 	Context        *PageContext `json:"context,omitempty"`
 }
@@ -63,16 +64,26 @@ type conversationPage struct {
 	NextCursor *conversationCursor
 }
 
+type Message struct {
+	ID      string          `json:"id"`
+	Role    string          `json:"role"`
+	Content json.RawMessage `json:"content"`
+}
+
 type messagePage struct {
-	Messages   []contracts.AIMessage
+	Messages   []Message
 	NextCursor *conversationCursor
 }
 
 type chatTurn struct {
+	gateway        *ai.Gateway
 	userID         string
 	conversationID string
 	messageID      string
+	assistantID    string
+	createdAt      int64
 	profile        string
+	model          string
 	messages       []contracts.AIMessage
 }
 
@@ -89,15 +100,13 @@ func (s *Service) Chat(ctx context.Context, request ChatRequest) (ChatResponse, 
 	if _, err := contracts.RequireUserID(ctx); err != nil {
 		return ChatResponse{}, err
 	}
-	if !s.Available() {
-		return ChatResponse{}, ai.ErrUnavailable
-	}
 	turn, err := s.begin(ctx, request)
 	if err != nil {
 		return ChatResponse{}, err
 	}
-	result, err := s.gateway.Generate(ctx, contracts.GenerateRequest{
+	result, err := turn.gateway.Generate(ctx, contracts.GenerateRequest{
 		Profile: turn.profile, Messages: turn.messages, ConversationID: turn.conversationID, MessageID: turn.messageID,
+		OnToolCompleted: s.toolRecorder(turn),
 	})
 	if err != nil {
 		return ChatResponse{}, err
@@ -109,6 +118,10 @@ func (s *Service) begin(ctx context.Context, request ChatRequest) (chatTurn, err
 	userID, err := contracts.RequireUserID(ctx)
 	if err != nil {
 		return chatTurn{}, err
+	}
+	gateway := s.gateway.Snapshot()
+	if !gateway.Available() {
+		return chatTurn{}, ai.ErrUnavailable
 	}
 	request.Message = strings.TrimSpace(request.Message)
 	if request.Message == "" || len(request.Message) > 50_000 {
@@ -128,6 +141,23 @@ func (s *Service) begin(ctx context.Context, request ChatRequest) (chatTurn, err
 	if request.Profile == "" {
 		request.Profile = "default"
 	}
+	if request.Model != "" {
+		if len(request.Model) > 200 {
+			return chatTurn{}, fmt.Errorf("%w: model must contain at most 200 bytes", ErrInvalidRequest)
+		}
+		models, _ := gateway.Models()
+		allowed := false
+		for _, model := range models {
+			if request.Model == model {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return chatTurn{}, fmt.Errorf("%w: model is not configured", ErrInvalidRequest)
+		}
+		request.Profile = "model:" + request.Model
+	}
 	conversationID := request.ConversationID
 	newConversation := conversationID == ""
 	if newConversation {
@@ -138,6 +168,10 @@ func (s *Service) begin(ctx context.Context, request ChatRequest) (chatTurn, err
 		}
 	}
 	messageID, err := identity.New()
+	if err != nil {
+		return chatTurn{}, err
+	}
+	assistantID, err := identity.New()
 	if err != nil {
 		return chatTurn{}, err
 	}
@@ -187,7 +221,10 @@ func (s *Service) begin(ctx context.Context, request ChatRequest) (chatTurn, err
 		return chatTurn{}, err
 	}
 	messages = append([]contracts.AIMessage{contextMessage(pageContext, s.now().In(location), request.TimeZone)}, messages...)
-	return chatTurn{userID: userID, conversationID: conversationID, messageID: messageID, profile: request.Profile, messages: messages}, nil
+	return chatTurn{
+		userID: userID, conversationID: conversationID, messageID: messageID, assistantID: assistantID,
+		gateway: gateway, createdAt: now, profile: request.Profile, model: gateway.ProfileModel(request.Profile), messages: messages,
+	}, nil
 }
 
 func validatePageContext(value *PageContext) (*PageContext, error) {
@@ -221,20 +258,38 @@ func (s *Service) stream(ctx context.Context, request ChatRequest) (chatTurn, co
 	if _, err := contracts.RequireUserID(ctx); err != nil {
 		return chatTurn{}, nil, err
 	}
-	if !s.Available() {
-		return chatTurn{}, nil, ai.ErrUnavailable
-	}
 	turn, err := s.begin(ctx, request)
 	if err != nil {
 		return chatTurn{}, nil, err
 	}
-	stream, err := s.gateway.Stream(ctx, contracts.GenerateRequest{
+	stream, err := turn.gateway.Stream(ctx, contracts.GenerateRequest{
 		Profile: turn.profile, Messages: turn.messages, ConversationID: turn.conversationID, MessageID: turn.messageID,
+		OnToolCompleted: s.toolRecorder(turn),
 	})
 	if err != nil {
 		return chatTurn{}, nil, err
 	}
 	return turn, stream, nil
+}
+
+func (s *Service) toolRecorder(turn chatTurn) func(context.Context, contracts.ToolExecution, contracts.ToolResult) error {
+	var summaries []string
+	return func(ctx context.Context, execution contracts.ToolExecution, result contracts.ToolResult) error {
+		status := "已完成"
+		evidence := string(result.Content)
+		if execution.Status == "failed" {
+			status = "失败"
+			evidence = execution.Error
+		}
+		summaries = append(summaries, fmt.Sprintf("%s：%s\n工具：%s；调用：%s\n结果：%s", execution.Label, status, execution.Name, execution.CallID, evidence))
+		// Only recording an already executed result outlives request cancellation.
+		saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_, err := s.complete(saveCtx, turn, contracts.GenerateResult{
+			Text: "工具执行记录（回复尚未完成）：\n" + strings.Join(summaries, "\n\n"),
+		})
+		return err
+	}
 }
 
 func (s *Service) complete(ctx context.Context, turn chatTurn, result contracts.GenerateResult) (ChatResponse, error) {
@@ -245,14 +300,10 @@ func (s *Service) complete(ctx context.Context, turn chatTurn, result contracts.
 	if turn.userID != userID {
 		return ChatResponse{}, sql.ErrNoRows
 	}
-	assistantID, err := identity.New()
-	if err != nil {
-		return ChatResponse{}, err
-	}
 	assistantContent, _ := json.Marshal(result.Text)
-	inserted, err := s.queries.InsertAssistantMessage(ctx, dbsqlc.InsertAssistantMessageParams{
-		ID: assistantID, ConversationID: turn.conversationID, UserID: userID, ContentJson: string(assistantContent),
-		Model: sql.NullString{String: turn.profile, Valid: true}, CreatedAt: s.now().UTC().UnixMilli(),
+	inserted, err := s.queries.SaveAssistantMessage(ctx, dbsqlc.SaveAssistantMessageParams{
+		ID: turn.assistantID, ConversationID: turn.conversationID, UserID: userID, ContentJson: string(assistantContent),
+		Model: sql.NullString{String: turn.model, Valid: turn.model != ""}, CreatedAt: max(s.now().UTC().UnixMilli(), turn.createdAt+1),
 	})
 	if err != nil {
 		return ChatResponse{}, fmt.Errorf("save assistant message: %w", err)
@@ -261,7 +312,7 @@ func (s *Service) complete(ctx context.Context, turn chatTurn, result contracts.
 		return ChatResponse{}, sql.ErrNoRows
 	}
 	return ChatResponse{
-		ConversationID: turn.conversationID, MessageID: assistantID, Text: result.Text, Usage: result.Usage,
+		ConversationID: turn.conversationID, MessageID: turn.assistantID, Text: result.Text, Usage: result.Usage,
 		Tools: result.ToolExecutions,
 	}, nil
 }
@@ -331,14 +382,14 @@ func (s *Service) messagePage(ctx context.Context, conversationID string, limit 
 		return messagePage{}, err
 	}
 	start := 0
-	page := messagePage{Messages: make([]contracts.AIMessage, 0, min(len(rows), limit))}
+	page := messagePage{Messages: make([]Message, 0, min(len(rows), limit))}
 	if len(rows) > limit {
 		start = 1
 		oldest := rows[start]
 		page.NextCursor = &conversationCursor{Timestamp: oldest.CreatedAt, ID: oldest.ID}
 	}
 	for _, row := range rows[start:] {
-		page.Messages = append(page.Messages, contracts.AIMessage{Role: row.Role, Content: json.RawMessage(row.ContentJson)})
+		page.Messages = append(page.Messages, Message{ID: row.ID, Role: row.Role, Content: json.RawMessage(row.ContentJson)})
 	}
 	return page, nil
 }

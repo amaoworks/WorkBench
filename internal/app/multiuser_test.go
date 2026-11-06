@@ -96,6 +96,7 @@ func assertMultiUserAdministrationAndPersonalSettings(t *testing.T, a *App) {
 		{"PUT", "/api/modules/todo/enabled", `{"enabled":false}`},
 		{"PUT", "/api/settings/ai", `{"enabled":false}`},
 		{"POST", "/api/settings/ai/test", `{}`},
+		{"POST", "/api/settings/ai/models", `{}`},
 		{"PUT", "/api/settings/logging", `{"level":"debug"}`},
 		{"POST", "/api/system/backup", `{}`},
 		{"POST", "/api/auth/signing-key/rotate", `{}`},

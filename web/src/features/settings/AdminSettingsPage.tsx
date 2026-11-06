@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Blocks, Bot, Database, Radio, Save, Users } from "lucide-react";
 import { toast } from "sonner";
-import { api, apiValidated } from "../../shared/api";
+import { apiValidated } from "../../shared/api";
 import { useIsAdmin } from "../../shared/auth";
 import { Badge } from "../../components/ui/Badge";
 import { Button, ButtonLink } from "../../components/ui/Button";
@@ -10,8 +10,9 @@ import { Field } from "../../components/ui/Field";
 import { Notice } from "../../components/ui/Notice";
 import { Skeleton } from "../../components/ui/States";
 import { Switch } from "../../components/ui/Switch";
-import { useSettings, type AISettings, type Settings } from "./queries";
-import { aiTestSchema, backupSchema } from "./schema";
+import { Select } from "../../components/ui/Select";
+import { fetchAIModels, saveAISettings, testAISettings, useSettings, type AISettings, type Settings } from "./queries";
+import { backupSchema } from "./schema";
 import { LoggingPanel } from "./LoggingPanel";
 import { ModulesPanel } from "./ModulesPanel";
 import { SettingsLayout, SettingsRow, SettingsSection } from "./SettingsLayout";
@@ -67,12 +68,50 @@ function AIForm({ value }: { value: AISettings }) {
   const [enabled, setEnabled] = useState(value.enabled);
   const [baseUrl, setBaseUrl] = useState(value.baseUrl);
   const [model, setModel] = useState(value.model);
+  const [models, setModels] = useState(value.models);
+  const [manualModel, setManualModel] = useState("");
+  const [candidates, setCandidates] = useState<string[]>([]);
+  const [candidate, setCandidate] = useState("");
+  const [discoveryComplete, setDiscoveryComplete] = useState(false);
+  const connectionRevision = useRef(0);
+  function connectionChanged() {
+    connectionRevision.current += 1;
+    setCandidates([]);
+    setCandidate("");
+    setDiscoveryComplete(false);
+    discovery.reset();
+  }
+  function addModel(id: string) {
+    const next = id.trim();
+    if (!next || next.length > 200 || models.includes(next) || models.length >= 50) return;
+    setModels([...models, next]);
+    if (!model) setModel(next);
+    setManualModel("");
+  }
   const [apiKey, setApiKey] = useState("");
   const [clearApiKey, setClearApiKey] = useState(false);
   const [testResult, setTestResult] = useState("");
-  const payload = () => ({ enabled, baseUrl, model, apiKey, clearApiKey });
+  const payload = () => ({ enabled, baseUrl, model, models, apiKey, clearApiKey });
+  const discovery = useMutation({
+    mutationFn: async () => {
+      const revision = connectionRevision.current;
+      try {
+        const result = await fetchAIModels({ baseUrl, apiKey, clearApiKey });
+        return { ...result, revision };
+      } catch (error) {
+        if (revision !== connectionRevision.current) return { models: [], revision };
+        throw error;
+      }
+    },
+    onSuccess: (result) => {
+      if (result.revision !== connectionRevision.current) return;
+      setDiscoveryComplete(true);
+      setCandidates([...new Set(result.models)]);
+      setCandidate("");
+    },
+  });
   const save = useMutation({
-    mutationFn: () => api("/api/settings/ai", { method: "PUT", body: JSON.stringify(payload()) }),
+    mutationFn: () => saveAISettings(payload()),
     onSuccess: async () => {
       setApiKey("");
       setClearApiKey(false);
@@ -83,31 +122,31 @@ function AIForm({ value }: { value: AISettings }) {
     onError: (err) => toast.error(err.message),
   });
   const test = useMutation({
-    mutationFn: () => apiValidated("/api/settings/ai/test", aiTestSchema, { method: "POST", body: JSON.stringify(payload()) }),
+    mutationFn: () => testAISettings(payload()),
     onSuccess: (result) => setTestResult(`${result.latencyMs} ms`),
     onError: (err) => setTestResult(err.message),
   });
   const busy = save.isPending || test.isPending;
-  const dirty = enabled !== value.enabled || baseUrl !== value.baseUrl || model !== value.model || apiKey !== "" || clearApiKey;
+  const dirty = enabled !== value.enabled || baseUrl !== value.baseUrl || model !== value.model
+    || JSON.stringify(models) !== JSON.stringify(value.models) || apiKey !== "" || clearApiKey;
+  const canSave = models.length > 0 && models.includes(model);
+  const availableCandidates = candidates.filter((id) => !models.includes(id));
   return (
-    <form onSubmit={(event) => { event.preventDefault(); save.mutate(); }} className="studio-form">
+    <form onSubmit={(event) => { event.preventDefault(); if (canSave && !busy) save.mutate(); }} className="studio-form">
       <div className="control-heading">
         <h3>AI 服务</h3><Switch label="启用 AI 服务" checked={enabled} disabled={busy} onChange={setEnabled} />
       </div>
       <fieldset disabled={busy} className="form-fields" onChange={() => setTestResult("")}>
         <Field label="接口地址">
           <input
-            type="url" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)}
+            type="url" value={baseUrl} onChange={(e) => { setBaseUrl(e.target.value); connectionChanged(); }}
             placeholder="https://api.openai.com/v1" required maxLength={2048}
           />
-        </Field>
-        <Field label="模型名称">
-          <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="填写可用的模型 ID" required maxLength={200} />
         </Field>
         <Field label="访问密钥" meta={<Badge>{value.hasApiKey && !clearApiKey ? "已保存" : "未设置"}</Badge>}>
           <input
             type="password" autoComplete="new-password" value={apiKey}
-            onChange={(e) => { setApiKey(e.target.value); setClearApiKey(false); }}
+            onChange={(e) => { setApiKey(e.target.value); setClearApiKey(false); connectionChanged(); }}
             placeholder={value.hasApiKey && !clearApiKey ? "留空保持不变" : "输入 API Key"} maxLength={8192}
           />
         </Field>
@@ -116,17 +155,64 @@ function AIForm({ value }: { value: AISettings }) {
             <span>清除密钥并停用</span>
             <Switch label="清除密钥并停用" checked={clearApiKey} onChange={(checked) => {
               setClearApiKey(checked);
+              connectionChanged();
               if (checked) { setApiKey(""); setEnabled(false); }
             }} />
           </div>
         )}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" variant="secondary" disabled={!baseUrl.trim() || discovery.isPending} onClick={() => discovery.mutate()}>
+            {discovery.isPending ? "获取中…" : "获取模型"}
+          </Button>
+          {discoveryComplete && candidates.length === 0 && (
+            <span role="status">暂无模型</span>
+          )}
+        </div>
+        {discovery.isError && <Notice tone="danger" title="获取模型失败">{discovery.error.message}</Notice>}
+        {availableCandidates.length > 0 && (
+          <Field label="候选模型">
+            <div className="flex min-w-0 flex-wrap gap-2">
+              <Select className="min-w-0 flex-1" aria-label="候选模型" value={candidate} onValueChange={setCandidate}
+                options={[{ value: "", label: "选择待添加模型" }, ...availableCandidates.map((id) => ({ value: id, label: id }))]} />
+              <Button type="button" variant="secondary" disabled={!candidate || models.length >= 50}
+                onClick={() => { addModel(candidate); setCandidate(""); }}>添加模型</Button>
+            </div>
+          </Field>
+        )}
+        <Field label="手动添加">
+          <div className="flex min-w-0 flex-wrap gap-2">
+            <input className="min-w-0 flex-1" aria-label="手动添加模型 ID" value={manualModel} maxLength={200} placeholder="模型 ID"
+              onChange={(event) => setManualModel(event.target.value)} />
+            <Button type="button" variant="secondary"
+              disabled={!manualModel.trim() || models.includes(manualModel.trim()) || models.length >= 50}
+              onClick={() => addModel(manualModel)}>添加模型</Button>
+          </div>
+        </Field>
+        <Field label="可用模型" meta={<Badge>{models.length}/50</Badge>}>
+          <ul className="min-w-0 space-y-2">
+            {models.map((id) => (
+              <li key={id} className="flex min-w-0 items-center justify-between gap-2">
+                <span className="min-w-0 break-all">{id}</span>
+                <Button type="button" variant="ghost" size="sm" aria-label={`移除模型 ${id}`} onClick={() => {
+                  const next = models.filter((item) => item !== id);
+                  setModels(next);
+                  if (model === id) setModel(next[0] ?? "");
+                }}>移除</Button>
+              </li>
+            ))}
+          </ul>
+        </Field>
+        <Field label="默认模型">
+          <Select value={model} onValueChange={setModel} disabled={models.length === 0}
+            options={models.map((id) => ({ value: id, label: id }))} placeholder="添加模型" />
+        </Field>
       </fieldset>
       <div className="form-actions">
         {dirty && <Badge tone="warning" className="mr-auto">未保存</Badge>}
-        <Button type="button" variant="secondary" disabled={busy} onClick={() => { setTestResult(""); test.mutate(); }}>
+        <Button type="button" variant="secondary" disabled={busy || !canSave} onClick={() => { setTestResult(""); test.mutate(); }}>
           <Radio size={16} />{test.isPending ? "测试中…" : "测试连接"}
         </Button>
-        <Button disabled={busy || !dirty}><Save size={16} />{save.isPending ? "保存中…" : "保存"}</Button>
+        <Button disabled={busy || !dirty || !canSave}><Save size={16} />{save.isPending ? "保存中…" : "保存"}</Button>
       </div>
       {testResult && (
         <Notice tone={test.isError ? "danger" : "info"} title={test.isError ? "连接失败" : "连接成功"} className="mt-4">{testResult}</Notice>

@@ -101,7 +101,7 @@ func (s *Store) PublishTx(ctx context.Context, tx *sql.Tx, event contracts.NewEv
 		if s.users == nil {
 			return "", errors.New("event user directory is unavailable")
 		}
-		active, err := s.users.IsUserActive(ctx, event.UserID)
+		active, err := s.users.IsUserActiveTx(ctx, tx, event.UserID)
 		if err != nil || !active {
 			return "", errors.New("event owner is inactive")
 		}

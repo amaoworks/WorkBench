@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -25,7 +24,13 @@ func (h *HTTPHandler) Status(w http.ResponseWriter, r *http.Request) {
 	if !authenticated(w, r) {
 		return
 	}
-	httpapi.Write(w, http.StatusOK, map[string]bool{"available": h.service.Available()})
+	models, defaultModel := h.service.gateway.Models()
+	w.Header().Set("Cache-Control", "no-store")
+	httpapi.Write(w, http.StatusOK, struct {
+		Available    bool     `json:"available"`
+		Models       []string `json:"models"`
+		DefaultModel string   `json:"defaultModel"`
+	}{Available: h.service.Available(), Models: models, DefaultModel: defaultModel})
 }
 
 func (h *HTTPHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -72,8 +77,8 @@ func (h *HTTPHandler) Messages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response := struct {
-		Messages   []contracts.AIMessage `json:"messages"`
-		NextCursor string                `json:"nextCursor,omitempty"`
+		Messages   []Message `json:"messages"`
+		NextCursor string    `json:"nextCursor,omitempty"`
 	}{Messages: page.Messages}
 	if page.NextCursor != nil {
 		response.NextCursor = encodeCursor(*page.NextCursor)
@@ -162,28 +167,17 @@ func (h *HTTPHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache, no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
-	writeSSE(w, "chat.started", map[string]string{"conversationId": turn.conversationID, "messageId": turn.messageID})
+	writeSSE(w, "chat.started", map[string]string{
+		"conversationId": turn.conversationID, "messageId": turn.messageID, "assistantMessageId": turn.assistantID,
+	})
 	flusher.Flush()
-	var toolStatuses []string
 	for event := range stream.Events() {
 		if event.Tool != nil {
-			status := "已完成"
-			if event.Tool.Status == "failed" {
-				status = "失败"
-			}
-			toolStatuses = append(toolStatuses, event.Tool.Label+"："+status)
 			writeSSE(w, "chat.tool", event.Tool)
 			flusher.Flush()
 		}
 		if event.Err != nil {
-			message := event.Err.Error()
-			if len(toolStatuses) > 0 {
-				_, err := h.service.complete(r.Context(), turn, contracts.GenerateResult{Text: "请求失败：" + message + "\n" + strings.Join(toolStatuses, "\n")})
-				if err != nil {
-					message += "\n执行结果保存失败"
-				}
-			}
-			writeSSE(w, "chat.error", map[string]string{"message": message})
+			writeSSE(w, "chat.error", map[string]string{"message": event.Err.Error()})
 			flusher.Flush()
 			return
 		}

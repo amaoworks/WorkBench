@@ -82,10 +82,12 @@ export const loginResponseSchema = z.object({
   authenticated: z.literal(true), mustChangePassword: z.boolean(), user: authUserSchema,
 });
 export const unreadCountSchema = z.object({ count: z.number() });
-export const aiStatusSchema = z.object({ available: z.boolean() });
+export const aiStatusSchema = z.object({ available: z.boolean(), models: z.array(z.string()), defaultModel: z.string() });
 export const conversationMessageSchema = z.object({ role: z.enum(["user", "assistant"]), content: z.string() });
 export const conversationMessagesSchema = z.object({ messages: z.array(conversationMessageSchema) });
-export const chatStartedSchema = z.object({ conversationId: z.string(), messageId: z.string() });
+export const chatStartedSchema = z.object({
+  conversationId: z.string(), messageId: z.string(), assistantMessageId: z.string().optional(),
+});
 export const chatDeltaSchema = z.object({ text: z.string() });
 export const chatToolSchema = z.object({
   callId: z.string(), name: z.string(), label: z.string(),

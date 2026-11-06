@@ -145,14 +145,16 @@ func allowedSchwabEndpoint(prefix, path, method string) bool {
 	if len(parts) == 2 {
 		return method == http.MethodGet
 	}
-	if parts[2] != "orders" {
-		return false
-	}
-	if len(parts) == 3 {
-		return method == http.MethodGet || method == http.MethodPost
-	}
-	if len(parts) == 4 && parts[3] != "" {
-		return method == http.MethodGet || method == http.MethodPut || method == http.MethodDelete
+	switch parts[2] {
+	case "orders":
+		if len(parts) == 3 {
+			return method == http.MethodGet || method == http.MethodPost
+		}
+		if len(parts) == 4 && parts[3] != "" {
+			return method == http.MethodGet || method == http.MethodPut || method == http.MethodDelete
+		}
+	case "transactions":
+		return method == http.MethodGet && len(parts) == 3
 	}
 	return false
 }
