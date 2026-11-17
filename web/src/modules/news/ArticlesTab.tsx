@@ -1,8 +1,9 @@
-import { useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, ExternalLink, Plus, RefreshCw, Search, Sparkles, Star } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "../../components/ui/Button";
+import { Button, ButtonAnchor } from "../../components/ui/Button";
 import { Badge } from "../../components/ui/Badge";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { Notice } from "../../components/ui/Notice";
@@ -21,6 +22,8 @@ import {
 import type { Article } from "./schema";
 import { cn } from "../../shared/cn";
 import { formatDateTime, formatRelative } from "../../shared/format";
+import { safeExternalURL } from "../../shared/url";
+import { DigestLinks } from "./DigestLinks";
 import { Select } from "../../components/ui/Select";
 
 const emptyFilters: ArticleFilters = { q: "", sourceId: "", topic: "", unread: false, starred: false, matched: false };
@@ -28,9 +31,47 @@ const emptyFilters: ArticleFilters = { q: "", sourceId: "", topic: "", unread: f
 const filtersActive = (filters: ArticleFilters) =>
   (Object.keys(emptyFilters) as (keyof ArticleFilters)[]).some((key) => filters[key] !== emptyFilters[key]);
 
+function filtersFromParams(params: URLSearchParams): ArticleFilters {
+  return {
+    q: params.get("q") ?? "",
+    sourceId: params.get("source") ?? "",
+    topic: params.get("topic") ?? "",
+    unread: params.get("unread") === "1",
+    starred: params.get("starred") === "1",
+    matched: params.get("matched") === "1",
+  };
+}
+
+function writeFilters(current: URLSearchParams, filters: ArticleFilters) {
+  const next = new URLSearchParams(current);
+  const set = (key: string, value: string) => {
+    if (value) next.set(key, value);
+    else next.delete(key);
+  };
+  set("q", filters.q);
+  set("source", filters.sourceId);
+  set("topic", filters.topic);
+  set("unread", filters.unread ? "1" : "");
+  set("starred", filters.starred ? "1" : "");
+  set("matched", filters.matched ? "1" : "");
+  return next;
+}
+
 export default function ArticlesTab({ onAddSource }: { onAddSource: () => void }) {
-  const [draft, setDraft] = useState(emptyFilters);
-  const [filters, setFilters] = useState(emptyFilters);
+  const [params, setParams] = useSearchParams();
+  const filters = useMemo(() => filtersFromParams(params), [params]);
+  const [draftQ, setDraftQ] = useState(filters.q);
+  const [draftTopic, setDraftTopic] = useState(filters.topic);
+  const [syncedQ, setSyncedQ] = useState(filters.q);
+  const [syncedTopic, setSyncedTopic] = useState(filters.topic);
+  if (filters.q !== syncedQ) {
+    setSyncedQ(filters.q);
+    setDraftQ(filters.q);
+  }
+  if (filters.topic !== syncedTopic) {
+    setSyncedTopic(filters.topic);
+    setDraftTopic(filters.topic);
+  }
   const [expanded, setExpanded] = useState<string | null>(null);
   const articles = useArticles(filters);
   const sources = useSources();
@@ -52,17 +93,21 @@ export default function ArticlesTab({ onAddSource }: { onAddSource: () => void }
     },
     onError: (error) => toast.error(error.message),
   });
+  function commit(next: ArticleFilters) {
+    setParams((current) => writeFilters(current, next), { replace: true });
+  }
   function clearFilters() {
-    setDraft(emptyFilters);
-    setFilters(emptyFilters);
+    setDraftQ("");
+    setDraftTopic("");
+    commit(emptyFilters);
   }
   function updateImmediate(patch: Partial<ArticleFilters>) {
-    setDraft((current) => ({ ...current, ...patch }));
-    setFilters((current) => ({ ...current, ...patch }));
+    if (patch.topic !== undefined) setDraftTopic(patch.topic);
+    commit({ ...filters, ...patch });
   }
   function submit(event: FormEvent) {
     event.preventDefault();
-    setFilters({ ...draft, q: draft.q.trim(), topic: draft.topic.trim() });
+    commit({ ...filters, q: draftQ.trim(), topic: draftTopic.trim() });
   }
 
   return (
@@ -97,14 +142,22 @@ export default function ArticlesTab({ onAddSource }: { onAddSource: () => void }
         </section>
       )}
       <section className="sec" aria-labelledby="news-all">
-        <h2 id="news-all" className="sec-title">全部文章</h2>
+        <h2 id="news-all" className="sec-title">
+          全部文章
+          <span className="sec-action">
+            <Button type="button" size="sm" variant="secondary" disabled={refreshAll.isPending} onClick={() => refreshAll.mutate()}>
+              <RefreshCw size={15} />
+              {refreshAll.isPending ? "刷新中…" : "刷新"}
+            </Button>
+          </span>
+        </h2>
         <form onSubmit={submit} className="news-filters">
           <label className="news-search">
             <span className="sr-only">搜索资讯</span>
             <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" size={17} />
             <input
-              value={draft.q}
-              onChange={(event) => setDraft((current) => ({ ...current, q: event.target.value }))}
+              value={draftQ}
+              onChange={(event) => setDraftQ(event.target.value)}
               placeholder="搜索标题或内容"
               className="ui-input w-full pl-9!"
             />
@@ -112,15 +165,15 @@ export default function ArticlesTab({ onAddSource }: { onAddSource: () => void }
           <Select
             aria-label="订阅源"
             className="news-source-select"
-            value={draft.sourceId}
+            value={filters.sourceId}
             onValueChange={(sourceId) => updateImmediate({ sourceId })}
             options={sourceOptions}
           />
           <label className="news-topic-input">
             <span className="sr-only">文章话题</span>
             <input
-              value={draft.topic}
-              onChange={(event) => setDraft((current) => ({ ...current, topic: event.target.value }))}
+              value={draftTopic}
+              onChange={(event) => setDraftTopic(event.target.value)}
               placeholder="全部话题"
               className="ui-input w-full"
             />
@@ -226,23 +279,7 @@ function LatestBrief() {
           </div>
         </div>
         {digest.items.length > 0 ? (
-          <ol className="news-brief-list">
-            {digest.items.slice(0, 6).map((item) => {
-              const href = safeExternalURL(item.url);
-              return (
-                <li key={item.id}>
-                  {href ? (
-                    <a href={href} target="_blank" rel="noopener noreferrer">
-                      {item.title}
-                    </a>
-                  ) : (
-                    item.title
-                  )}
-                  <span className="news-note"> · {item.sourceName}</span>
-                </li>
-              );
-            })}
-          </ol>
+          <DigestLinks items={digest.items.slice(0, 6)} />
         ) : (
           <p className="news-brief-text">{digest.content}</p>
         )}
@@ -452,10 +489,10 @@ function ArticleRow({ article, expanded, onToggle }: { article: Article; expande
                   {analyze.isPending ? "分析中…" : shown.aiStatus === "error" ? "重试分析" : "AI 分析"}
                 </Button>
                 {externalURL && (
-                  <a className="studio-button secondary" href={externalURL} target="_blank" rel="noopener noreferrer">
+                  <ButtonAnchor variant="secondary" size="sm" href={externalURL} target="_blank" rel="noopener noreferrer">
                     查看原文
                     <ExternalLink size={14} />
-                  </a>
+                  </ButtonAnchor>
                 )}
               </div>
             </>
@@ -466,11 +503,4 @@ function ArticleRow({ article, expanded, onToggle }: { article: Article; expande
   );
 }
 
-function safeExternalURL(value: string) {
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
-  } catch {
-    return null;
-  }
-}
+

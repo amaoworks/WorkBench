@@ -35,7 +35,7 @@ Go 同一模块先按文件分工，出现独立职责和实际复用需求后�
 1. 选择稳定的模块 ID：小写字母开头，其余使用小写字母、数字和下划线，最多 63 字符。业务表使用 `<id>_` 前缀，资源标识使用 `<id>.` 前缀，HTTP 使用 `/api/modules/<id>/...`。
 2. 实现 [contracts.Module](../internal/contracts/module.go)：`Manifest()`、`Migrations()`、`Register()`。当前 Registry 支持 `ContractVersion: 1`；业务版本独立维护。
 3. 在构造函数显式接收所需依赖并检查必需项。Todo 使用位置参数，Investment 使用 `Dependencies`；根据依赖数量选择清楚的签名。
-4. 在 [internal/app/app.go](../internal/app/app.go) 创建模块并加入 `modules.Initialize` 清单。模块注册阶段只声明资源，检查并返回每个注册错误，不执行远程请求或业务写入，也不启动后台循环。有长连接或进程资源时实现 `ModuleLifecycle`；OAuth 回调或静态资源实现 `ModuleRouteProvider`；资源会话策略使用 `ModuleSessionPolicyProvider`；HTTP 启动后的后台初始化使用 `ModuleStartup`。Registry 自动恢复和管理生命周期，App 通过契约装配额外行为。启停回调必须支持重试，失败后目录保留期望状态、实际状态为未知，业务入口关闭。
+4. 在 [internal/app/app.go](../internal/app/app.go) 创建模块并加入 `modules.InitializeWith` 清单。模块注册阶段只声明资源，检查并返回每个注册错误，不执行远程请求或业务写入，也不启动后台循环。有长连接或进程资源时实现 `ModuleLifecycle`；OAuth 回调或静态资源实现 `ModuleRouteProvider`；资源会话策略使用 `ModuleSessionPolicyProvider`；HTTP 启动后的后台初始化使用 `ModuleStartup`。Registry 自动恢复和管理生命周期，App 通过契约装配额外行为。启停回调必须支持重试，失败后目录保留期望状态、实际状态为未知，业务入口关闭。
 5. 模块通过同一个 `embed.FS` 嵌入 `migrations/*.sql` 和 `migrations-postgres/*.sql`，`MigrationSet` 分别声明 `Dir` 与 `PostgresDir`。两个目录使用相同版本号并表达相同结构；PostgreSQL DDL 使用 `BIGINT`、`BYTEA`、`DOUBLE PRECISION` 和 TEXT JSON 校验。固定 SQL 放 `query/`，在 [sqlc.yaml](../sqlc.yaml) 登记 SQLite engine 的 schema、query 和生成目标，运行 `sqlc generate` 并提交 `sqlc/` 代码；运行时适配 PostgreSQL 占位符。
 
 业务不直接 import 其他业务、`internal/app` 或 `internal/capabilities` 实现。使用 `contracts` 接口注入，底层 HTTP/ID 工具可使用 `foundation/httpapi` 和 `foundation/identity`。共享数据库连接用于本业务表；跨业务读取应先设计公开契约或事件。
@@ -72,7 +72,8 @@ export default {
   id: "reading",
   pages: { "reading.list": lazy(() => import("./ReadingPage")) },
   widgets: { "reading.summary": lazy(() => import("./ReadingWidget")) },
-  // 可选：顶部导航下拉菜单与模块子页面
+  // 可选：总览卡片图标与排序、顶部导航下拉菜单、模块子页面
+  widgetMeta: { "reading.summary": { icon: List, summaryOrder: 10 } },
   menu: [
     { label: "列表", to: "/reading", description: "全部条目", icon: List },
     { label: "统计", to: "/reading/stats", description: "阅读进度" }

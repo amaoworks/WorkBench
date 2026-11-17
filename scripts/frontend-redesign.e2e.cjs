@@ -147,7 +147,17 @@ async function installFixtures(page, state) {
       const value = entries.length ? entries.reduce((sum, [, amount]) => sum + amount, 0) : null;
       return { day, accountHashes: entries.map(([hash]) => hash), netWorth: value, cash: value, invested: value, dayPnl: value };
     });
-    return route.fulfill({ json: { status: "ready", currency: "USD", range, accounts: ["a", "b"], points, updatedAt: new Date().toISOString() } });
+    return route.fulfill({
+      json: {
+        status: "ready",
+        currency: "USD",
+        range,
+        accounts: ["a", "b"],
+        accountLabels: { a: "账户 A", b: "账户 B" },
+        points,
+        updatedAt: new Date().toISOString(),
+      },
+    });
   });
 }
 
@@ -217,7 +227,7 @@ async function openModuleMenu(page, label) {
     await history.getByLabel("净值账户", { exact: true }).click();
     await Promise.all([
       page.waitForResponse((response) => response.url().includes("/investment/networth?") && new URL(response.url()).searchParams.get("account") === "b"),
-      page.getByRole("option", { name: "账户 b", exact: true }).click(),
+      page.getByRole("option", { name: "账户 B", exact: true }).click(),
     ]);
     await history.getByText("每日明细", { exact: true }).click();
     await history.getByRole("columnheader", { name: "净值 (USD)", exact: true }).waitFor();

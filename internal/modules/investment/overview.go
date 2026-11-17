@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -28,6 +29,7 @@ const (
 	overviewQuotesTTL    = 30 * time.Second
 	overviewSparkTTL     = 5 * time.Minute
 	overviewStatusTTL    = time.Minute
+	overviewFutuRetryTTL = 5 * time.Second
 	overviewStaleLimit   = 10 * time.Minute
 	overviewFetchTimeout = 8 * time.Second
 	overviewSparkBudget  = 4 * time.Second
@@ -64,6 +66,7 @@ type overviewSparkEntry struct {
 
 type overviewFutuEntry struct {
 	at     time.Time
+	ttl    time.Duration
 	status overviewFutuStatus
 }
 
@@ -747,7 +750,7 @@ func (m *Module) overviewFutu(ctx context.Context) overviewFutuStatus {
 	state.mu.Lock()
 	cached := state.futu
 	state.mu.Unlock()
-	if cached != nil && now.Sub(cached.at) < overviewStatusTTL {
+	if cached != nil && now.Sub(cached.at) < cached.ttl {
 		return cached.status
 	}
 	rec, err := m.loadFutu(ctx)
@@ -772,16 +775,28 @@ func (m *Module) overviewFutu(ctx context.Context) overviewFutuStatus {
 			if loggedIn, err := client.globalState(checkCtx); err == nil {
 				status.Connected, status.QotLogined, status.LastError = true, loggedIn, ""
 			} else {
-				status.LastError = err.Error()
+				status.LastError = futuProbeError(err)
 			}
 		} else {
-			status.LastError = err.Error()
+			status.LastError = futuProbeError(err)
 		}
 	}
+	ttl := overviewStatusTTL
+	if !status.Connected {
+		ttl = overviewFutuRetryTTL
+	}
 	state.mu.Lock()
-	state.futu = &overviewFutuEntry{at: now, status: status}
+	state.futu = &overviewFutuEntry{at: now, ttl: ttl, status: status}
 	state.mu.Unlock()
 	return status
+}
+
+func futuProbeError(err error) string {
+	var op *net.OpError
+	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &op) && op.Op == "dial") {
+		return "正在连接 OpenD"
+	}
+	return err.Error()
 }
 
 func (m *Module) overviewAlerts(ctx context.Context) (overviewAlerts, error) {

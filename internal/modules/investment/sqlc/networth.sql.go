@@ -10,19 +10,26 @@ import (
 )
 
 const addNetWorthAccountScope = `-- name: AddNetWorthAccountScope :exec
-INSERT INTO investment_networth_account_scopes(user_id,authorized_at,account_hash)
-VALUES(?1,?2,?3)
-ON CONFLICT(user_id,authorized_at,account_hash) DO NOTHING
+INSERT INTO investment_networth_account_scopes(user_id,authorized_at,account_hash,account_label)
+VALUES(?1,?2,?3,?4)
+ON CONFLICT(user_id,authorized_at,account_hash) DO UPDATE SET
+account_label=CASE WHEN excluded.account_label='' THEN investment_networth_account_scopes.account_label ELSE excluded.account_label END
 `
 
 type AddNetWorthAccountScopeParams struct {
 	UserID       string `json:"user_id"`
 	AuthorizedAt int64  `json:"authorized_at"`
 	AccountHash  string `json:"account_hash"`
+	AccountLabel string `json:"account_label"`
 }
 
 func (q *Queries) AddNetWorthAccountScope(ctx context.Context, arg AddNetWorthAccountScopeParams) error {
-	_, err := q.db.ExecContext(ctx, addNetWorthAccountScope, arg.UserID, arg.AuthorizedAt, arg.AccountHash)
+	_, err := q.db.ExecContext(ctx, addNetWorthAccountScope,
+		arg.UserID,
+		arg.AuthorizedAt,
+		arg.AccountHash,
+		arg.AccountLabel,
+	)
 	return err
 }
 
@@ -41,7 +48,7 @@ func (q *Queries) DeleteNetWorthAccountScope(ctx context.Context, arg DeleteNetW
 }
 
 const listNetWorthAccounts = `-- name: ListNetWorthAccounts :many
-SELECT account_hash FROM investment_networth_account_scopes
+SELECT account_hash, account_label FROM investment_networth_account_scopes
 WHERE user_id=?1 AND authorized_at=CAST(?2 AS BIGINT)
 ORDER BY account_hash
 `
@@ -51,19 +58,24 @@ type ListNetWorthAccountsParams struct {
 	AuthorizedAt int64  `json:"authorized_at"`
 }
 
-func (q *Queries) ListNetWorthAccounts(ctx context.Context, arg ListNetWorthAccountsParams) ([]string, error) {
+type ListNetWorthAccountsRow struct {
+	AccountHash  string `json:"account_hash"`
+	AccountLabel string `json:"account_label"`
+}
+
+func (q *Queries) ListNetWorthAccounts(ctx context.Context, arg ListNetWorthAccountsParams) ([]ListNetWorthAccountsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listNetWorthAccounts, arg.UserID, arg.AuthorizedAt)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []string{}
+	items := []ListNetWorthAccountsRow{}
 	for rows.Next() {
-		var account_hash string
-		if err := rows.Scan(&account_hash); err != nil {
+		var i ListNetWorthAccountsRow
+		if err := rows.Scan(&i.AccountHash, &i.AccountLabel); err != nil {
 			return nil, err
 		}
-		items = append(items, account_hash)
+		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

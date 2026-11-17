@@ -17,7 +17,7 @@ export function ConfirmDialog({
 }: {
   open: boolean;
   title: string;
-  description: string;
+  description?: string;
   busy: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -41,6 +41,7 @@ export function ConfirmDialog({
         <Dialog.Content
           className="module-settings-dialog confirm-dialog"
           role="alertdialog"
+          {...(description ? {} : { "aria-describedby": undefined })}
           onOpenAutoFocus={(event) => {
             event.preventDefault();
             cancel.current?.focus();
@@ -56,9 +57,11 @@ export function ConfirmDialog({
         >
           <div className="p-5">
             <Dialog.Title className="font-semibold">{title}</Dialog.Title>
-            <Dialog.Description className="mt-3 whitespace-pre-wrap break-words text-sm text-[var(--muted)]">
-              {description}
-            </Dialog.Description>
+            {description ? (
+              <Dialog.Description className="mt-3 whitespace-pre-wrap break-words text-sm text-[var(--muted)]">
+                {description}
+              </Dialog.Description>
+            ) : null}
             <div className="mt-5 flex justify-end gap-2">
               <Button ref={cancel} variant="secondary" disabled={busy} onClick={onCancel}>
                 {cancelLabel}

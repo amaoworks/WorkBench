@@ -15,6 +15,7 @@ tags:
   - name: Conversations
   - name: Todo
   - name: Push
+  - name: Notifications
   - name: Schwab
 paths:
   /api/auth/token:
@@ -630,6 +631,127 @@ paths:
               example: { code: todo_conflict, message: 待办已被修改 }
         '503':
           $ref: '#/components/responses/ModuleUnavailable'
+    delete:
+      tags: [Todo]
+      summary: 删除待办
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        '204':
+          description: 已删除
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: 待办不存在
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: todo_not_found, message: task not found }
+        '503':
+          $ref: '#/components/responses/ModuleUnavailable'
+  /api/notifications:
+    get:
+      tags: [Notifications]
+      summary: 分页列出通知
+      parameters:
+        - name: unread
+          in: query
+          schema: { type: string, enum: ['true', 'false'] }
+        - name: source
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: 当前页通知
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationPage' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/notifications/unread-count:
+    get:
+      tags: [Notifications]
+      summary: 未读数
+      parameters:
+        - name: source
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: 未读数量
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [count]
+                properties:
+                  count: { type: integer, format: int64 }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/notifications/stream:
+    get:
+      tags: [Notifications]
+      summary: 通知变更 SSE
+      description: 事件为 core.notification.created、updated、archived。不按 Last-Event-ID 补发历史。
+      responses:
+        '200':
+          description: text/event-stream
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/notifications/read:
+    put:
+      tags: [Notifications]
+      summary: 标记已读
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NotificationIds' }
+      responses:
+        '200':
+          description: 已更新
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Updated' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/notifications/read-all:
+    put:
+      tags: [Notifications]
+      summary: 全部标为已读
+      responses:
+        '200':
+          description: 已更新
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Updated' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/notifications/archive:
+    put:
+      tags: [Notifications]
+      summary: 归档通知
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NotificationIds' }
+      responses:
+        '200':
+          description: 已更新
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Updated' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /api/mobile/push-token:
     post:
       tags: [Push]
@@ -964,6 +1086,46 @@ components:
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         revision: { type: integer, format: int64, minimum: 1 }
+    Notification:
+      type: object
+      additionalProperties: false
+      required: [id, sourceModule, severity, title, content, createdAt]
+      properties:
+        id: { type: string }
+        sourceModule: { type: string }
+        severity: { type: string }
+        title: { type: string }
+        content: { type: string }
+        actionLabel: { type: string }
+        actionRoute: { type: string }
+        sourceEventId: { type: string }
+        createdAt: { type: string, format: date-time }
+        readAt: { type: string, format: date-time }
+        archivedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+    NotificationPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Notification' }
+        nextCursor: { type: string }
+    NotificationIds:
+      type: object
+      additionalProperties: false
+      required: [ids]
+      properties:
+        ids:
+          type: array
+          items: { type: string }
+    Updated:
+      type: object
+      additionalProperties: false
+      required: [updated]
+      properties:
+        updated: { type: boolean }
     TaskPage:
       type: object
       additionalProperties: false

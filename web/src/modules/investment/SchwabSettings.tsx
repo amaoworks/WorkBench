@@ -7,6 +7,7 @@ import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { Field } from "../../components/ui/Field";
 import { Notice } from "../../components/ui/Notice";
 import { disconnectSchwab, refreshSchwabToken, useRefreshInvestment } from "./queries";
+import { SCHWAB_LOGIN_PATH } from "./schwabLogin";
 import type { SchwabSettings as Settings } from "./schema";
 import { formatDateTime } from "../../shared/format";
 import { MaskedInput } from "./MaskedInput";
@@ -39,13 +40,13 @@ export function SchwabAppSection({
       <Field label="App Key">
         <MaskedInput revealLabel="App Key" required={dirty} value={value.appKey} onChange={(event) => onChange({ appKey: event.target.value })} />
       </Field>
-      <Field label="App Secret" meta={initial.hasAppSecret ? <Badge tone="success">已保存 · 留空保留</Badge> : undefined}>
+      <Field label="App Secret" meta={initial.hasAppSecret ? <Badge tone="info">已保存</Badge> : <Badge tone="neutral">未设置</Badge>}>
         <input
           type="password"
           autoComplete="new-password"
           value={value.appSecret}
           onChange={(event) => onChange({ appSecret: event.target.value })}
-          placeholder={initial.hasAppSecret ? "输入新密钥以替换" : "填写 Schwab App Secret"}
+          placeholder={initial.hasAppSecret ? "留空保持不变" : undefined}
         />
       </Field>
       <Field label="OAuth 回调地址">
@@ -105,7 +106,7 @@ export function SchwabConnectionSection({ initial, canManageApp }: { initial: Se
         Charles Schwab
       </h3>
       {initial.connected && (
-        <Badge tone="success">
+        <Badge tone="info">
           已连接{initial.tokenExpiresAt ? ` · 令牌到期 ${formatDateTime(initial.tokenExpiresAt)}` : ""}
         </Badge>
       )}
@@ -121,11 +122,11 @@ export function SchwabConnectionSection({ initial, canManageApp }: { initial: Se
             <ButtonLink to="/admin/settings?tab=modules&module=investment" variant="secondary">后台设置</ButtonLink>
           ) : undefined}
         >
-          {canManageApp ? "在后台设置中配置共享应用。" : "联系管理员配置应用。"}
+          {canManageApp ? null : "联系管理员配置应用。"}
         </Notice>
       )}
       {!initial.connected && !initial.reauthorizationRequired && initial.configured && (
-        <Notice title="未连接 Schwab">请完成 OAuth 授权。</Notice>
+        <Notice title="未连接 Schwab" />
       )}
       {initial.lastError && !initial.reauthorizationRequired && (
         <Notice tone="danger" title="Schwab 连接异常">
@@ -138,7 +139,7 @@ export function SchwabConnectionSection({ initial, canManageApp }: { initial: Se
           variant={initial.reauthorizationRequired ? "primary" : "secondary"}
           disabled={busy || !initial.configured}
           onClick={() => {
-            window.location.href = "/api/modules/investment/schwab/oauth/login";
+            window.location.href = SCHWAB_LOGIN_PATH;
           }}
         >
           {initial.reauthorizationRequired ? "重新授权" : "登录 Schwab"}

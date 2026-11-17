@@ -3,7 +3,9 @@ import { Navigate, useSearchParams } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { Blocks, Check, Fingerprint, KeyRound, LoaderCircle, Monitor, Moon, Paintbrush, Radio, Sun } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "../../shared/api";
+import { apiValidated } from "../../shared/api";
+import { reauthenticateSchema } from "../../shared/schema";
+import { rememberPasswordNotice } from "../../shared/passwordNotice";
 import { useAppearance, useSettings, type Settings } from "./queries";
 import { ModulesPanel } from "./ModulesPanel";
 import { TelegramRecipientPanel } from "./TelegramRecipientPanel";
@@ -65,8 +67,11 @@ function PasswordForm({ mode }: { mode: string }) {
   const categories = [/\p{Lu}/u, /\p{Ll}/u, /\p{Nd}/u, /[\p{P}\p{S}]/u].filter((pattern) => pattern.test(newPassword)).length;
   const longEnough = [...newPassword].length >= 8;
   const change = useMutation({
-    mutationFn: () => api("/api/settings/password", { method: "PUT", body: JSON.stringify({ currentPassword, newPassword }) }),
-    onSuccess: () => { window.location.assign("/"); },
+    mutationFn: () => apiValidated("/api/settings/password", reauthenticateSchema, { method: "PUT", body: JSON.stringify({ currentPassword, newPassword }) }),
+    onSuccess: () => {
+      rememberPasswordNotice("密码已更新，请使用新密码登录。");
+      window.location.assign("/");
+    },
     onError: (err) => toast.error(err.message),
   });
   const submit = (event: FormEvent) => {
@@ -102,9 +107,9 @@ function PasswordForm({ mode }: { mode: string }) {
         </div>
       </fieldset>
       <div className="form-actions">
-        <button className="studio-button" disabled={change.isPending || !currentPassword || !longEnough || categories < 3 || newPassword !== confirm}>
+        <Button disabled={change.isPending || !currentPassword || !longEnough || categories < 3 || newPassword !== confirm}>
           {change.isPending ? <LoaderCircle size={16} className="animate-spin" /> : <KeyRound size={16} />}更新密码
-        </button>
+        </Button>
       </div>
     </form>
   );

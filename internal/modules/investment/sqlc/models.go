@@ -36,6 +36,7 @@ type InvestmentNetworthAccountScope struct {
 	UserID       string `json:"user_id"`
 	AuthorizedAt int64  `json:"authorized_at"`
 	AccountHash  string `json:"account_hash"`
+	AccountLabel string `json:"account_label"`
 }
 
 type InvestmentNetworthSnapshot struct {

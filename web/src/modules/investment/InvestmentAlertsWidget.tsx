@@ -8,6 +8,8 @@ import { cn } from "../../shared/cn";
 import { formatClock, formatRelative, formatSignedPct } from "../../shared/format";
 import { useOverviewAlerts } from "./queries";
 import type { OverviewAlerts } from "./schema";
+import { futuServiceLabel } from "./futuState";
+import { SCHWAB_LOGIN_PATH } from "./schwabLogin";
 
 const DAY = 86_400_000;
 // Schwab refresh tokens live seven days from authorization.
@@ -21,7 +23,7 @@ function SchwabHealth({ schwab, now }: { schwab: OverviewAlerts["schwab"]; now: 
           <span><KeyRound size={13} />Schwab</span>
           <Badge tone="danger">需重新授权</Badge>
         </div>
-        <a className="ov-link" href="/api/modules/investment/schwab/oauth/login">去重新授权</a>
+        <a className="ov-link" href={SCHWAB_LOGIN_PATH}>去重新授权</a>
       </div>
     );
   const expires = schwab.refreshExpiresAt ? new Date(schwab.refreshExpiresAt).getTime() : NaN;
@@ -32,21 +34,19 @@ function SchwabHealth({ schwab, now }: { schwab: OverviewAlerts["schwab"]; now: 
     <div className="ov-health-box">
       <div className="ov-health-head">
         <span><KeyRound size={13} />Schwab</span>
-        {known ? <Badge tone={left < 2 * DAY ? "warning" : "success"}>剩 {days} 天</Badge> : <Badge tone="success">已连接</Badge>}
+        {known ? <Badge tone={left < 2 * DAY ? "warning" : "info"}>剩 {days} 天</Badge> : <Badge tone="info">已连接</Badge>}
       </div>
-      {known ? (
+      {known && (
         <>
           <div className="ov-meter" aria-hidden="true">
             <i className={left < 2 * DAY ? "is-warn" : ""} style={{ width: `${Math.min(100, Math.max(4, (left / REFRESH_LIFETIME) * 100))}%` }} />
           </div>
           <p className="ov-note">
-            刷新令牌 {formatRelativeDate(expires)} 到期{left < 2 * DAY && <> · <a className="ov-link" href="/api/modules/investment/schwab/oauth/login">提前重新授权</a></>}
+            刷新令牌 {formatRelativeDate(expires)} 到期{left < 2 * DAY && <> · <a className="ov-link" href={SCHWAB_LOGIN_PATH}>提前重新授权</a></>}
           </p>
         </>
-      ) : (
-        <p className="ov-note">授权到期时间未知</p>
       )}
-      {schwab.lastError && <p className="ov-note ov-down">{schwab.lastError}</p>}
+      {schwab.lastError && <p className="ov-note field-error" role="alert">{schwab.lastError}</p>}
     </div>
   );
 }
@@ -58,13 +58,14 @@ const formatRelativeDate = (value: number) => {
 
 function FutuHealth({ futu }: { futu: OverviewAlerts["futu"] }) {
   const online = futu.connected && futu.qotLogined;
+  const note = futu.lastError || (online ? "" : futu.serviceState ? futuServiceLabel(futu.serviceState) : "未连接到 OpenD");
   return (
     <div className="ov-health-box">
       <div className="ov-health-head">
         <span><Plug size={13} />富途 OpenD</span>
-        <Badge tone={online ? "success" : futu.connected ? "warning" : "danger"}>{online ? "在线" : futu.connected ? "行情未登录" : "离线"}</Badge>
+        <Badge tone={online ? "info" : futu.connected ? "warning" : "danger"}>{online ? "在线" : futu.connected ? "行情未登录" : "离线"}</Badge>
       </div>
-      <p className="ov-note">{futu.lastError || (online ? "行情已登录" : futu.serviceState ? `服务状态：${futu.serviceState}` : "未连接到 OpenD")}</p>
+      {note && <p className="ov-note">{note}</p>}
     </div>
   );
 }
@@ -93,7 +94,8 @@ export default function InvestmentAlertsWidget({ widget }: { widget: Widget }) {
               </span>
               <div className="ov-item-text">
                 <Link to="/investment/monitor" className="ov-item-title">
-                  {trigger.symbol} {trigger.direction === "up" ? "涨幅" : "跌幅"}超过 {trigger.thresholdPercent}% · {trigger.price.toFixed(2)} ({formatSignedPct(trigger.changePercent)})
+                  {trigger.symbol} {trigger.direction === "up" ? "涨幅" : "跌幅"}超过 {trigger.thresholdPercent}% ·{" "}
+                  {trigger.price.toFixed(2)} ({formatSignedPct(trigger.changePercent)})
                 </Link>
                 <p className="ov-note">价格监控 · {formatRelative(trigger.triggeredAt)}</p>
               </div>

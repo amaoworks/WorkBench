@@ -17,6 +17,8 @@ PostgreSQL 另外保留一个连接会话，以 advisory lock 限制同一数据
   data.db-shm                 SQLite 运行时文件
   data.db.lock                进程锁文件
   backups/                    SQLite 在线一致性备份
+  chart-library/              TradingView 图表库磁盘缓存
+  futu-opend/                 OpenD 运行目录
 ```
 
 二进制和 Docker 使用相同的本地工作空间目录。SQLite 在其中保存数据库、运行文件和备份；PostgreSQL 数据保存在外部数据库，本地目录仍保存图表缓存、OpenD 运行内容等文件。Compose 将整个 `/data` 持久化到命名卷，容器使用 UID/GID `65532:65532`。目录挂载、迁移和权限步骤见[部署与发布](deployment.md)。升级会执行所选方言的迁移，回退旧版本时可能需要一并恢复升级前备份。
@@ -33,13 +35,19 @@ PostgreSQL 另外保留一个连接会话，以 advisory lock 限制同一数据
 | 可靠事件 | `event_deliveries` | 事件/消费者唯一记录、租约、尝试次数和结果 |
 | 可靠事件 | `event_consumer_topics` | 已注册消费者的订阅主题映射，供事务内扇出投递 |
 | 鉴权 | `auth_users`、`sessions`、`auth_device_sessions`、`auth_browser_sessions` | 用户、角色、状态、密码哈希、凭据版本、首次改密状态与按用户归属的登录会话 |
+| 鉴权 | `auth_signing_keys` | 设备 access token 签名私钥及退役时间 |
+| 鉴权 | `auth_refresh_tokens` | 设备 refresh token 哈希、所属会话和是否已使用 |
+| 鉴权 | `auth_browser_grants` | WebView 换票哈希、所属设备会话、到期和消费时间 |
 | 调度 | `scheduled_jobs`、`scheduled_job_runs` | 代码定义的持久化状态、执行次数、结果和错误 |
 | 通知 | `notifications` | 提醒内容、幂等键、读取/归档/过期状态、来源和显式外发标志 |
+| 通知 | `telegram_recipients` | 用户 Telegram 接收开关、chat id、激活时间和机器人代次 |
+| 通知 | `mobile_push_tokens` | 绑定设备会话的 APNs/FCM token |
 | 对话 | `ai_conversations`、`ai_messages` | 对话元数据和消息 |
 | 工具运行时 | `ai_tool_calls` | 工具执行、参数审计、幂等键和结果 |
 | 工作空间设置 | `workspace_settings` | AI、日志、Telegram 服务等平台共享配置；日志内容写入 stderr |
 | 个人设置 | `user_settings` | `(user_id, section)` 范围内的外观、总览布局和接收偏好 |
 | Todo | `todo_tasks` | 标题、说明、提醒时间、优先级、分类、完成状态和创建/更新时间 |
+| Todo | `todo_create_requests` | 按用户保存的创建幂等键、请求哈希和首次响应 |
 | Todo / Wallos | `todo_wallos_settings` | 联动配置、密钥、最近成功同步和错误 |
 | Todo / Wallos | `todo_wallos_occurrences` | 外部来源、订阅 ID、付款日期与待办映射 |
 | Investment | `investment_schwab_app`、`investment_schwab_connections` | 平台 App Key/Secret、回调及配置版本；各用户独立的令牌、streamer 缓存、OAuth state 与授权状态 |
@@ -50,9 +58,9 @@ PostgreSQL 另外保留一个连接会话，以 advisory lock 限制同一数据
 | Investment | `investment_price_triggers` | `(rule_id, trading_date)` 唯一的触发快照、站内通知 ID；删除规则后保留 |
 | Investment | `investment_price_monitor` | 最近后台检查时间、状态和错误 |
 | Investment | `investment_watchlists` | 自选列表、分组和顺序、当前列表，以及防止迟到请求和旧窗口覆盖的编辑版本/会话/序号 |
-| Investment | `investment_networth_snapshots`、`investment_networth_account_scopes` | 账户每日净值快照；当前授权可见的账户范围 |
+| Investment | `investment_networth_snapshots`、`investment_networth_account_scopes` | 账户每日净值快照；当前授权可见的账户范围及可读账户名 |
 | Investment | `investment_preferences` | 图表选择、TradingView 用户设置、当前交易账户、页面视图及旧版布局快照；各项独立的编辑版本/会话/序号，终端不再读写布局快照 |
-| News | `news_sources`、`news_origins` | 来源配置、条件请求与退避状态、条目身份和出处 |
+| News | `news_sources`、`news_origins` | 订阅源配置、条件请求与退避状态、条目身份和出处 |
 | News | `news_articles`、`news_rules` | 文章、阅读状态、匹配规则、翻译摘要及缓存 |
 | News | `news_settings`、`news_digests`、`news_ai_usage` | 处理与简报配置、简报快照和通知 ID、每日调用额度 |
 
@@ -80,7 +88,7 @@ PostgreSQL 另外保留一个连接会话，以 advisory lock 限制同一数据
 
 ## 维护和备份
 
-`core.maintenance` 每 24 小时清理到期 Session，以及创建时间超过 90 天且已读或已归档的通知。当前没有自动清理全部事件、Job 历史、AI 对话或备份文件的通用策略。
+`core.maintenance` 每 24 小时清理到期网页 Session、到期设备会话、到期换票，以及退役超过 15 分钟的签名密钥；创建超过 7 天且已无对应网页 Session 的 WebView 会话一并删除。同时清理创建时间超过 90 天且已读或已归档的通知。当前没有自动清理全部事件、Job 历史、AI 对话或备份文件的通用策略。
 
 SQLite 在线备份通过 `VACUUM INTO` 创建新数据库，再使用只读连接执行 `PRAGMA integrity_check`；成功后设置文件权限。备份文件保存在数据库同目录的 `backups/`。PostgreSQL 备份由数据库服务使用 `pg_dump` 等外部工具管理，应用的备份接口返回 HTTP 501。操作入口和恢复方式见[配置与运行](configuration.md)。核心备份包含外部模块的宿主注册数据，不表示已经备份远端业务数据。
 

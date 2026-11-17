@@ -4,6 +4,7 @@ import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "../../components/ui/Button";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
+import { EmptyState } from "../../components/ui/EmptyState";
 import { cn } from "../../shared/cn";
 import { Field } from "../../components/ui/Field";
 import { Notice } from "../../components/ui/Notice";
@@ -113,13 +114,7 @@ export default function SourcesTab({ startAdding = false }: { startAdding?: bool
             <Skeleton className="h-[84px] rounded-2xl" />
           </>
         )}
-        {sources.data && items.length === 0 && (
-          <div className="feed feed-empty">
-            <div className="fd-t">
-              <b>暂无订阅源</b>
-            </div>
-          </div>
-        )}
+        {sources.data && items.length === 0 && <EmptyState title="暂无订阅源" />}
         {items.map((source) => (
           <div key={source.id} className={cn("feed news-source", !source.enabled && "is-off")}>
             <span className="ic-circ" aria-hidden="true">{source.name.trim().slice(0, 1).toUpperCase() || "#"}</span>
@@ -135,12 +130,15 @@ export default function SourcesTab({ startAdding = false }: { startAdding?: bool
               )}
             </div>
             <div className="feed-actions">
-              <Switch
-                label={`启用 ${source.name}`}
-                checked={source.enabled}
-                disabled={save.isPending}
-                onChange={(enabled) => save.mutate({ ...pickInput(source), enabled, id: source.id })}
-              />
+              <label className="inline-switch">
+                <Switch
+                  label={`启用 ${source.name}`}
+                  checked={source.enabled}
+                  disabled={save.isPending}
+                  onChange={(enabled) => save.mutate({ ...pickInput(source), enabled, id: source.id })}
+                />
+                <span className="sr-only">启用 {source.name}</span>
+              </label>
               <div className="feed-tools">
                 <Button
                   size="icon"
@@ -170,7 +168,6 @@ export default function SourcesTab({ startAdding = false }: { startAdding?: bool
           <Plus size={20} aria-hidden="true" />
           <span className="fd-t">
             <b>添加订阅源</b>
-            <span aria-hidden="true">RSS · RSSHub · Google 新闻 · Yahoo 财经</span>
           </span>
         </button>
       </div>
@@ -210,13 +207,13 @@ function SourceForm({
   return (
     <form onSubmit={submit} className="inline-form news-source-form">
       <Field label="名称">
-        <input autoFocus required value={form.name} onChange={(event) => change({ name: event.target.value })} placeholder="订阅源名称" />
+        <input autoFocus required value={form.name} onChange={(event) => change({ name: event.target.value })} placeholder="例如：路透社" />
       </Field>
       <Field label="类型">
         <Select value={form.kind} onValueChange={(kind) => change({ kind: kind as SourceInput["kind"] })} options={SOURCE_KINDS} />
       </Field>
       {needsURL && (
-        <Field label="订阅地址" className="sm:col-span-2">
+        <Field label="订阅地址" className="form-wide">
           <input
             type="url"
             required
@@ -227,12 +224,12 @@ function SourceForm({
         </Field>
       )}
       {needsQuery && (
-        <Field label="查询词" className="sm:col-span-2">
+        <Field label="查询词" className="form-wide">
           <input required value={form.query} onChange={(event) => change({ query: event.target.value })} placeholder="新闻关键词" />
         </Field>
       )}
-      <Field label="主题">
-        <input value={form.topic} onChange={(event) => change({ topic: event.target.value })} placeholder="科技" />
+      <Field label="话题">
+        <input value={form.topic} onChange={(event) => change({ topic: event.target.value })} placeholder="例如：科技" />
       </Field>
       <Field label="刷新间隔（分钟）">
         <input
@@ -244,11 +241,11 @@ function SourceForm({
           onChange={(event) => change({ intervalMinutes: event.target.valueAsNumber })}
         />
       </Field>
-      <div className="flex items-center gap-2 text-sm">
-        <Switch label="启用订阅源" checked={form.enabled} onChange={(enabled) => change({ enabled })} />
-        启用
-      </div>
-      <div className="flex justify-end gap-2 sm:col-span-2">
+      <div className="inline-form-actions">
+        <label className="inline-switch">
+          <Switch label="启用订阅源" checked={form.enabled} onChange={(enabled) => change({ enabled })} />
+          <span aria-hidden="true">启用</span>
+        </label>
         <Button type="button" variant="secondary" onClick={onCancel}>
           取消
         </Button>

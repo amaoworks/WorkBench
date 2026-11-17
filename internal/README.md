@@ -9,4 +9,4 @@
 - `app/`：依赖装配、平台路由、设置和生命周期。
 - `webui/`：嵌入前端构建产物和静态资源处理。
 
-完整目录、实际依赖方向和运行流程见[架构说明](../doc/architecture.md)。新增业务见[开发指南](../doc/business-development.md)，功能调整以当前需求和实现为准。
+完整目录、实际依赖方向和运行流程见[架构说明](../doc/architecture.md)。新增业务见[开发指南](../doc/business-development.md)。

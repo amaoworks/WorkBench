@@ -1,4 +1,10 @@
+import { z } from "zod";
+import { apiErrorSchema } from "./schema.ts";
+
 export const AUTH_CHANNEL = "workbench-auth";
+
+const csrfTokenSchema = z.object({ token: z.string().min(1) });
+const apiErrorBodySchema = apiErrorSchema.partial();
 
 export function broadcastIdentity(userId: string | null) {
   if (typeof BroadcastChannel === "undefined") return;
@@ -47,11 +53,11 @@ function getCSRFToken(): Promise<string> {
     if (identityUserId) headers.set("X-Workbench-User", identityUserId);
     const response = await fetch("/api/auth/csrf", { credentials: "same-origin", headers, signal: identity.signal });
     if (!response.ok) throw new Error("无法初始化安全令牌");
-    const body = (await response.json()) as { token?: unknown } | null;
-    if (typeof body?.token !== "string" || !body.token) throw new Error("安全令牌响应格式不正确");
+    const parsed = csrfTokenSchema.safeParse(await response.json().catch(() => null));
+    if (!parsed.success) throw new Error("安全令牌响应格式不正确");
     identity.signal.throwIfAborted();
-    csrfToken = body.token;
-    return body.token;
+    csrfToken = parsed.data.token;
+    return parsed.data.token;
   })().finally(() => {
     if (identity === identityRequests) csrfPending = null;
   });
@@ -75,13 +81,15 @@ export async function apiResponse(path: string, init: RequestInit = {}): Promise
   const response = await fetch(path, { ...init, method, headers, signal, credentials: "same-origin" });
   if (!response.ok) {
     if (response.status === 401 && !path.startsWith("/api/auth/")) window.dispatchEvent(new Event("workbench:auth-invalid"));
-    const body = (await response.json().catch(() => null)) as { code?: string; message?: string } | null;
-    if (body?.code === "csrf_failed") csrfToken = null;
-    if (body?.code === "account_changed") {
+    const parsed = apiErrorBodySchema.safeParse(await response.json().catch(() => null));
+    const code = parsed.success ? parsed.data.code : undefined;
+    const message = parsed.success ? parsed.data.message : undefined;
+    if (code === "csrf_failed") csrfToken = null;
+    if (code === "account_changed") {
       identity.abort();
       window.dispatchEvent(new Event("workbench:account-changed"));
     }
-    throw new APIError(response.status, body?.code ?? "request_failed", body?.message ?? `请求失败 (${response.status})`);
+    throw new APIError(response.status, code ?? "request_failed", message ?? `请求失败 (${response.status})`);
   }
   if (method !== "GET" && ["/api/auth/logout", "/api/auth/logout-all", "/api/settings/password"].includes(path)) broadcastIdentity(null);
   return response;

@@ -1,9 +1,9 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { api, apiResponse } from "../../shared/api";
 import { moduleSchema, type ExternalModule, type WorkbenchModule } from "../../shared/schema";
-import { useModules } from "../../app/queries";
+import { useModules } from "../../shared/modules";
 import { Button, ButtonLink } from "../../components/ui/Button";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { Skeleton } from "../../components/ui/States";
@@ -78,36 +78,49 @@ export function ModulesPanel({ scope = "personal" }: { scope?: "personal" | "adm
               </Notice>
             )}
             {module.kind === "external" && module.connectionNote && <p className="text-sm text-[var(--muted)]">{module.connectionNote}</p>}
-            {!management && !module.enabled && (
-              <p className="mt-2 text-sm text-[var(--muted)]">{isAdmin ? "在后台设置中启用。" : "联系管理员启用。"}</p>
+            {!management && !module.enabled && !isAdmin && (
+              <p className="mt-2 text-sm text-[var(--muted)]">联系管理员启用。</p>
             )}
           </div>
-          <div className="module-actions">
-            {(management || module.enabled) && (registry[module.id] || (management && module.kind === "external" && module.settingsEntry)) && (
-              <ModuleSettingsDialog module={module} scope={management ? "admin" : "personal"} />
-            )}
-            {!management && !module.enabled && isAdmin && (
-              <ButtonLink variant="secondary" to="/admin/settings?tab=modules">业务管理</ButtonLink>
-            )}
-            {management && module.kind === "external" && <ExternalActions module={module} onChange={refresh} fallbackFocus={() => heading.current} />}
-            {management && module.kind === "builtin" && module.lastError && (
-              <Button
-                variant="secondary"
-                disabled={toggle.isPending}
-                onClick={() => toggle.mutate({ id: module.id, enabled: module.enabled })}
-              >
-                重试
-              </Button>
-            )}
-            {management && (
+          {management && module.kind === "external" ? (
+            <ExternalActions module={module} onChange={refresh} fallbackFocus={() => heading.current}>
+              {(registry[module.id] || module.settingsEntry) && (
+                <ModuleSettingsDialog module={module} scope="admin" />
+              )}
               <Switch
                 label={module.name}
                 checked={module.enabled}
                 disabled={toggle.isPending}
                 onChange={(enabled) => toggle.mutate({ id: module.id, enabled })}
               />
-            )}
-          </div>
+            </ExternalActions>
+          ) : (
+            <div className="module-actions">
+              {(management || module.enabled) && registry[module.id] && (
+                <ModuleSettingsDialog module={module} scope={management ? "admin" : "personal"} />
+              )}
+              {!management && !module.enabled && isAdmin && (
+                <ButtonLink variant="secondary" to="/admin/settings?tab=modules">业务管理</ButtonLink>
+              )}
+              {management && module.kind === "builtin" && module.lastError && (
+                <Button
+                  variant="secondary"
+                  disabled={toggle.isPending}
+                  onClick={() => toggle.mutate({ id: module.id, enabled: module.enabled })}
+                >
+                  重试
+                </Button>
+              )}
+              {management && (
+                <Switch
+                  label={module.name}
+                  checked={module.enabled}
+                  disabled={toggle.isPending}
+                  onChange={(enabled) => toggle.mutate({ id: module.id, enabled })}
+                />
+              )}
+            </div>
+          )}
         </div>
       ))}
     </div>
@@ -129,10 +142,12 @@ function ExternalActions({
   module,
   onChange,
   fallbackFocus,
+  children,
 }: {
   module: ExternalModule;
   onChange: () => Promise<void>;
   fallbackFocus: () => HTMLElement | null;
+  children: ReactNode;
 }) {
   const [connectionOpen, setConnectionOpen] = useState(false);
   const refresh = useMutation({
@@ -159,19 +174,22 @@ function ExternalActions({
   });
   return (
     <>
-      <Button variant="secondary" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
-        刷新
-      </Button>
-      <Button variant="secondary" onClick={() => setConnectionOpen((value) => !value)} disabled={module.enabled}>
-        连接
-      </Button>
-      <Button
-        variant="danger"
-        onClick={(event) => deletion.request(module, event.currentTarget)}
-        disabled={module.enabled || unregister.isPending}
-      >
-        解除接入
-      </Button>
+      <div className="module-actions">
+        {children}
+        <Button variant="secondary" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
+          刷新
+        </Button>
+        <Button variant="secondary" onClick={() => setConnectionOpen((value) => !value)} disabled={module.enabled}>
+          连接
+        </Button>
+        <Button
+          variant="danger"
+          onClick={(event) => deletion.request(module, event.currentTarget)}
+          disabled={module.enabled || unregister.isPending}
+        >
+          解除接入
+        </Button>
+      </div>
       {connectionOpen && (
         <ConnectionForm
           module={module}

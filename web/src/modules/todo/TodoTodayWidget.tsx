@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Check, Repeat } from "lucide-react";
+import { Repeat } from "lucide-react";
 import type { Widget } from "../../shared/schema";
 import { Badge } from "../../components/ui/Badge";
 import { ButtonLink } from "../../components/ui/Button";
@@ -12,6 +12,7 @@ import { useOverviewSummary } from "../../shared/dashboard";
 import { moduleQueryKey } from "../../shared/queryKeys";
 import { updateTask, useTodoToday } from "./queries";
 import { applyWidgetCompletion } from "./taskActions";
+import { TaskCheck } from "./TaskCheck";
 import type { TodoToday } from "./schema";
 import { APIError } from "../../shared/api";
 
@@ -97,29 +98,25 @@ export default function TodoTodayWidget({ widget }: { widget: Widget }) {
               const due = dueLabel(item);
               return (
                 <li key={item.id} className="ov-item">
-                  <button
-                    type="button"
-                    role="checkbox"
-                    aria-checked={completed}
-                    aria-label={`${completed ? "恢复" : "完成"}：${item.title}`}
-                    className={cn("ov-check focus-ring", completed && "is-done")}
+                  <TaskCheck
+                    checked={completed}
+                    label={`${completed ? "恢复" : "完成"}：${item.title}`}
                     disabled={toggle.isPending && toggle.variables?.item.id === item.id}
-                    onClick={() => toggle.mutate({ item, completed: !completed })}
-                  >
-                    {completed && <Check size={12} strokeWidth={3} />}
-                  </button>
+                    onChange={() => toggle.mutate({ item, completed: !completed })}
+                  />
                   <div className="ov-item-text">
                     <p className={cn("ov-item-title", completed && "is-done")}>{item.title}</p>
-                    <p className="ov-note">
-                      {completed ? "已完成" : due && <Badge tone={due.tone}>{due.text}</Badge>}
-                      {!completed && !due && "无截止时间"}
-                    </p>
+                    {(completed || due) && (
+                      <p className="ov-note">
+                        {completed ? "已完成" : due && <Badge tone={due.tone}>{due.text}</Badge>}
+                      </p>
+                    )}
                   </div>
                 </li>
               );
             })}
           </ul>
-          {toggle.isError && <p className="ov-note ov-down">操作失败：{toggle.error.message}</p>}
+          {toggle.isError && <p className="ov-note field-error" role="alert">操作失败：{toggle.error.message}</p>}
         </>
       )}
       {renewals.length > 0 && (

@@ -1,5 +1,5 @@
 import { Link, useSearchParams } from "react-router-dom";
-import { Button, ButtonLink } from "../../components/ui/Button";
+import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { Notice } from "../../components/ui/Notice";
@@ -37,13 +37,12 @@ const INSTRUCTION_LABEL: Record<string, string> = {
 const TYPE_LABEL: Record<string, string> = { MARKET: "市价", LIMIT: "限价", STOP: "止损", STOP_LIMIT: "止损限价", TRAILING_STOP: "追踪止损", MARKET_ON_CLOSE: "收盘市价", LIMIT_ON_CLOSE: "收盘限价", NET_DEBIT: "净借", NET_CREDIT: "净贷", NET_ZERO: "净零" };
 const DURATION_LABEL: Record<string, string> = { DAY: "当日", GOOD_TILL_CANCEL: "撤销前有效", FILL_OR_KILL: "全额即时", IMMEDIATE_OR_CANCEL: "即时或撤销", END_OF_WEEK: "本周", END_OF_MONTH: "本月", NEXT_END_OF_MONTH: "下月底" };
 
-const statusTone = (group: string) => (group === "filled" ? "success" : group === "working" ? "info" : group === "canceled" ? "neutral" : "warning");
+const statusTone = (group: string) => (group === "filled" ? "info" : group === "working" ? "info" : group === "canceled" ? "neutral" : "warning");
 const qty = new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 });
 
 export default function OrdersPage() {
   return (
     <div className="page orders-page">
-      <PageHeader title="订单" action={<ButtonLink to="/investment">交易终端</ButtonLink>} />
       <Orders />
     </div>
   );
@@ -65,8 +64,17 @@ function Orders() {
       { replace: true },
     );
   const rows = orders.data?.items ?? [];
+  const updated = orders.data?.updatedAt ? `更新于 ${formatDateTime(orders.data.updatedAt, { seconds: true })}` : undefined;
   return (
     <>
+      <PageHeader
+        title="订单"
+        action={
+          <Button variant="secondary" size="sm" disabled={orders.isFetching} title={updated} onClick={() => orders.refetch()}>
+            刷新
+          </Button>
+        }
+      />
       <div className="filter-toolbar">
         <div className="rtabs" role="group" aria-label="时间范围">
           {RANGES.map((item) => (
@@ -95,12 +103,6 @@ function Orders() {
             </button>
           ))}
         </div>
-      </div>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <span className="text-xs text-[var(--muted)]">
-          {orders.data?.updatedAt && `更新于 ${formatDateTime(orders.data.updatedAt, { seconds: true })}`}
-        </span>
-        <Button variant="secondary" size="sm" disabled={orders.isFetching} onClick={() => orders.refetch()}>刷新</Button>
       </div>
       {orders.isPending ? (
         <Skeleton className="h-64" />

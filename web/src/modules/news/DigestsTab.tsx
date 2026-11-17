@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { ExternalLink, Send, Sparkles } from "lucide-react";
+import { Send, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "../../components/ui/Button";
 import { cn } from "../../shared/cn";
@@ -10,6 +10,7 @@ import { Field } from "../../components/ui/Field";
 import { Notice } from "../../components/ui/Notice";
 import { Skeleton } from "../../components/ui/States";
 import { Switch } from "../../components/ui/Switch";
+import { DigestLinks } from "./DigestLinks";
 import { createDigest, pushDigest, useDigests, useRefreshNews } from "./queries";
 import type { Digest } from "./schema";
 import { formatDateTime } from "../../shared/format";
@@ -51,8 +52,8 @@ export default function DigestsTab() {
       <section className="sec" aria-labelledby="news-digest-new">
         <h2 id="news-digest-new" className="sec-title">生成简报</h2>
         <form onSubmit={submit} className="inline-form news-digest-form">
-          <Field label="主题">
-            <input value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="全部主题" />
+          <Field label="话题">
+            <input value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="全部话题" />
           </Field>
           <Field label="时间范围">
             <Select value={String(periodHours)} onValueChange={(value) => setPeriodHours(Number(value))} options={PERIODS} />
@@ -130,7 +131,7 @@ function DigestRow({ digest, featured = false }: { digest: Digest; featured?: bo
         <div className="min-w-0 flex-1">
           <b className="block break-words">{digest.title}</b>
           <span>
-            {digest.topic || "全部主题"} · {formatDateTime(digest.createdAt, { seconds: false })} · {digest.aiUsed ? "AI 简报" : "普通简报"}
+            {digest.topic || "全部话题"} · {formatDateTime(digest.createdAt, { seconds: false })} · {digest.aiUsed ? "AI 简报" : "普通简报"}
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -142,35 +143,7 @@ function DigestRow({ digest, featured = false }: { digest: Digest; featured?: bo
         </div>
       </div>
       {digest.content && (digest.aiUsed || digest.items.length === 0) && <p className="news-brief-text">{digest.content}</p>}
-      {digest.items.length > 0 && (
-        <ol className="news-brief-list">
-          {digest.items.map((item) => {
-            const href = safeExternalURL(item.url);
-            return (
-              <li key={item.id} className="break-words">
-                {href ? (
-                  <a href={href} target="_blank" rel="noopener noreferrer">
-                    {item.title}
-                    <ExternalLink className="ml-1 inline" size={12} aria-hidden="true" />
-                  </a>
-                ) : (
-                  item.title
-                )}
-                <span className="news-note"> · {item.sourceName}</span>
-              </li>
-            );
-          })}
-        </ol>
-      )}
+      {digest.items.length > 0 && <DigestLinks items={digest.items} />}
     </article>
   );
-}
-
-function safeExternalURL(value: string) {
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
-  } catch {
-    return null;
-  }
 }

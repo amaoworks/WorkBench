@@ -7,5 +7,6 @@ export default {
   settings: lazy(() => import("./WallosSettings")),
   pages: { "todo.list": lazy(() => import("./TodoPage")) },
   widgets: { "todo.today": lazy(() => import("./TodoTodayWidget")) },
+  widgetMeta: { "todo.today": { icon: CheckSquare2, summaryOrder: 0 } },
   icons: { "check-square": CheckSquare2 },
 } satisfies ModuleUI;

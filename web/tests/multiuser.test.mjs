@@ -194,7 +194,8 @@ for (const role of ["user", "admin"]) {
     assert.match(html, /投资业务已停用/);
     if (role === "admin") {
       assert.match(html, /href="\/admin\/settings\?tab=modules"/);
-      assert.match(html, /在后台设置中启用/);
+      assert.match(html, /业务管理/);
+      assert.doesNotMatch(html, /在后台设置中启用/);
     } else {
       assert.match(html, /联系管理员启用/);
       assert.doesNotMatch(html, /href="\/admin\/settings/);
@@ -273,8 +274,9 @@ for (const role of ["user", "admin"]) {
     });
     assert.doesNotMatch(html, /待办设置|role="switch"/);
     if (role === "admin") {
-      assert.match(html, /在后台设置中启用/);
+      assert.match(html, /业务管理/);
       assert.match(html, /href="\/admin\/settings\?tab=modules"/);
+      assert.doesNotMatch(html, /在后台设置中启用/);
     } else {
       assert.match(html, /联系管理员启用/);
       assert.doesNotMatch(html, /href="\/admin\/settings/);
@@ -289,6 +291,33 @@ test("failed business retries belong only to administration", (t) => {
   const admin = renderAs(t, "admin", createElement(ModulesPanel, { scope: "admin" }), { seed });
   assert.match(admin, />重试</);
   assert.match(admin, /fixture-startup-error/);
+});
+
+test("a logged-in Futu session keeps its login state when an error is present", (t) => {
+  const base = {
+    enabled: true, overnightEnabled: true, managed: true, serviceState: "running", serviceError: "",
+    account: "futu-admin-account", hasPassword: true, connected: true, qotLogined: true, lastError: "",
+  };
+  const render = (futu) => renderAs(t, "admin", createElement(InvestmentAdminSettings, { enabled: true }), {
+    seed: (client) => client.setQueryData(["investment", "futu"], futu),
+  });
+  const loggedInError = render({ ...base, lastError: "fixture-quote-error" });
+  assert.match(loggedInError, /行情已登录/);
+  assert.match(loggedInError, /fixture-quote-error/);
+  assert.doesNotMatch(loggedInError, /等待行情登录/);
+  const serviceError = render({ ...base, serviceError: "fixture-service-error" });
+  assert.match(serviceError, /行情已登录/);
+  assert.match(serviceError, /fixture-service-error/);
+  assert.doesNotMatch(serviceError, /等待行情登录/);
+  const waiting = render({ ...base, qotLogined: false });
+  assert.match(waiting, /服务已启动，等待行情登录/);
+  assert.doesNotMatch(waiting, /行情已登录|行情已连接/);
+  const offline = render({ ...base, connected: false, qotLogined: false, serviceState: "stopped" });
+  assert.match(offline, /服务已停止/);
+  assert.doesNotMatch(offline, /等待行情登录|行情已登录/);
+  const healthy = render(base);
+  assert.match(healthy, /行情已连接/);
+  assert.doesNotMatch(healthy, /富途牛牛行情状态|等待行情登录|行情已登录/);
 });
 
 test("shared investment configuration contains provider credentials but never personal OAuth actions", (t) => {

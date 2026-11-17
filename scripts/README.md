@@ -207,6 +207,14 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 
 `WORKBENCH_BIN` 默认使用仓库根目录的 `./workbench`。截图写入 `/tmp/workbench-frontend-ux-*.png`。
 
+`state-recovery.e2e.cjs` 使用已构建的前端和本地 HTTP 夹具，验证通知首次连通与重连刷新、用户名称裁剪后的保存状态，以及 AI 在 `chat.started` 前后取消时保留消息。脚本自行启动和关闭夹具服务，不创建工作空间，不连接外部服务。
+
+```bash
+npm --prefix web run build
+PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
+  CHROMIUM_PATH=/usr/bin/chromium node scripts/state-recovery.e2e.cjs
+```
+
 ### 独立行情与来源切换
 
 `investment-market-data.e2e.cjs` 自行创建临时 SQLite 工作空间，运行真实终端和 Datafeed，使用本地合成行情、WebSocket 消息和最小图表控件替身。覆盖未绑定 Schwab 的富途历史/报价/实时推送、关闭夜盘后的普通看盘、日周月周期、代码查询、Schwab 主模式仅订阅富途夜盘、授权失效后的只读切换，以及交易适配器隔离。它不验证真实 TradingView 渲染或上游账号行情权限，不连接真实券商、不提交订单。
@@ -399,7 +407,7 @@ PLAYWRIGHT_MODULE=/tmp/workbench-e2e/node_modules/playwright \
 
 设置 `WORKBENCH_TEST_FUTU_DELAY_MS=5000` 可模拟富途设置检查耗时五秒，比较修改前后的首屏等待。它只延迟 `/futu` 设置接口，轻量夜盘开关接口仍即时返回。
 
-`WORKBENCH_TEST_LATENCY_MS`（0–2000）通过浏览器网络模拟设置延迟，`WORKBENCH_TEST_ACCOUNT_DELAY_MS`（0–10000）只延迟账户、持仓和订单接口，用来比较账户读取延后到图表就绪之后的效果。就绪判断等待总览标题「今天，一目了然」后再重开图表。
+`WORKBENCH_TEST_LATENCY_MS`（0–2000）通过浏览器网络模拟设置延迟，`WORKBENCH_TEST_ACCOUNT_DELAY_MS`（0–10000）只延迟账户、持仓和订单接口，用来比较账户读取延后到图表就绪之后的效果。就绪判断等待总览标题「总览」后再重开图表。
 
 `investment-loading.e2e.cjs` 使用真实终端文档和适配器，模拟外部图表模块加载失败、初始化异常和长时间没有进展，验证加载屏显示当前步骤、约 20 秒后的「还在加载」提示和重新加载入口（此时不判定失败）、约 90 秒没有任何进展才失败、点击重试，以及提示后迟到的加载成功。无需启动工作台或访问券商；图表库就绪过程使用可控 fixture。支持 `--webkit`：
 

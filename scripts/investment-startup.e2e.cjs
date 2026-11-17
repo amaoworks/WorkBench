@@ -11,7 +11,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 
 const warmReopens = 3;
 // The overview hero title; the nav link keeps the short label 总览.
-const OVERVIEW_HEADING = "今天，一目了然";
+const OVERVIEW_HEADING = "总览";
 const startupTimeout = Number(process.env.WORKBENCH_STARTUP_TIMEOUT_MS) || 90000;
 const futuDelayMs = Math.max(0, Math.min(30000, Number(process.env.WORKBENCH_TEST_FUTU_DELAY_MS) || 0));
 // Optional live-like conditions: per-request network latency for everything the

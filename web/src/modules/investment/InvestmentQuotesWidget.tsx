@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
 import type { Widget } from "../../shared/schema";
 import { Badge } from "../../components/ui/Badge";
@@ -27,12 +27,36 @@ function Sparkline({ points, up }: { points: number[]; up: boolean }) {
   const path = points.map((value, index) => `${((index / (points.length - 1)) * 96).toFixed(1)},${(25 - ((value - min) / span) * 22).toFixed(1)}`).join(" ");
   return (
     <svg className="ov-spark" viewBox="0 0 96 26" preserveAspectRatio="none" aria-hidden="true">
-      <polyline points={path} fill="none" stroke={up ? "var(--ov-up)" : "var(--ov-down)"} strokeWidth="1.6" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+      <polyline
+        points={path}
+        fill="none"
+        stroke={up ? "var(--ov-up)" : "var(--ov-down)"}
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+        vectorEffect="non-scaling-stroke"
+      />
     </svg>
   );
 }
 
 type Tab = "held" | "watched";
+const TAB_ORDER: Tab[] = ["held", "watched"];
+
+function moveQuoteTab(event: KeyboardEvent<HTMLDivElement>, active: Tab, setTab: (tab: Tab) => void) {
+  const index = TAB_ORDER.indexOf(active);
+  const next = event.key === "ArrowRight" ? (index + 1) % TAB_ORDER.length
+    : event.key === "ArrowLeft" ? (index - 1 + TAB_ORDER.length) % TAB_ORDER.length
+      : event.key === "Home" ? 0
+        : event.key === "End" ? TAB_ORDER.length - 1
+          : -1;
+  if (next < 0) return;
+  const tab = TAB_ORDER[next];
+  if (!tab) return;
+  event.preventDefault();
+  setTab(tab);
+  const list = event.currentTarget;
+  requestAnimationFrame(() => list.querySelector<HTMLButtonElement>(`[data-tab="${tab}"]`)?.focus());
+}
 
 export default function InvestmentQuotesWidget({ widget }: { widget: Widget }) {
   const quotes = useOverviewQuotes(widget);
@@ -60,9 +84,18 @@ export default function InvestmentQuotesWidget({ widget }: { widget: Widget }) {
       <WidgetHeader>
         <Badge tone={session.tone}>{session.label}</Badge>
         {counts.held > 0 && counts.watched > 0 && (
-          <div className="ov-tabs" role="tablist" aria-label="行情分组">
-            {(["held", "watched"] as const).map((key) => (
-              <button key={key} type="button" role="tab" aria-selected={active === key} className={cn(active === key && "is-active")} onClick={() => setTab(key)}>
+          <div className="ov-tabs" role="tablist" aria-label="行情分组" onKeyDown={(event) => moveQuoteTab(event, active, setTab)}>
+            {TAB_ORDER.map((key) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                data-tab={key}
+                aria-selected={active === key}
+                tabIndex={active === key ? 0 : -1}
+                className={cn("focus-ring", active === key && "is-active")}
+                onClick={() => setTab(key)}
+              >
                 {key === "held" ? "持仓" : "自选"}
               </button>
             ))}
@@ -100,7 +133,11 @@ export default function InvestmentQuotesWidget({ widget }: { widget: Widget }) {
                   </td>
                   <td className="ov-hide-sm">
                     {badge && <Badge tone={badge.tone}>{badge.label}</Badge>}
-                    {item.extChangePct !== undefined && <span className={cn("ov-ext", item.extChangePct >= 0 ? "ov-up" : "ov-down")}>{formatSignedPct(item.extChangePct)}</span>}
+                    {item.extChangePct !== undefined && (
+                      <span className={cn("ov-ext", item.extChangePct >= 0 ? "ov-up" : "ov-down")}>
+                        {formatSignedPct(item.extChangePct)}
+                      </span>
+                    )}
                   </td>
                   <td>
                     <Sparkline points={item.spark ?? []} up={(item.changePct ?? 0) >= 0} />

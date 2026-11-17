@@ -129,7 +129,10 @@ function AIForm({ value }: { value: AISettings }) {
   const busy = save.isPending || test.isPending;
   const dirty = enabled !== value.enabled || baseUrl !== value.baseUrl || model !== value.model
     || JSON.stringify(models) !== JSON.stringify(value.models) || apiKey !== "" || clearApiKey;
-  const canSave = models.length > 0 && models.includes(model);
+  const modelReady = models.length > 0 && models.includes(model);
+  const needsModel = enabled && !clearApiKey;
+  const canSave = !needsModel || modelReady;
+  const modelError = needsModel && !modelReady ? (models.length === 0 ? "启用前请添加模型。" : "启用前请选择已添加的默认模型。") : "";
   const availableCandidates = candidates.filter((id) => !models.includes(id));
   return (
     <form onSubmit={(event) => { event.preventDefault(); if (canSave && !busy) save.mutate(); }} className="studio-form">
@@ -143,7 +146,7 @@ function AIForm({ value }: { value: AISettings }) {
             placeholder="https://api.openai.com/v1" required maxLength={2048}
           />
         </Field>
-        <Field label="访问密钥" meta={<Badge>{value.hasApiKey && !clearApiKey ? "已保存" : "未设置"}</Badge>}>
+        <Field label="访问密钥" meta={<Badge tone="info">{value.hasApiKey && !clearApiKey ? "已保存" : "未设置"}</Badge>}>
           <input
             type="password" autoComplete="new-password" value={apiKey}
             onChange={(e) => { setApiKey(e.target.value); setClearApiKey(false); connectionChanged(); }}
@@ -202,14 +205,14 @@ function AIForm({ value }: { value: AISettings }) {
             ))}
           </ul>
         </Field>
-        <Field label="默认模型">
+        <Field label="默认模型" error={modelError || undefined}>
           <Select value={model} onValueChange={setModel} disabled={models.length === 0}
             options={models.map((id) => ({ value: id, label: id }))} placeholder="添加模型" />
         </Field>
       </fieldset>
       <div className="form-actions">
         {dirty && <Badge tone="warning" className="mr-auto">未保存</Badge>}
-        <Button type="button" variant="secondary" disabled={busy || !canSave} onClick={() => { setTestResult(""); test.mutate(); }}>
+        <Button type="button" variant="secondary" disabled={busy || !modelReady} onClick={() => { setTestResult(""); test.mutate(); }}>
           <Radio size={16} />{test.isPending ? "测试中…" : "测试连接"}
         </Button>
         <Button disabled={busy || !dirty || !canSave}><Save size={16} />{save.isPending ? "保存中…" : "保存"}</Button>

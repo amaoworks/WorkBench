@@ -14,7 +14,7 @@ import { useReportDirty } from "../../shared/settingsDialog";
 
 export default function WallosSettings({ enabled }: { enabled: boolean }) {
   const settings = useWallosSettings(enabled);
-  if (!enabled) return <Notice title="待办业务已停用">启用后可配置 Wallos 联动。</Notice>;
+  if (!enabled) return <Notice title="待办业务已停用" />;
   if (settings.isPending) return <Skeleton className="h-64" />;
   if (settings.isError)
     return (
@@ -70,10 +70,10 @@ function WallosForm({ initial }: { initial: Settings }) {
     <form onSubmit={submit} className="space-y-4">
       <h3 className="font-medium">Wallos 订阅提醒</h3>
       <fieldset disabled={save.isPending || sync.isPending} className="space-y-4">
-        <div className="flex items-center gap-2 text-sm">
+        <label className="inline-switch">
           <Switch label="启用自动同步" checked={form.enabled} onChange={(enabled) => change({ enabled })} />
-          启用自动同步
-        </div>
+          <span aria-hidden="true">启用自动同步</span>
+        </label>
         <Field label="Wallos 地址">
           <input
             type="url"
@@ -83,13 +83,13 @@ function WallosForm({ initial }: { initial: Settings }) {
             placeholder="https://wallos.example.com"
           />
         </Field>
-        <Field label="API Key" meta={initial.hasApiKey ? <Badge tone="neutral">已保存 · 留空保留</Badge> : undefined}>
+        <Field label="API Key" meta={<Badge tone={initial.hasApiKey ? "info" : "neutral"}>{initial.hasApiKey ? "已保存" : "未设置"}</Badge>}>
           <input
             type="password"
             autoComplete="new-password"
             value={form.apiKey}
             onChange={(event) => change({ apiKey: event.target.value })}
-            placeholder={initial.hasApiKey ? "输入新密钥以替换" : "填写 Wallos 的 API Key"}
+            placeholder={initial.hasApiKey ? "留空保持不变" : undefined}
           />
         </Field>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

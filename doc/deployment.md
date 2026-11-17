@@ -4,6 +4,12 @@ Workbench 发布 Linux amd64、arm64 二进制包，以及相同架构的 Docker
 
 应用始终提供 HTTP 服务，HTTPS 由已有 Nginx、Caddy 等反向代理负责。浏览器和原生客户端访问工作台的同一 HTTPS 域名，代理转发到本机 HTTP 端口。应用使用 `WORKBENCH_PUBLIC_URL` 确定外部来源和安全 Cookie 属性；该地址不是监听地址，也不会让应用加载证书。
 
+```bash
+./workbench
+```
+
+默认访问 `http://127.0.0.1:8080`。安装包校验与服务器参数见[二进制部署](#二进制部署)。
+
 ## 选择部署方式
 
 | 方式 | 获取程序 | HTTP 后端 | 数据位置 |
@@ -267,40 +273,29 @@ VERSION=v0.1.1 ./scripts/release.sh
 
 ## GitHub Actions 编译与发布
 
-`.github/workflows/ci.yml`（界面名称 **CI and Build**）支持 PR、主分支推送和 `workflow_dispatch`。手动编译时，在 Actions 中选择 **CI and Build → Run workflow** 并选择目标分支。
+| 工作流 | 触发 | 结果 |
+|---|---|---|
+| CI and Build（`.github/workflows/ci.yml`） | PR、`main` 推送、`workflow_dispatch` | PR 只检查并验证镜像。`main` 与手动分支构建上传保留 14 天的 Artifacts |
+| Release（`.github/workflows/release.yml`） | 推送 `v*` 标签 | 标签提交必须已在 `origin/main`。发布 GitHub Release 与 GHCR 镜像 |
 
-流程先通过 `scripts/check-workflows.sh` 执行 actionlint 和 ShellCheck，缺少 ShellCheck 会明确失败，避免本地悄悄跳过而 CI 报错。`check` 任务挂载 PostgreSQL 17 Alpine 服务并注入 `WORKBENCH_TEST_POSTGRES_URL`，检查 SQL 生成漂移、Go 测试（含 PostgreSQL 集成测试）、前端 lint、前后端契约测试、投资 JS 测试和生产构建，以及部署相关并发行为；最后在 Linux amd64/arm64 runner 上分别构建镜像，对 SQLite 与默认 PostgreSQL（`--database postgres`）两套 Compose 栈验证生命周期、登录、备份和数据保留。
-
-主分支推送、手动分支构建及 Release 调用的标签构建通过 `scripts/export-build.sh` 从已经验证的镜像中提取相同的静态二进制，导出 Docker 镜像和部署文件包，并验证导出的二进制。分支构建版本为 `v0.0.0-dev.<运行序号>-<短提交号>`，标签构建使用标签版本。产物上传到该次运行的 **Artifacts**，按架构分为 `workbench-linux-amd64-<提交号>`、`workbench-linux-arm64-<提交号>`，保留 14 天。PR 执行检查和镜像验证。
-
-下载 artifact ZIP 并解压后，先运行 `sha256sum --check SHA256SUMS`。二进制包解压即可运行；`*_docker.tar.gz` 使用 `docker load --input 文件名` 导入，镜像名为 `workbench:sha-<完整提交号>-<架构>`。例如下载 amd64 产物后，在 `.env` 设置 `WORKBENCH_IMAGE=workbench`、`WORKBENCH_VERSION=sha-<完整提交号>-amd64`，使用 `compose.image.yaml` 启动。普通构建不推送 GHCR，也不创建正式 Release。
-
-
-`.github/workflows/release.yml` 在推送 `v*` 标签时触发。接受 `vMAJOR.MINOR.PATCH` 及预发布后缀，例如 `v0.1.1-rc.1`，不使用带 `+` 的构建元数据。正式包只能从 `main` 产出：标签指向的提交必须已经包含在 `origin/main` 中。在 `dev` 提交改动并通过 `./scripts/test.sh` 后，先推送 `dev`，再快进合入并推送 `main`，最后创建并推送下一版本标签。下例版本号替换为下一版本：
+1. `scripts/check-workflows.sh` 执行 actionlint 和 ShellCheck；缺少 ShellCheck 会失败。
+2. `check` 挂载 PostgreSQL 17 并设置 `WORKBENCH_TEST_POSTGRES_URL`，覆盖 sqlc 漂移、Go 测试、前端 lint、契约、投资 JS、生产构建和部署并发。
+3. amd64 与 arm64 分别构建镜像，并用 SQLite 与 `--database postgres` 两套 Compose 验证生命周期、登录、备份和数据保留。
+4. `scripts/export-build.sh` 从已验证镜像导出二进制和部署包。分支版本为 `v0.0.0-dev.<运行序号>-<短提交号>`。产物为 `workbench-linux-amd64-<提交号>` 与 `workbench-linux-arm64-<提交号>`。
+5. 下载后执行 `sha256sum --check SHA256SUMS`。`*_docker.tar.gz` 用 `docker load` 导入，镜像名为 `workbench:sha-<完整提交号>-<架构>`。在 `.env` 设置 `WORKBENCH_IMAGE=workbench` 与对应 `WORKBENCH_VERSION`，用 `compose.image.yaml` 启动。普通构建不推送 GHCR，也不创建正式 Release。
+6. 正式发布接受 `vMAJOR.MINOR.PATCH` 及预发布后缀（如 `v0.1.1-rc.1`），不用带 `+` 的构建元数据。在 `dev` 通过 `./scripts/test.sh` 后快进合入 `main`，再推送标签：
 
 ```bash
-git checkout dev
-git pull --ff-only origin dev
-git push origin dev
 git checkout main
 git pull --ff-only origin main
-git merge --ff-only dev
-git push origin main
 git tag -a v0.1.1 -m "Release v0.1.1"
 git push origin v0.1.1
-git checkout dev
 ```
 
-确认 **CI and Build**、**Release** 成功，发布包和镜像版本正确；发布收尾时，本地与远端的 `dev`、`main` 应指向同一提交。
-
-**Require commit on main** 用 `git merge-base --is-ancestor` 检查该提交。尚未合并进 `main` 的 `dev` 提交会在这一步失败，后续的检查、打包、GHCR 推送和 GitHub Release 都不会执行。通过后复用 CI，在两个架构的 runner 上分别验证镜像和导出的二进制；后续下载并校验同一次运行的产物，直接组成发布包，将已验证的单架构镜像推送到 GHCR 并合成多架构清单，不再重新编译。Release 说明包含 `Released from: main` 和对应提交号。所有检查和构建使用标签指向的提交；读取 `origin/main` 只用于校验归属。
-
-二进制和镜像注入相同的版本、提交号和提交时间。镜像标签包括版本原文（`v0.1.1`）、完整提交号（`sha-...`），以及用于组装清单的 `sha-<提交号>-amd64/arm64` 单架构标签。Release 使用同一并发组串行排队，最多保留 100 个等待中的运行。稳定版本按数值比较已发布的稳定版，只有最高版本才更新 GitHub Release 与 GHCR 的 `latest`；预发布标记为 prerelease，补发旧稳定版保留版本入口，两者均不移动 `latest`。部署推荐固定版本。不要移动已发布标签；需要修正时发布新版本。这条分支限制写在被标记提交自己的工作流里，合并到 `main` 之后才会约束新的标签。
-
-Actions 通过内置 `GITHUB_TOKEN` 发布：镜像任务有 `packages: write`，Release 任务有 `contents: write` 与更新 `latest` 所需的 `packages: write`，验证任务仅请求读权限。仓库或组织需允许相应权限。Actions 依赖固定到提交 SHA，Dependabot 每月检查工作流依赖更新。Fork 发布时镜像名自动取该仓库的小写路径，部署 `.env` 的 `WORKBENCH_IMAGE` 需对应修改。
-
-推送镜像与创建 Release 是两个外部步骤，不具备跨服务事务；若最后一步失败，查看 Actions 日志后处理已产生的产物。工作流发布产物后，由服务器执行拉取与重启完成升级。
+7. **Require commit on main** 用 `git merge-base --is-ancestor` 检查。未合入 `main` 时，后续检查、打包、GHCR 和 GitHub Release 不执行。通过后复用同一次运行的产物，把已验证的单架构镜像推到 GHCR 并合成多架构清单。Release 说明包含 `Released from: main` 和提交号。
+8. 镜像标签含版本原文、`sha-<完整提交号>`，以及 `sha-<提交号>-amd64/arm64`。同一并发组串行排队，最多保留 100 个等待运行。只有最高稳定版更新 `latest`；预发布和补发旧稳定版不移动 `latest`。不要移动已发布标签。
+9. `GITHUB_TOKEN`：镜像任务 `packages: write`，Release 任务 `contents: write` 与 `packages: write`。推送镜像和创建 Release 不是同一事务。Fork 的镜像名取仓库小写路径，`.env` 的 `WORKBENCH_IMAGE` 需对应修改。
 
 ## 日志与排障
 
-在后台设置 → 数据与运行中保存日志等级，支持 debug/info/warn/error，立即生效且重启保留。Compose 的 `WORKBENCH_LOG_LEVEL` 和二进制的 `-log-level` 只提供未保存设置时的初始值。服务日志为 JSON，输出到 stderr，容器通过 `docker compose logs -f --tail 100 workbench` 查看，systemd 使用 `journalctl -u workbench -f`。Compose 已配置每份 10 MB、最多 3 份的日志轮转；二进制文件重定向需自行轮转。详细分级和字段见[运行日志](configuration.md#运行日志)。
+日志等级表和字段见[运行日志](configuration.md#运行日志)。页面保存的等级立即生效，并优先于启动参数。

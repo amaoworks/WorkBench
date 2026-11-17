@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import type { Widget } from "../../shared/schema";
 import { Button, ButtonLink } from "../../components/ui/Button";
 import { Badge } from "../../components/ui/Badge";
+import { EmptyState } from "../../components/ui/EmptyState";
 import { Notice } from "../../components/ui/Notice";
 import { Skeleton } from "../../components/ui/States";
 import { WidgetHeader, WidgetSetup } from "../../components/dashboard/WidgetHeader";
@@ -10,6 +11,7 @@ import { cn } from "../../shared/cn";
 import { formatClock, formatSignedPct, formatSignedUSD, formatUSD } from "../../shared/format";
 import { useOverviewSnapshot } from "./queries";
 import { NetWorthHistory } from "./NetWorthHistory";
+import { SCHWAB_LOGIN_PATH } from "./schwabLogin";
 
 const tone = (value: number) => (value > 0 ? "ov-up" : value < 0 ? "ov-down" : "");
 
@@ -38,17 +40,21 @@ export default function InvestmentSnapshotWidget({ widget }: { widget: Widget })
     );
   if (data.status === "reauth")
     return (
-      <WidgetSetup action={<Button size="sm" onClick={() => { window.location.href = "/api/modules/investment/schwab/oauth/login"; }}>重新授权</Button>}>
+      <WidgetSetup action={<Button size="sm" onClick={() => { window.location.href = SCHWAB_LOGIN_PATH; }}>重新授权</Button>}>
         Schwab 授权已失效
       </WidgetSetup>
     );
-  const hasData = data.accounts > 0;
-  if (!hasData)
-    return (
-      <Notice tone="danger" title="暂时无法读取账户">
-        {data.message || "请稍后重试。"}
-      </Notice>
-    );
+  if (data.accounts === 0) {
+    if (data.status === "error") {
+      return (
+        <Notice tone="danger" title="暂时无法读取账户">
+          {data.message || "请稍后重试。"}
+        </Notice>
+      );
+    }
+    if (data.message) return <Notice title="暂时无法读取账户">{data.message}</Notice>;
+    return <EmptyState title="暂无账户" />;
+  }
   const maxMove = Math.max(1, ...data.movers.map((mover) => Math.abs(mover.dayPnl)));
   return (
     <>

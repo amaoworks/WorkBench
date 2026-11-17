@@ -6,6 +6,7 @@ import { Notice } from "../../components/ui/Notice";
 import { Skeleton } from "../../components/ui/States";
 import { ThemeContext, type Theme } from "../../shared/theme";
 import { refreshSchwabToken, useMarketDataStatus, useRefreshInvestment, useSchwabSettings } from "./queries";
+import { SCHWAB_LOGIN_PATH } from "./schwabLogin";
 import { useIsAdmin } from "../../shared/auth";
 import { moduleQueryKey } from "../../shared/queryKeys";
 
@@ -25,7 +26,10 @@ export default function InvestmentPage() {
 function InvestmentChart() {
   const isAdmin = useIsAdmin();
   const market = useMarketDataStatus();
-  const schwab = useSchwabSettings(true);
+  const provider = market.data?.provider;
+  const connected = market.data?.schwabConnected === true;
+  const reauthorizationRequired = market.data?.reauthorizationRequired === true;
+  const schwab = useSchwabSettings(provider === "none" || connected);
   const refresh = useRefreshInvestment();
   const retry = useMutation({
     mutationFn: refreshSchwabToken,
@@ -35,14 +39,11 @@ function InvestmentChart() {
   const requestedSymbol = searchParams.get("symbol")?.trim().toUpperCase() ?? "";
   const symbol = /^[A-Z$/][A-Z0-9./-]{0,14}$/.test(requestedSymbol) ? requestedSymbol : undefined;
   const theme = useContext(ThemeContext);
-  const provider = market.data?.provider;
-  const connected = market.data?.schwabConnected === true;
-  const reauthorizationRequired = market.data?.reauthorizationRequired === true;
 
   const login = schwab.data?.configured && (
     <Button
       onClick={() => {
-        window.location.href = "/api/modules/investment/schwab/oauth/login";
+        window.location.href = SCHWAB_LOGIN_PATH;
       }}
     >
       登录 Schwab
@@ -63,7 +64,7 @@ function InvestmentChart() {
   ) : null;
 
   return (
-    <div className="investment-page">
+    <div data-full-bleed="">
       <h1 className="sr-only">投资</h1>
       <section className="investment-view" aria-label="投资终端">
         {market.isPending && <Skeleton className="investment-terminal" />}
@@ -90,7 +91,7 @@ function InvestmentChart() {
               action={
                 <Button
                   onClick={() => {
-                    window.location.href = "/api/modules/investment/schwab/oauth/login";
+                    window.location.href = SCHWAB_LOGIN_PATH;
                   }}
                 >
                   重新授权

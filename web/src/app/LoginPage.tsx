@@ -6,10 +6,13 @@ import { loginResponseSchema } from "../shared/schema";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Field } from "../components/ui/Field";
+import { Notice } from "../components/ui/Notice";
+import { takePasswordNotice } from "../shared/passwordNotice";
 
 export function LoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [notice] = useState(() => takePasswordNotice());
   const queryClient = useQueryClient();
   const login = useMutation({
     mutationFn: () => apiValidated("/api/auth/login", loginResponseSchema, { method: "POST", body: JSON.stringify({ username, password }) }),
@@ -28,7 +31,8 @@ export function LoginPage() {
           </div>
           <span>Workbench</span>
         </div>
-        <h1>欢迎回来</h1>
+        <h1>登录</h1>
+        {notice && <Notice className="mt-4" title={notice} />}
         <form onSubmit={submit} className="mt-6 space-y-4">
           <Field label="用户名">
             <input

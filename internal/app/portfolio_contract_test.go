@@ -62,7 +62,7 @@ func capturePortfolioContracts(t *testing.T, a *App, capture func(string, string
 		t.Fatal(err)
 	}
 	day := now.In(location).Format("2006-01-02")
-	if _, err := a.DB().Exec(`INSERT INTO investment_networth_account_scopes(user_id,authorized_at,account_hash) VALUES('owner',?,'contract-account')`, now.UnixMilli()); err != nil {
+	if _, err := a.DB().Exec(`INSERT INTO investment_networth_account_scopes(user_id,authorized_at,account_hash,account_label) VALUES('owner',?,'contract-account','经纪 ••4242')`, now.UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.DB().Exec(`INSERT INTO investment_networth_snapshots(user_id,account_hash,day,net_worth,cash,invested,day_pnl,captured_at) VALUES('owner','contract-account',?,1200,100,1100,20,?)`, day, now.UnixMilli()); err != nil {

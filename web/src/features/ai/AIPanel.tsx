@@ -29,6 +29,9 @@ export function AIPanel({ open, onClose, context }: { open: boolean; onClose: ()
   const [conversationId, setConversationId] = useState(() => localStorage.getItem(conversationKey) ?? "");
   const [messages, setMessages] = useState<Message[]>([]);
   const messageSequence = useRef(0);
+  const chatAbort = useRef<AbortController | null>(null);
+  const log = useRef<HTMLDivElement>(null);
+  const stickToBottom = useRef(true);
   const queryClient = useQueryClient();
   const status = useAIStatus(open);
   const selectedModelRemoved = Boolean(selectedModel && status.data && !status.data.models.includes(selectedModel));
@@ -38,7 +41,11 @@ export function AIPanel({ open, onClose, context }: { open: boolean; onClose: ()
   }, [conversationId, conversationKey]);
   const chat = useMutation({
     mutationFn: async ({ message, context: messageContext, model }: ChatInput) => {
+      const controller = new AbortController();
+      chatAbort.current?.abort();
+      chatAbort.current = controller;
       await queryClient.cancelQueries({ queryKey: ["ai", "conversation", conversationId, "messages"] });
+      controller.signal.throwIfAborted();
       let receivedDelta = false;
       let userMessageId = "";
       const tools: ChatTool[] = [];
@@ -88,6 +95,7 @@ export function AIPanel({ open, onClose, context }: { open: boolean; onClose: ()
             ]);
           }
         },
+        controller.signal,
       );
       return { ...response, userMessageId, tools };
     },
@@ -108,7 +116,8 @@ export function AIPanel({ open, onClose, context }: { open: boolean; onClose: ()
         current.map((item, index) => {
           if (index !== current.length - 1 || item.role !== "assistant") return { ...item, active: false };
           const prefix = item.content === "正在思考…" ? "" : `${item.content}\n\n`;
-          return { ...item, active: false, content: `${prefix}请求失败：${error.message}` };
+          const message = error.name === "AbortError" ? "回复已中断" : `请求失败：${error.message}`;
+          return { ...item, active: false, content: `${prefix}${message}` };
         }),
       );
       void queryClient.invalidateQueries({ queryKey: ["ai", "conversation"] });
@@ -119,6 +128,16 @@ export function AIPanel({ open, onClose, context }: { open: boolean; onClose: ()
   const activeMessageIds = messages.filter((message) => message.active).map((message) => message.id);
   const visibleMessages = mergeConversationMessages(history.data ?? [], messages, activeMessageIds);
   const historyReady = !conversationId || history.data !== undefined;
+  const aiOff = Boolean(status.data && !status.data.available);
+  useEffect(() => {
+    const node = log.current;
+    if (!node || !stickToBottom.current) return;
+    node.scrollTo({ top: node.scrollHeight });
+  }, [visibleMessages]);
+  useEffect(() => () => chatAbort.current?.abort(), []);
+  useEffect(() => {
+    if (!open) chatAbort.current?.abort();
+  }, [open]);
   function handleSend() {
     const message = input.trim();
     if (!message || chat.isPending || !historyReady || !status.data?.available || selectedModelRemoved) return;
@@ -156,15 +175,15 @@ export function AIPanel({ open, onClose, context }: { open: boolean; onClose: ()
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="ai-overlay z-30" />
-        <Dialog.Content className="ai-panel z-40">
+        <Dialog.Overlay className="ai-overlay z-40" />
+        <Dialog.Content className="ai-panel z-50">
           <div className="flex h-16 shrink-0 items-center justify-between gap-2 px-4">
             <Dialog.Title className="flex shrink-0 items-center gap-2 font-semibold">
               <Sparkles size={18} className="text-brand" />
               问 AI
               <kbd className="workspace-kbd hidden sm:inline-flex">{aiShortcut.label}</kbd>
             </Dialog.Title>
-            <Dialog.Description className="sr-only">与 AI 对话，协助安排工作和处理待办。</Dialog.Description>
+            <Dialog.Description className="sr-only">AI 对话</Dialog.Description>
             <div className="flex shrink-0 items-center gap-1">
               <Button
                 variant="ghost"
@@ -219,7 +238,17 @@ export function AIPanel({ open, onClose, context }: { open: boolean; onClose: ()
               ]}
             />
           </div>
-          <div className="flex-1 space-y-4 overflow-y-auto p-4" role="log" aria-live="polite" aria-relevant="additions text">
+          <div
+            ref={log}
+            className="flex-1 space-y-4 overflow-y-auto p-4"
+            role="log"
+            aria-live="polite"
+            aria-relevant="additions text"
+            onScroll={(event) => {
+              const node = event.currentTarget;
+              stickToBottom.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
+            }}
+          >
             {selectedModelRemoved && (
               <Notice tone="warning" title="所选模型已移除" action={
                 <Button variant="secondary" size="sm" onClick={() => setSelectedModel("")} disabled={chat.isPending}>使用默认模型</Button>
@@ -262,7 +291,7 @@ export function AIPanel({ open, onClose, context }: { open: boolean; onClose: ()
                   }>重试</Button>
                 )}
               >
-                可重试加载，或新建对话。
+                {history.error.message}
               </Notice>
             )}
             {history.hasNextPage && (
@@ -312,7 +341,7 @@ export function AIPanel({ open, onClose, context }: { open: boolean; onClose: ()
             <textarea
               aria-label="发送给 Workbench AI 的消息"
               rows={2}
-              disabled={!historyReady}
+              disabled={!historyReady || aiOff}
               value={input}
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={(event) => {
@@ -321,10 +350,14 @@ export function AIPanel({ open, onClose, context }: { open: boolean; onClose: ()
                   handleSend();
                 }
               }}
-              placeholder={historyReady ? "输入消息…" : "正在加载对话…"}
+              placeholder={aiOff ? "AI 尚未启用" : historyReady ? "输入消息…" : "正在加载对话…"}
               className="ui-input min-h-11 flex-1 resize-none"
             />
-            <Button size="icon" aria-label="发送消息" disabled={!input.trim() || chat.isPending || !historyReady || !status.data?.available || selectedModelRemoved}>
+            <Button
+              size="icon"
+              aria-label="发送消息"
+              disabled={!input.trim() || chat.isPending || !historyReady || !status.data?.available || selectedModelRemoved}
+            >
               <Send size={17} />
             </Button>
           </form>

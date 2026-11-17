@@ -29,7 +29,7 @@ export default function InvestmentAdminSettings({ enabled }: { enabled: boolean 
   const schwab = useSchwabSettings(enabled);
   const futu = useFutuSettings(enabled);
   const overnight = useOvernightSettings(enabled);
-  if (!enabled) return <Notice title="投资业务已停用">启用后可配置共享行情服务。</Notice>;
+  if (!enabled) return <Notice title="投资业务已停用" />;
   if (schwab.isPending || futu.isPending || overnight.isPending) return <Skeleton className="h-64" />;
   return <InvestmentAdminSettingsForm schwab={schwab} futu={futu} overnight={overnight} />;
 }

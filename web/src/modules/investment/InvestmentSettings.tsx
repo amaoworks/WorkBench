@@ -18,7 +18,7 @@ export default function InvestmentSettings({ enabled }: { enabled: boolean }) {
         title="投资业务已停用"
         action={isAdmin ? <ButtonLink to="/admin/settings?tab=modules" variant="secondary">业务管理</ButtonLink> : undefined}
       >
-        {isAdmin ? "在后台设置中启用投资业务。" : "联系管理员启用投资业务。"}
+        {isAdmin ? null : "联系管理员启用投资业务。"}
       </Notice>
     );
   }

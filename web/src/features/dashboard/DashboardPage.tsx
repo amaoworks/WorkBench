@@ -1,12 +1,12 @@
-import { Component, Suspense, useCallback, useMemo, useState, type ComponentType, type ReactNode } from "react";
+import { Component, Suspense, useCallback, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Bell, CheckSquare2, ChartNoAxesCombined, ChevronRight, LayoutGrid, Newspaper, Wallet } from "lucide-react";
+import { ChevronRight, LayoutGrid } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../../shared/api";
 import { dashboardSchema, widgetCatalogSchema, type ConfigurableWidget, type Widget } from "../../shared/schema";
 import { DashboardSignalsContext, WidgetHeaderSlotContext, type OverviewSummary } from "../../shared/dashboard";
-import { widgetRegistry } from "../../modules/registry";
+import { widgetMetaRegistry, widgetRegistry } from "../../modules/registry";
 import { Card } from "../../components/ui/Card";
 import { Button } from "../../components/ui/Button";
 import { Skeleton } from "../../components/ui/States";
@@ -20,20 +20,9 @@ import { Select } from "../../components/ui/Select";
 // The platform notifications card renders only as a 今日概况 tile, never as a full card.
 const TILE_ONLY = "notifications.summary";
 
-const widgetIcons: Record<string, ComponentType<{ size?: number }>> = {
-  "investment.snapshot": Wallet,
-  "investment.quotes": ChartNoAxesCombined,
-  "investment.alerts": Bell,
-  "notifications.summary": Bell,
-  "todo.today": CheckSquare2,
-  "news.brief": Newspaper,
-};
-
 const WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
 const todayLabel = (date = new Date()) => `${date.getMonth() + 1} 月 ${date.getDate()} 日 ${WEEKDAYS[date.getDay()]}`;
-// Order of the 今日概况 tiles.
-const SUMMARY_ORDER = ["todo.today", "notifications.summary", "news.brief"];
-const summaryRank = (id: string) => (SUMMARY_ORDER.includes(id) ? SUMMARY_ORDER.indexOf(id) : SUMMARY_ORDER.length);
+const summaryRank = (id: string) => widgetMetaRegistry[id]?.summaryOrder ?? Number.POSITIVE_INFINITY;
 const sameSymbols = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((value, index) => value === b[index]);
 
 export default function DashboardPage() {
@@ -79,7 +68,7 @@ export default function DashboardPage() {
   return (
     <div className="page overview-page">
       <header className="overview-hero">
-        <h1>今天，一目了然</h1>
+        <h1>总览</h1>
         <p>{todayLabel()}</p>
         <Button className="overview-edit" variant="ghost" size="sm" aria-pressed={editing} onClick={() => setEditing(!editing)}>
           <LayoutGrid size={14} />
@@ -95,7 +84,7 @@ export default function DashboardPage() {
               {catalog.error.message}
             </Notice>
           ) : (
-            <LayoutEditor key={JSON.stringify(catalog.data)} widgets={catalog.data.widgets} />
+            <LayoutEditor key={JSON.stringify(catalog.data)} widgets={catalog.data.widgets} onSaved={() => setEditing(false)} />
           )}
         </Card>
       )}
@@ -149,7 +138,7 @@ export default function DashboardPage() {
 }
 
 function SummaryTile({ id, summary }: { id: string; summary: OverviewSummary }) {
-  const Icon = widgetIcons[id];
+  const Icon = widgetMetaRegistry[id]?.icon;
   return (
     <li>
       <Link to={summary.to} className="overview-tile focus-ring">
@@ -175,7 +164,7 @@ function SummaryTile({ id, summary }: { id: string; summary: OverviewSummary }) 
 function DashboardCard({ widget }: { widget: Widget }) {
   const [slot, setSlot] = useState<HTMLDivElement | null>(null);
   const Renderer = widgetRegistry[widget.widgetKind];
-  const Icon = widgetIcons[widget.widgetKind];
+  const Icon = widgetMetaRegistry[widget.widgetKind]?.icon;
   return (
     <section className={`dashboard-widget widget-${widget.size}`} aria-label={widget.title}>
       <header className="dashboard-widget-head">
@@ -211,7 +200,7 @@ const SIZE_OPTIONS = [
   { value: "large", label: "大" },
 ];
 
-function LayoutEditor({ widgets }: { widgets: ConfigurableWidget[] }) {
+function LayoutEditor({ widgets, onSaved }: { widgets: ConfigurableWidget[]; onSaved: () => void }) {
   const [items, setItems] = useState(widgets);
   const client = useQueryClient();
   const refresh = async () => {
@@ -226,6 +215,7 @@ function LayoutEditor({ widgets }: { widgets: ConfigurableWidget[] }) {
     onSuccess: async () => {
       await refresh();
       toast.success("总览配置已保存");
+      onSaved();
     },
     onError: (err) => toast.error(err.message),
   });
@@ -251,7 +241,7 @@ function LayoutEditor({ widgets }: { widgets: ConfigurableWidget[] }) {
       <legend className="mb-3 font-medium">总览卡片</legend>
       {items.map((item, index) => (
         <div key={item.id} className="layout-row">
-          <div className="flex flex-1 items-center gap-2">
+          <div className="layout-name flex flex-1 items-center gap-2">
             <Checkbox
               checked={item.visible}
               onChange={(visible) => setItems(items.map((value) => (value.id === item.id ? { ...value, visible } : value)))}
@@ -283,6 +273,9 @@ function LayoutEditor({ widgets }: { widgets: ConfigurableWidget[] }) {
         </Button>
         <Button variant="secondary" onClick={() => reset.mutate()} disabled={busy}>
           恢复默认
+        </Button>
+        <Button variant="ghost" type="button" onClick={() => { setItems(widgets); onSaved(); }} disabled={busy}>
+          取消
         </Button>
       </div>
     </fieldset>

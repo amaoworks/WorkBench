@@ -12,7 +12,10 @@ src/features/notifications/ 通知列表与 SSE
 src/features/settings/  个人设置、后台设置及共享分类布局
 src/modules/registry.ts 编译期业务注册目录
 src/modules/<id>/       业务页面、Widget、模块设置、queries.ts、schema.ts
-src/components/ui/      通用界面组件
+src/components/
+  ExternalFrame.tsx     外部模块页面与设置 iframe 容器
+  dashboard/            总览卡片页眉组件（WidgetHeader）
+  ui/                   通用界面组件
 src/shared/             HTTP 客户端、平台共享 schema、工具
 src/styles.css          主题变量和共享样式
 src/assets/fonts/       本地打包的 Outfit 标题字体（woff2 与 SIL OFL 许可证）
@@ -22,7 +25,7 @@ src/assets/fonts/       本地打包的 Outfit 标题字体（woff2 与 SIL OFL 
 
 ## 模块注册和缓存
 
-`src/modules/<id>/<id>.module.ts` 声明 pages、widgets，以及可选的 icons、settings、adminSettings、`menu`（顶部导航下拉项；目前只有投资声明，空菜单渲染为普通链接）和 `subpages`（挂在 `${route}/${path}` 下的子页面）。共用的导航类型与匹配规则在 `src/app/navigation.ts`。Registry 自动收集声明，组件按需加载。后端 `pageKey/widgetKind` 只映射到已编译的本地注册项；Shell 和总览不包含业务组件实现。外部模块不进入该注册表，页面为 `/apps/{id}/{pageName}`，由通用 iframe 容器加载 `/modules/{id}/ui/*` 与设置 `/modules/{id}/settings/*`。未知图标回退到宿主默认图标。
+`src/modules/<id>/<id>.module.ts` 声明 pages、widgets，以及可选的 `widgetMeta`（总览卡片图标和排序）、icons、settings、adminSettings、`menu`（顶部导航下拉项；目前只有投资声明，空菜单渲染为普通链接）和 `subpages`（挂在 `${route}/${path}` 下的子页面）。共用的导航类型与匹配规则在 `src/app/navigation.ts`。Registry 自动收集声明，组件按需加载。后端 `pageKey/widgetKind` 只映射到已编译的本地注册项；Shell 和总览不包含业务组件实现。外部模块不进入该注册表，页面为 `/apps/{id}/{pageName}`，由通用 iframe 容器加载 `/modules/{id}/ui/*` 与设置 `/modules/{id}/settings/*`。未知图标回退到宿主默认图标。
 
 `settings` 声明个人业务配置，`adminSettings` 声明管理员共享业务配置，均接收 `{ enabled: boolean }`，停用时不发起业务查询。Registry 分别装配到个人设置和后台设置，弹窗由平台管理；没有对应配置组件时不显示设置按钮。管理员自己的授权与偏好仍在个人设置中。
 
@@ -40,7 +43,7 @@ src/assets/fonts/       本地打包的 Outfit 标题字体（woff2 与 SIL OFL 
 - 业务设置弹窗最大宽度 480px，支持 Escape、遮罩及关闭按钮，接入 `useReportDirty` 拦截未保存草稿关闭，并将焦点还给触发按钮。
 - 通知的查看、已读、归档使用共享 Button/ButtonLink 的 ghost、sm 规格；业务只提供 actionRoute 和 actionLabel。
 - 宽度不超过 900px 时设置分类变为横向滚动胶囊，避免纵向溢出；新增页面检查桌面和窄屏宽度。
-- `/investment` 只显示图表（铺满导航下方区域，不叠加悬浮按钮；铺满/全屏/新窗口为后续计划），价格监控在 `/investment/monitor`。行情入口读取 `/api/modules/investment/market-data` 的数据源与能力：本人 Schwab 授权有效时以 Schwab 为主、富途补夜盘，未授权或授权失效时使用可用的富途只读看盘；两种模式都要求工作台登录。富途主行情不受夜盘开关影响，价格监控仍要求本人 Schwab 授权。
+- `/investment` 只显示图表，价格监控在 `/investment/monitor`。行情路由见[投资模块](../doc/modules/investment.md#行情来源与权限)。
 - 富途与 Schwab App 配置在 `/admin/settings?tab=modules&module=investment`，本人 OAuth 在 `/settings?tab=modules&module=investment`。只读行情不能启用账户、持仓、订单或交易；总览行情卡可显示本人自选及数据源，资产快照仍按券商授权状态展示。富途代码查询使用精确美股/ETF 代码，不提供全市场模糊搜索。
 
 ## 开发与构建

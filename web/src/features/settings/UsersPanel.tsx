@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "../../components/ui/Badge";
@@ -39,7 +39,7 @@ export function UsersPanel() {
           <UserPlus size={16} />创建用户
         </Button>
       </div>
-      {creating && <CreateUserForm onCreated={(result) => {
+      {creating && <CreateUserForm onCancel={() => { setCreating(false); createButton.current?.focus(); }} onCreated={(result) => {
         setPassword(result);
         setCreating(false);
         createButton.current?.focus();
@@ -48,6 +48,10 @@ export function UsersPanel() {
         <Notice title={`${password.username} · 初始密码`}>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <input aria-label="初始密码" className="min-w-0 flex-1" value={password.password} readOnly autoComplete="off" />
+            <Button variant="secondary" size="sm" onClick={async () => {
+              await navigator.clipboard.writeText(password.password);
+              toast.success("初始密码已复制");
+            }}>复制</Button>
             <Button variant="secondary" size="sm" onClick={() => setPassword(null)}>关闭</Button>
           </div>
         </Notice>
@@ -55,7 +59,7 @@ export function UsersPanel() {
       <div className="divide-y divide-[var(--hair)]">
         {users.data.items.map((user) => (
           <UserEditor
-            key={`${user.id}:${user.updatedAt}`}
+            key={user.id}
             user={user}
             self={user.id === current.id}
             lastAdmin={user.role === "admin" && user.status === "active" && activeAdmins === 1}
@@ -82,7 +86,7 @@ function RolePicker({ value, onChange, disabled = false }: {
   );
 }
 
-function CreateUserForm({ onCreated }: { onCreated: (result: PasswordResult) => void }) {
+function CreateUserForm({ onCreated, onCancel }: { onCreated: (result: PasswordResult) => void; onCancel: () => void }) {
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [role, setRole] = useState<ManagedUser["role"]>("user");
@@ -111,6 +115,7 @@ function CreateUserForm({ onCreated }: { onCreated: (result: PasswordResult) => 
       </fieldset>
       {create.isError && <Notice tone="danger" title="创建失败">{create.error.message}</Notice>}
       <div className="form-actions">
+        <Button type="button" variant="secondary" onClick={onCancel}>取消</Button>
         <Button disabled={!username.trim() || create.isPending}>{create.isPending ? "创建中…" : "创建用户"}</Button>
       </div>
     </form>
@@ -122,6 +127,18 @@ function UserEditor({ user, self, lastAdmin, onPassword }: {
 }) {
   const [displayName, setDisplayName] = useState(user.displayName);
   const [role, setRole] = useState(user.role);
+  const baseline = useRef({ displayName: user.displayName, role: user.role });
+  useEffect(() => {
+    if (displayName === user.displayName && role === user.role) {
+      baseline.current = { displayName: user.displayName, role: user.role };
+      return;
+    }
+    if (displayName === baseline.current.displayName && role === baseline.current.role) {
+      setDisplayName(user.displayName);
+      setRole(user.role);
+      baseline.current = { displayName: user.displayName, role: user.role };
+    }
+  }, [user.displayName, user.role, displayName, role]);
   const [confirmation, setConfirmation] = useState<"disable" | "password" | null>(null);
   const [mappingOpen, setMappingOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement | null>(null);
@@ -140,7 +157,13 @@ function UserEditor({ user, self, lastAdmin, onPassword }: {
     <form className="studio-form space-y-4" onSubmit={(event) => {
       event.preventDefault();
       update.mutate({ id: user.id, displayName, role }, {
-        onSuccess: () => toast.success("用户已保存"), onError: (error) => toast.error(error.message),
+        onSuccess: (result) => {
+          setDisplayName(result.user.displayName);
+          setRole(result.user.role);
+          baseline.current = { displayName: result.user.displayName, role: result.user.role };
+          toast.success("用户已保存");
+        },
+        onError: (error) => toast.error(error.message),
       });
     }}>
       <div className="flex flex-wrap items-center gap-2">

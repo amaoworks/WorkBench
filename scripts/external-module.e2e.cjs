@@ -37,7 +37,7 @@ const baseURL = process.env.WORKBENCH_TEST_URL || "http://127.0.0.1:18086";
       await page.waitForFunction(() => document.querySelector('[role="switch"][aria-label="外部示例"]')?.getAttribute("aria-checked") === "false");
       await page.getByRole("button", { name: "外部示例设置", exact: true }).click();
       const disabledNotice = page.getByRole("status").filter({ hasText: "业务已停用" });
-      await disabledNotice.getByText("可修改配置和连接。", { exact: true }).waitFor();
+      await disabledNotice.waitFor();
       await page.getByRole("button", { name: "关闭业务设置", exact: true }).click();
       await page.getByRole("button", { name: "连接", exact: true }).click();
       await page.getByLabel("服务地址", { exact: true }).waitFor();

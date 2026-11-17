@@ -16,9 +16,11 @@ Workbench 技术文档索引：
 | [前端界面规范](frontend-guidelines.md) | 顶部导航、通用组件、页面状态、控件、主题、可达性与响应式约定 |
 | [Todo](modules/todo.md) | 待办、分页、提醒、AI Tool 和代码入口 |
 | [Wallos 联动](modules/todo-wallos.md) | Todo 内的订阅同步与账期管理 |
-| [Investment](modules/investment.md) | Schwab / 富途行情、个人持仓与订单、TradingView 终端与 Schwab 价格预警 |
+| [Investment](modules/investment.md) | Schwab / 富途行情、个人持仓与订单、TradingView 终端与 Schwab 监控规则 |
 | [资讯](modules/news.md) | RSS/Atom、关注规则、翻译摘要、定时简报和推送 |
-| [Telegram 通知](notifications.md) | 价格预警及资讯简报的推送配置、测试与重试策略 |
+| [外部通知](notifications.md) | 监控规则及资讯简报的推送配置、测试与重试策略 |
+| [移动端接入](mobile.md) | Bearer 登录、待办、通知、推送与 Schwab 授权 |
+| [移动端 OpenAPI](mobile.openapi.yaml) | 原生客户端使用的 HTTP 契约 |
 | [AI 协作指南](../AGENTS.md) | 面向 AI 助手的架构红线、命令速查与开发工作流 |
 
 ## 历史归档

@@ -115,7 +115,7 @@ Task 的 `revision` 从 1 开始，每次 PATCH 递增。更新时提交最近�
 
 ## 通知与推送
 
-原生设备使用 Bearer 调用 `POST` 或 `PUT /api/mobile/push-token` 注册 APNs/FCM token，调用 `DELETE` 删除；成功均返回 204。通知只投递至收件人的有效设备。推送 token 与当前设备会话绑定，网页 Cookie 不能注册移动推送。
+原生设备使用 Bearer 调用 `GET /api/notifications`、`GET /api/notifications/unread-count` 和 `GET /api/notifications/stream` 读取通知，并用 `PUT /api/notifications/read`、`read-all`、`archive` 更新状态。`POST` 或 `PUT /api/mobile/push-token` 注册 APNs/FCM token，`DELETE` 删除；成功均返回 204。通知只投递至收件人的有效设备。推送 token 与当前设备会话绑定，网页 Cookie 不能注册移动推送。删除待办使用 `DELETE /api/modules/todo/tasks/{id}`，成功返回 204。
 
 APNs 和 FCM payload 均包含 `notificationId` 与 `actionRoute`。客户端把 `actionRoute` 当作 Workbench 站内路径映射到原生页面：
 
@@ -130,7 +130,7 @@ APNs 和 FCM payload 均包含 `notificationId` 与 `actionRoute`。客户端把
 1. 携带 Bearer 调用 `POST /api/modules/investment/schwab/oauth/start`。
 2. 使用系统浏览器打开响应中的 `authorizationUrl`。URL 只含 Schwab OAuth 参数和一次性 state，不含 App access token。
 3. Schwab 返回公开的 `/oauth/schwab`，由 Workbench 服务端校验 state、交换并保存券商令牌；系统浏览器无需 App Bearer。
-4. App 回到前台后，携带 Bearer 查询 `GET /api/modules/investment/schwab/oauth/status/{statusId}`，直到 `succeeded` 或 `failed`。
+4. App 回到前台后，携带 Bearer 查询 `GET /api/modules/investment/schwab/oauth/status/{id}`，直到 `succeeded` 或 `failed`。
 
 授权和状态查询均属于发起用户。状态有效期为十分钟，同一用户的新授权会使其旧的 pending 请求失败，不影响其他用户。状态暂存在进程内；服务重启或状态不存在时重新发起。
 

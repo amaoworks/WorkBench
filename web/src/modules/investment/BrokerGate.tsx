@@ -4,6 +4,7 @@ import { Card } from "../../components/ui/Card";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { Notice } from "../../components/ui/Notice";
 import type { PortfolioPositions } from "./schema";
+import { SCHWAB_LOGIN_PATH } from "./schwabLogin";
 
 export function BrokerGate({ status, message, onRetry, children }: {
   status: PortfolioPositions["status"]; message?: string; onRetry: () => void; children: ReactNode;
@@ -15,7 +16,7 @@ export function BrokerGate({ status, message, onRetry, children }: {
   );
   if (status === "reauth") return (
     <Notice tone="warning" title="Schwab 授权已失效" action={
-      <ButtonLink to="/api/modules/investment/schwab/oauth/login" reloadDocument variant="secondary" size="sm">重新授权</ButtonLink>
+      <ButtonLink to={SCHWAB_LOGIN_PATH} reloadDocument variant="secondary" size="sm">重新授权</ButtonLink>
     } />
   );
   if (status === "unconfigured") return (

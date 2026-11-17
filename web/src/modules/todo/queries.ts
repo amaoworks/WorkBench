@@ -28,7 +28,7 @@ export function useTasks(filters: TaskFilters) {
     queryFn: async ({ pageParam }) => {
       const params = taskSearch(filters);
       if (pageParam) params.set("cursor", pageParam);
-      return tasksResponseSchema.parse(await api(`/api/modules/todo/tasks?${params}`));
+      return apiValidated(`/api/modules/todo/tasks?${params}`, tasksResponseSchema);
     },
     getNextPageParam: (page) => page.nextCursor,
     refetchInterval: 30_000
@@ -96,7 +96,7 @@ export function useTodoToday(widget: Widget) {
 }
 
 export function useWallosSettings(enabled: boolean) {
-  return useQuery({ queryKey: todoKey("wallos"), enabled, queryFn: async () => wallosSettingsSchema.parse(await api("/api/modules/todo/wallos")) });
+  return useQuery({ queryKey: todoKey("wallos"), enabled, queryFn: () => apiValidated("/api/modules/todo/wallos", wallosSettingsSchema) });
 }
 
 export function saveWallosSettings(input: WallosSettingsInput) {
@@ -104,7 +104,7 @@ export function saveWallosSettings(input: WallosSettingsInput) {
 }
 
 export async function syncWallos() {
-  return wallosSyncSchema.parse(await api("/api/modules/todo/wallos/sync", { method: "POST", body: "{}" }));
+  return apiValidated("/api/modules/todo/wallos/sync", wallosSyncSchema, { method: "POST", body: "{}" });
 }
 
 export function useRefreshTodo() {

@@ -5,10 +5,17 @@ import { Skeleton } from "../../components/ui/States";
 import { useDashboardSignals, useOverviewSummary } from "../../shared/dashboard";
 import { cn } from "../../shared/cn";
 import { formatRelative } from "../../shared/format";
+import { safeExternalURL } from "../../shared/url";
 import { useNewsBrief } from "./queries";
 import type { NewsBrief } from "./schema";
 
 type Article = NewsBrief["latest"][number];
+
+function BriefLink({ url, title, className, children }: { url: string; title: string; className?: string; children: string }) {
+  const href = safeExternalURL(url);
+  if (!href) return <span className={className} title={title}>{children}</span>;
+  return <a className={className} href={href} target="_blank" rel="noreferrer" title={title}>{children}</a>;
+}
 
 function ArticleList({ items, label, tags }: { items: Article[]; label: string; tags?: boolean }) {
   return (
@@ -16,9 +23,9 @@ function ArticleList({ items, label, tags }: { items: Article[]; label: string; 
       {items.map((article) => (
         <li key={article.id}>
           {tags && article.symbols?.slice(0, 2).map((symbol) => <span key={symbol} className="ov-tag">{symbol}</span>)}
-          <a className={cn("ov-news-title", !article.read && "is-unread")} href={article.url} target="_blank" rel="noreferrer" title={article.title}>
+          <BriefLink className={cn("ov-news-title", !article.read && "is-unread")} url={article.url} title={article.title}>
             {article.title}
-          </a>
+          </BriefLink>
           <span className="ov-note ov-nowrap">{formatRelative(article.publishedAt)}</span>
         </li>
       ))}
@@ -71,9 +78,7 @@ export default function NewsBriefWidget({ widget }: { widget: Widget }) {
                 <ul className="ov-bullets">
                   {digest.items.map((item) => (
                     <li key={item.id}>
-                      <a href={item.url} target="_blank" rel="noreferrer">
-                        {item.title}
-                      </a>
+                      <BriefLink url={item.url} title={item.title}>{item.title}</BriefLink>
                       <span className="ov-note"> · {item.sourceName}</span>
                     </li>
                   ))}

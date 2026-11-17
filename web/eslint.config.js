@@ -51,7 +51,7 @@ export default tseslint.config(
   {
     files: ["**/*.{ts,tsx}"],
     languageOptions: { ecmaVersion: 2023, globals: globals.browser },
-    rules: { "@typescript-eslint/no-explicit-any": "off" },
+    rules: { "@typescript-eslint/no-explicit-any": "error" },
   },
   ...moduleBoundaryConfigs
 );

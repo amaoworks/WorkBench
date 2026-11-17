@@ -223,6 +223,7 @@ function UserMenu() {
   const root = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
+  const pointer = useRef(false);
   const id = useId();
   const close = useCallback(() => setOpen(false), []);
   useDismiss(open, root, close);
@@ -257,11 +258,20 @@ function UserMenu() {
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? id : undefined}
+        onPointerDown={() => {
+          pointer.current = true;
+        }}
         onClick={() => {
-          setOpen((value) => !value);
-          requestAnimationFrame(() => focusItem(menu.current, "first"));
+          const fromPointer = pointer.current;
+          pointer.current = false;
+          setOpen((value) => {
+            const next = !value;
+            if (next && !fromPointer) requestAnimationFrame(() => focusItem(menu.current, "first"));
+            return next;
+          });
         }}
         onKeyDown={(event) => {
+          pointer.current = false;
           if (event.key !== "ArrowDown") return;
           event.preventDefault();
           setOpen(true);

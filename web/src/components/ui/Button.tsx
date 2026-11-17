@@ -1,4 +1,4 @@
-import { forwardRef, type ButtonHTMLAttributes } from "react";
+import { forwardRef, type AnchorHTMLAttributes, type ButtonHTMLAttributes } from "react";
 import { Link, type LinkProps } from "react-router-dom";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "../../shared/cn";
@@ -30,3 +30,10 @@ export const ButtonLink = forwardRef<HTMLAnchorElement, ButtonLinkProps>(({ clas
   <Link ref={ref} data-size={size ?? "md"} data-variant={variant ?? "primary"} className={cn(variants({ variant, size }), className)} {...props} />
 ));
 ButtonLink.displayName = "ButtonLink";
+
+export interface ButtonAnchorProps extends AnchorHTMLAttributes<HTMLAnchorElement>, VariantProps<typeof variants> {}
+
+export const ButtonAnchor = forwardRef<HTMLAnchorElement, ButtonAnchorProps>(({ className, variant, size, ...props }, ref) => (
+  <a ref={ref} data-size={size ?? "md"} data-variant={variant ?? "primary"} className={cn(variants({ variant, size }), className)} {...props} />
+));
+ButtonAnchor.displayName = "ButtonAnchor";

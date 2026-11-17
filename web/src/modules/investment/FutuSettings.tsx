@@ -9,19 +9,10 @@ import { Notice } from "../../components/ui/Notice";
 import { Switch } from "../../components/ui/Switch";
 import { saveFutuSettings, useRefreshInvestment } from "./queries";
 import type { FutuSettings as Settings } from "./schema";
+import { futuConnectionDetail } from "./futuState";
 import { MaskedInput } from "./MaskedInput";
 
 export type FutuDraft = { enabled: boolean; account: string; password: string };
-
-const SERVICE_STATES: Record<Settings["serviceState"], string> = {
-  installing: "正在安装服务…",
-  starting: "正在启动服务…",
-  running: "正在连接行情…",
-  stopping: "正在停止服务…",
-  error: "服务启动失败。",
-  stopped: "服务已停止。",
-  external: "正在等待服务连接…",
-};
 
 export function FutuSection({
   initial,
@@ -63,6 +54,7 @@ export function FutuSection({
     onError: (failure) => toast.error(failure.message),
   });
   const busy = clear.isPending || retry.isPending;
+  const quoteReady = initial.enabled && initial.connected && initial.qotLogined && !initial.serviceError && !initial.lastError;
   return (
     <section className="space-y-4" aria-labelledby="futu-settings-title">
       <h3 id="futu-settings-title" className="font-medium">
@@ -74,15 +66,15 @@ export function FutuSection({
         </Notice>
       )}
       <div className="form-fields">
-        <div className="flex items-center gap-2 text-sm">
+        <label className="inline-switch">
           <Switch
             label="启用富途牛牛行情"
             checked={value.enabled}
             disabled={busy || (!initial.managed && !value.enabled)}
             onChange={(next) => onChange({ enabled: next })}
           />
-          启用富途牛牛行情
-        </div>
+          <span aria-hidden="true">启用富途牛牛行情</span>
+        </label>
         <Field label="富途牛牛账号">
           <MaskedInput
             revealLabel="富途牛牛账号"
@@ -96,7 +88,7 @@ export function FutuSection({
         <Field
           label="登录密码"
           meta={
-            <Badge tone={initial.hasPassword ? "success" : "neutral"}>{initial.hasPassword ? "已保存 · 留空保留" : "尚未设置"}</Badge>
+            <Badge tone={initial.hasPassword ? "info" : "neutral"}>{initial.hasPassword ? "已保存" : "未设置"}</Badge>
           }
         >
           <input
@@ -106,16 +98,17 @@ export function FutuSection({
             onChange={(event) => onChange({ password: event.target.value })}
             maxLength={1024}
             required={dirty && value.enabled && (!initial.hasPassword || value.account !== initial.account)}
-            placeholder={initial.hasPassword ? "输入新密码以替换" : "输入富途牛牛登录密码"}
+            placeholder={initial.hasPassword ? "留空保持不变" : undefined}
           />
         </Field>
       </div>
       {!initial.managed && (
         <Notice title="富途牛牛登录服务未接入">{initial.hasPassword ? "账号密码已保存。" : "账号密码可先保存。"}</Notice>
       )}
-      {initial.enabled && (
+      {quoteReady && <Badge tone="info">行情已连接</Badge>}
+      {initial.enabled && !quoteReady && (
         <Notice title="富途牛牛行情状态">
-          {initial.connected ? (initial.qotLogined ? "行情已连接。" : "服务已启动，等待行情登录。") : SERVICE_STATES[initial.serviceState]}
+          {futuConnectionDetail(initial)}
         </Notice>
       )}
       {initial.serviceError && (
@@ -125,7 +118,7 @@ export function FutuSection({
       )}
       {!initial.serviceError && initial.lastError && (
         <Notice tone="warning" title="行情连接尚未就绪">
-          系统将自动重试。
+          {initial.lastError}
         </Notice>
       )}
       {(initial.hasPassword || (!dirty && initial.serviceState === "error")) && (

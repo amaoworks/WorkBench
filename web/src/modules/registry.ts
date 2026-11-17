@@ -1,4 +1,5 @@
 import type { ComponentType, LazyExoticComponent } from "react";
+import { Bell } from "lucide-react";
 import type { Widget } from "../shared/schema";
 
 /** One entry in a module's top-navigation dropdown. `to` is an in-app path, optionally with a query string. */
@@ -9,6 +10,11 @@ export type ModuleMenuItem = {
   icon?: ComponentType<{ size?: number }>;
 };
 
+export type WidgetMeta = {
+  icon?: ComponentType<{ size?: number }>;
+  summaryOrder?: number;
+};
+
 export type ModuleUI = {
   id: string;
   /** Current user's business preferences and connections. */
@@ -17,6 +23,8 @@ export type ModuleUI = {
   adminSettings?: LazyExoticComponent<ComponentType<{ enabled: boolean }>>;
   pages: Record<string, LazyExoticComponent<ComponentType>>;
   widgets: Record<string, LazyExoticComponent<ComponentType<{ widget: Widget }>>>;
+  /** Icon and 今日概况 order for this module's widgets. */
+  widgetMeta?: Record<string, WidgetMeta>;
   icons?: Record<string, ComponentType<{ size?: number }>>;
   /** Dropdown entries under the module's top-navigation item. Omitted: the item is a plain link. */
   menu?: ModuleMenuItem[];
@@ -30,6 +38,9 @@ export type ModuleUI = {
 const definitions = import.meta.glob<{ default: ModuleUI }>("./*/*.module.ts", { eager: true });
 export const pageRegistry: ModuleUI["pages"] = {};
 export const widgetRegistry: ModuleUI["widgets"] = {};
+export const widgetMetaRegistry: Record<string, WidgetMeta> = {
+  "notifications.summary": { icon: Bell, summaryOrder: 1 },
+};
 export const iconRegistry: NonNullable<ModuleUI["icons"]> = {};
 export const settingsRegistry: Record<string, NonNullable<ModuleUI["settings"]>> = {};
 export const adminSettingsRegistry: Record<string, NonNullable<ModuleUI["adminSettings"]>> = {};
@@ -47,6 +58,10 @@ for (const { default: module } of Object.values(definitions)) {
       if (!/^[a-z0-9-]+(\/[a-z0-9-]+)*$/.test(path)) throw new Error(`无效的业务子页面路径：${module.id}/${path}`);
     }
     subpageRegistry[module.id] = module.subpages;
+  }
+  for (const [key, meta] of Object.entries(module.widgetMeta ?? {})) {
+    if (!key.startsWith(`${module.id}.`) || key in widgetMetaRegistry) throw new Error(`无效或重复的卡片元信息：${key}`);
+    widgetMetaRegistry[key] = meta;
   }
   for (const [target, entries] of [[pageRegistry, module.pages], [widgetRegistry, module.widgets]] as const) {
     for (const key of Object.keys(entries)) {

@@ -9,7 +9,7 @@ Workbench 是本地优先、支持多用户的个人工作台，采用 Go 模块
 - **用户与权限**：管理员创建和禁用用户，个人数据、登录设备、通知及 AI 对话独立；富途共享行情，Schwab 各自授权和交易。
 - **个人待办**：支持待办管理、到期提醒，以及与 Wallos 订阅账期的自动联动。
 - **投资终端**：集成 TradingView 图表；未绑定 Schwab 时使用共享富途行情，个人授权有效时以 Schwab 为主、富途补夜盘。持仓、订单和交易使用本人的 Schwab 授权。
-- **价格预警**：使用本人的 Schwab 授权执行美股/ETF 分钟级价格监控，支持站内通知与 Telegram 自动推送。
+- **监控规则**：使用本人的 Schwab 授权执行美股/ETF 分钟级价格监控，支持站内通知与 Telegram 自动推送。
 - **资讯**：RSS/Atom、Google News 和 Yahoo Finance 来源模板、关注规则、AI 翻译摘要、定时简报及 Telegram 推送。
 - **AI 助手**：内置对话面板，可查询待办、通知、持仓、订单和资讯，创建或更新待办、创建价格监控及生成简报；逐项显示执行结果，刷新后可继续已有对话。
 - **总览看板**：可定制卡片显隐、排序、尺寸与布局偏好。
@@ -59,9 +59,7 @@ cd workbench_v0.1.1_linux_amd64
 
 ## 日志与排障
 
-进入 **后台设置 → 数据与运行 → 运行日志**，选择 `debug / info / warn / error` 最低等级，点击「保存」后立即生效，重启后保留。默认 `info`；选择 `warn` 会同时记录警告和错误，选择 `error` 仅记录错误。
-
-二进制和容器均输出 JSON 日志到 stderr。Docker 使用 `docker compose logs -f --tail 100 workbench`，systemd 使用 `journalctl -u workbench -f`。首次启动默认等级可通过 `WORKBENCH_LOG_LEVEL=info` 或 `-log-level info` 设置；页面已保存的等级优先。详细字段、等级规则和轮转说明见[运行日志](doc/configuration.md#运行日志)。
+日志等级表和字段见[运行日志](doc/configuration.md#运行日志)。页面保存的等级立即生效，并优先于启动参数。
 
 ## GitHub Actions 编译与发布
 
@@ -93,7 +91,10 @@ git push origin v0.1.1
 - [安全边界](doc/security.md)
 - [用户与权限](doc/multi-user.md)：个人数据、管理员配置与旧工作空间升级
 - [文案与文档规范](doc/copywriting-guidelines.md)
+- [前端界面规范](doc/frontend-guidelines.md)
 - [Todo](doc/modules/todo.md)、[Wallos 联动](doc/modules/todo-wallos.md)、[Investment](doc/modules/investment.md)、[资讯](doc/modules/news.md)
+- [外部通知](doc/notifications.md)
+- [移动端接入](doc/mobile.md)、[移动端 OpenAPI](doc/mobile.openapi.yaml)
 - [AI 协作指南](AGENTS.md)：面向 AI 编程助手的架构红线与开发工作流
 
 
@@ -141,7 +142,7 @@ npm ci --prefix web
 ## 日常使用
 
 - 界面使用顶部导航；只有投资带下拉菜单（图表、价格监控、持仓、订单），其他入口是普通链接；窄屏时收进抽屉。「个人设置」和管理员专属的「后台设置」从右上角头像菜单进入。投资页只显示全屏图表。默认配色为「宝蓝」，可在「个人设置 → 外观」切换为「陶橙」，主题默认跟随系统。
-- 总览「今天，一目了然」汇总待办、通知和资讯，支持卡片显隐、排序、尺寸和恢复默认（`/?edit=1`）。
+- 总览汇总待办、通知和资讯，支持卡片显隐、排序、尺寸和恢复默认。
 - 待办按 已逾期/今天/本周/以后/已完成 分组，支持优先级、分类、服务端筛选计数、分页和到期提醒；Wallos 在「个人设置 → 业务 → 待办」中连接，续费任务带「续费」标记。
 - 登录工作台后，未绑定 Schwab 或授权已失效的用户可通过可用的富途服务只读看盘；授权有效时，常规及扩展行情使用本人的 Schwab，富途只补夜盘。富途主行情不依赖夜盘开关，支持美股和 ETF，实际行情权限、标的和历史额度取决于共享富途账号及 OpenD 状态。部署方需确认多用户使用的行情许可；不会借用管理员的 Schwab 令牌。
 - 读取持仓和订单及执行下单、改单、撤单须完成本人 Schwab 授权；另有只读的「持仓」`/investment/positions` 和「订单」`/investment/orders` 页面。总览行情卡可显示本人的自选富途行情及数据源，资产快照和净值历史仍要求本人授权。
@@ -149,7 +150,7 @@ npm ci --prefix web
 - 投资价格监控仍使用本人的 Schwab 授权，每分钟检查美股/ETF 常规时段涨跌阈值，保存站内提醒，可通过 Telegram 推送；富途不参与价格监控，关闭网页仍由服务器执行。
 - 点击右上角「问 AI」或按 `Ctrl+J`（macOS 上是 `⌘J`）打开 AI 面板，面板提供对话和已注册的业务工具；未启用 AI 不影响普通业务操作。
 - 通知按 今天/昨天/更早 分组，支持全部/未读和按来源筛选。
-- 个人设置（`/settings`）包括外观、业务、通知推送和账户安全，管理员也在此管理本人的 Schwab 授权与通知接收；后台设置（`/admin/settings`）仅管理员可访问，包括用户管理、业务管理、AI 服务、通知服务、数据与运行。业务启停及 Schwab 应用、富途和夜盘共享配置归后台管理。共享投资配置入口为 `/admin/settings?tab=modules&module=investment`，本人授权入口为 `/settings?tab=modules&module=investment`。TG 配置见 [Telegram 通知](doc/notifications.md)。
+- 个人设置包括外观、业务、通知推送和账户安全，管理员也在此管理本人的 Schwab 授权与通知接收。后台设置仅管理员可访问，包括用户管理、业务管理、AI 服务、通知服务、数据与运行。业务启停及 Schwab 应用、富途和夜盘共享配置归后台管理。推送配置见[外部通知](doc/notifications.md)。
 - 管理员在「后台设置 → 数据与运行」创建的 SQLite 全库备份保存到工作空间的 `backups/` 目录；PostgreSQL 备份由数据库服务管理。备份包含业务内容与保存的凭据。
 
 ## 验证

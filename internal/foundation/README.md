@@ -3,7 +3,7 @@
 | 目录 | 当前职责 |
 |---|---|
 | `auth/` | local/password 模式、密码与 Session、Host/Origin/CSRF |
-| `database/` | SQLite 生命周期、迁移、备份、文件锁和平台 SQL |
+| `database/` | SQLite 与 PostgreSQL 生命周期、成对迁移、SQLite 备份、文件锁或 advisory lock，以及平台 SQL |
 | `events/` | 事务事件存储、消费者投递、租约与重试 |
 | `modules/` | 内置与外部目录、持久化启停、外部控制客户端、同源 HTTP/WS 代理 |
 | `httpapi/` | JSON 请求体校验、响应与错误 |

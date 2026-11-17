@@ -12,7 +12,7 @@ import { cn } from "../../shared/cn";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { toast } from "sonner";
 import { formatDateTime } from "../../shared/format";
-import { useModules } from "../../app/queries";
+import { useModules } from "../../shared/modules";
 import { notificationDayGroup, useLocalNow } from "./notificationTime";
 
 const PLATFORM_SOURCES: Record<string, string> = { core: "平台", platform: "平台", system: "系统" };
@@ -157,7 +157,7 @@ export default function NotificationsPage() {
       <div className="notification-groups">
         {groups.map((group) => (
           <section key={group.label} aria-label={group.label}>
-            <h2 className="todo-group-title">
+            <h2 className="group-title">
               {group.label}
               <span>{group.items.length}</span>
             </h2>

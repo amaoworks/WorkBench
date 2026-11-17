@@ -123,12 +123,15 @@ export default function RulesTab() {
                 >
                   <Trash2 size={15} />
                 </Button>
-                <Switch
-                  label={`启用 ${rule.name}`}
-                  checked={rule.enabled}
-                  disabled={save.isPending}
-                  onChange={(enabled) => save.mutate({ ...pickInput(rule), enabled, id: rule.id })}
-                />
+                <label className="inline-switch">
+                  <Switch
+                    label={`启用 ${rule.name}`}
+                    checked={rule.enabled}
+                    disabled={save.isPending}
+                    onChange={(enabled) => save.mutate({ ...pickInput(rule), enabled, id: rule.id })}
+                  />
+                  <span className="sr-only">启用 {rule.name}</span>
+                </label>
               </div>
             </div>
           );
@@ -176,13 +179,13 @@ function RuleForm({
     <form onSubmit={submit} className="inline-form news-rule-form">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label="名称">
-          <input autoFocus required value={name} onChange={(event) => setName(event.target.value)} placeholder="规则名称" />
+          <input autoFocus required value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：AI 行业" />
         </Field>
-        <Field label="主题">
-          <input value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="全部主题" />
+        <Field label="话题">
+          <input value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="全部话题" />
         </Field>
         <Field label="包含关键词">
-          <textarea value={includes} onChange={(event) => setIncludes(event.target.value)} placeholder="AI, 芯片, 算力" rows={3} />
+          <textarea value={includes} onChange={(event) => setIncludes(event.target.value)} placeholder="逗号或换行分隔，如：AI, 芯片" rows={3} />
         </Field>
         <Field label="排除关键词">
           <textarea value={excludes} onChange={(event) => setExcludes(event.target.value)} placeholder="广告, 招聘" rows={3} />
@@ -212,10 +215,10 @@ function RuleForm({
           ))}
         </div>
       </fieldset>
-      <div className="flex items-center gap-2 text-sm">
+      <label className="inline-switch">
         <Switch label="启用关注规则" checked={enabled} onChange={setEnabled} />
-        启用
-      </div>
+        <span aria-hidden="true">启用</span>
+      </label>
       <div className="flex justify-end gap-2">
         <Button type="button" variant="secondary" onClick={onCancel}>
           取消

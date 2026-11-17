@@ -4,9 +4,10 @@ VALUES(sqlc.arg(user_id),sqlc.arg(account_hash),sqlc.arg(day),sqlc.arg(net_worth
 ON CONFLICT(user_id,account_hash,day) DO UPDATE SET net_worth=excluded.net_worth,cash=excluded.cash,invested=excluded.invested,day_pnl=excluded.day_pnl,captured_at=excluded.captured_at;
 
 -- name: AddNetWorthAccountScope :exec
-INSERT INTO investment_networth_account_scopes(user_id,authorized_at,account_hash)
-VALUES(sqlc.arg(user_id),sqlc.arg(authorized_at),sqlc.arg(account_hash))
-ON CONFLICT(user_id,authorized_at,account_hash) DO NOTHING;
+INSERT INTO investment_networth_account_scopes(user_id,authorized_at,account_hash,account_label)
+VALUES(sqlc.arg(user_id),sqlc.arg(authorized_at),sqlc.arg(account_hash),sqlc.arg(account_label))
+ON CONFLICT(user_id,authorized_at,account_hash) DO UPDATE SET
+account_label=CASE WHEN excluded.account_label='' THEN investment_networth_account_scopes.account_label ELSE excluded.account_label END;
 
 -- name: DeleteNetWorthAccountScope :exec
 DELETE FROM investment_networth_account_scopes WHERE user_id=sqlc.arg(user_id) AND authorized_at=sqlc.arg(authorized_at);
@@ -19,6 +20,6 @@ AND (CAST(sqlc.arg(start_day) AS TEXT)='' OR s.day>=CAST(sqlc.arg(start_day) AS 
 ORDER BY s.day,s.account_hash;
 
 -- name: ListNetWorthAccounts :many
-SELECT account_hash FROM investment_networth_account_scopes
+SELECT account_hash, account_label FROM investment_networth_account_scopes
 WHERE user_id=sqlc.arg(user_id) AND authorized_at=CAST(sqlc.arg(authorized_at) AS BIGINT)
 ORDER BY account_hash;

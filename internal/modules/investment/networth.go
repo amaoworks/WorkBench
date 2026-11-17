@@ -47,14 +47,15 @@ type netWorthPoint struct {
 }
 
 type netWorthHistory struct {
-	Status    string          `json:"status"`
-	Message   string          `json:"message,omitempty"`
-	Currency  string          `json:"currency"`
-	Range     string          `json:"range"`
-	Account   string          `json:"account,omitempty"`
-	Accounts  []string        `json:"accounts"`
-	Points    []netWorthPoint `json:"points"`
-	UpdatedAt *time.Time      `json:"updatedAt,omitempty"`
+	Status        string            `json:"status"`
+	Message       string            `json:"message,omitempty"`
+	Currency      string            `json:"currency"`
+	Range         string            `json:"range"`
+	Account       string            `json:"account,omitempty"`
+	Accounts      []string          `json:"accounts"`
+	AccountLabels map[string]string `json:"accountLabels"`
+	Points        []netWorthPoint   `json:"points"`
+	UpdatedAt     *time.Time        `json:"updatedAt,omitempty"`
 }
 
 func (m *Module) netWorthJob() contracts.JobDefinition {
@@ -130,7 +131,7 @@ func (m *Module) storeNetWorthSnapshot(ctx context.Context, authorizedAt int64, 
 			return errors.New("net worth snapshot account hash is missing")
 		}
 		if err := queries.AddNetWorthAccountScope(ctx, investmentsqlc.AddNetWorthAccountScopeParams{UserID: contracts.UserID(ctx),
-			AuthorizedAt: authorizedAt, AccountHash: account.Hash,
+			AuthorizedAt: authorizedAt, AccountHash: account.Hash, AccountLabel: account.Label,
 		}); err != nil {
 			return err
 		}
@@ -173,7 +174,7 @@ func netWorthStartDay(now time.Time, value string, loc *time.Location) (string, 
 }
 
 func (m *Module) loadNetWorthHistory(ctx context.Context, rangeValue, account string) (netWorthHistory, error) {
-	out := netWorthHistory{Status: "ready", Currency: "USD", Range: rangeValue, Account: account, Accounts: []string{}, Points: []netWorthPoint{}}
+	out := netWorthHistory{Status: "ready", Currency: "USD", Range: rangeValue, Account: account, Accounts: []string{}, AccountLabels: map[string]string{}, Points: []netWorthPoint{}}
 	rec, err := m.loadSchwab(ctx)
 	if err != nil {
 		return out, err
@@ -191,12 +192,13 @@ func (m *Module) loadNetWorthHistory(ctx context.Context, rangeValue, account st
 		return out, err
 	}
 	authorizedAt := rec.AuthorizedAt.UnixMilli()
-	out.Accounts, err = m.queries.ListNetWorthAccounts(ctx, investmentsqlc.ListNetWorthAccountsParams{UserID: contracts.UserID(ctx), AuthorizedAt: authorizedAt})
+	accountRows, err := m.queries.ListNetWorthAccounts(ctx, investmentsqlc.ListNetWorthAccountsParams{UserID: contracts.UserID(ctx), AuthorizedAt: authorizedAt})
 	if err != nil {
 		return out, err
 	}
-	if out.Accounts == nil {
-		out.Accounts = []string{}
+	for _, row := range accountRows {
+		out.Accounts = append(out.Accounts, row.AccountHash)
+		out.AccountLabels[row.AccountHash] = row.AccountLabel
 	}
 	if account != "" && !slices.Contains(out.Accounts, account) {
 		return out, errors.New("account is not available for the current authorization")

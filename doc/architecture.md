@@ -26,11 +26,13 @@ internal/
     modules/                   内置与外部目录、启停门控、外部控制客户端与同源代理
     httpapi/                   JSON 请求与响应
     identity/                  实体 ID
+    logging/                   JSON 日志、等级校验与动态过滤
   capabilities/
     ai/                        Provider、文本生成、工具执行与审计
     conversation/              对话持久化、普通响应与流式响应
     dashboard/                 Widget 目录和总览布局
     notifications/             通知持久化、状态操作、SSE
+    mobilepush/                APNs/FCM 设备令牌与投递
     scheduler/                 调度、执行记录、重试与恢复
   modules/
     todo/                      待办及 Wallos 联动
@@ -41,13 +43,17 @@ web/src/
   app/                         登录、顶部导航外壳（TopNav、navigation.ts）、路由兜底、主题
   features/                    AI 面板、总览、通知、平台设置
   modules/
-    registry.ts                编译期业务界面注册表（pages、widgets、icons、settings、menu、subpages）
+    registry.ts                编译期业务界面注册表（pages、widgets、widgetMeta、icons、settings、adminSettings、menu、subpages）
     todo/                      Todo 页面、Widget、设置、查询、schema
     investment/                行情、持仓与订单页面、Widget、个人授权及共享行情设置、查询、schema
     news/                      资讯、来源、规则、简报、设置、查询、schema
-  components/ui/               Badge、Button、Card、Checkbox、ConfirmDialog、EmptyState、Field、Notice、PageHeader、Select、Skeleton、Switch、useConfirmDelete
+  components/
+    ExternalFrame.tsx          外部模块页面与设置 iframe 容器
+    dashboard/                 总览卡片页眉组件（WidgetHeader）
+    ui/                        Badge、Button、Card、Checkbox、ConfirmDialog、EmptyState、Field、Notice、PageHeader、Select、Skeleton、Switch、useConfirmDelete
   shared/                      HTTP 客户端、平台共享 schema、工具
   styles.css                   主题变量与共享样式
+  assets/fonts/                本地打包的 Outfit 标题字体（woff2 与 SIL OFL 许可证）
 futu-opend/                    可搬走的 Futu OpenD 容器封装（行情网关，非交易）
 deploy/                        systemd、反向代理与 Compose 网络配置
 .github/workflows/             CI 验证与版本标签发布
@@ -87,7 +93,7 @@ contracts → 标准库
 
 `App.Run` 绑定 HTTP 监听地址，启动调度器、事件投递和 HTTP 服务，再调用模块声明的 `ModuleStartup.OnStarted`；后台初始化随运行 context 结束。模块资源的会话加载与响应包装通过 `ModuleSessionPolicyProvider` 声明。HTTPS 在反向代理处终止，应用以固定外部 URL 配置 Cookie 和来源校验；部署形态与发布流程见[部署与发布](deployment.md)。退出时先调用 `scheduler.Shutdown` 取消并等待在途定时与补跑任务结束，再由 Registry 关闭业务入口、外部模块探测与代理 WebSocket，并按构造顺序逆序释放内置模块生命周期资源；随后关闭 HTTP 服务与数据库。宿主退出不会把外部模块改写为用户停用。
 
-新增模块通过 `internal/app/app.go` 的后端清单及前端 `<id>.module.ts` 文件注册，代码随程序构建。历史外部模块从已保存的目录恢复，不再开放网址接入；通用 `/modules/{id}/...` 与 `/api/modules/{id}/proxy/*` 按注册表快照分发。内置启停影响模块 HTTP、Job、事件消费者、AI Tool、导航和总览卡片。外部模块的 `enabled` 是用户期望；业务页面/API/WS 只在当前连接的当前代数确认启用且健康不是 `offline`/`incompatible` 后开放。设置页在停用时仍可访问。停用不会删除表、历史数据或布局偏好。隐藏 Widget 只影响总览展示。
+新增模块通过 `internal/app/app.go` 的后端清单及前端 `<id>.module.ts` 文件注册，代码随程序构建。已保存外部模块的历史协议见[外部模块第一阶段](archive/external-modules-phase-1.md)。内置启停影响模块 HTTP、Job、事件消费者、AI Tool、导航和总览卡片。外部模块的 `enabled` 是用户期望；业务页面/API/WS 只在当前连接的当前代数确认启用且健康不是 `offline`/`incompatible` 后开放。设置页在停用时仍可访问。停用不会删除表、历史数据或布局偏好。隐藏 Widget 只影响总览展示。
 
 内置模块的 `enabled` 同样表示持久化期望；`observedEnabled` 表示生命周期回调确认的状态。回调执行期间 `pending=true`、实际状态未知，业务入口关闭；回调失败返回 HTTP 503，目录显示 `health=degraded` 和 `lastError`，保留意图且不开放业务入口。管理员可在后台业务管理重试同一意图，重启时也会重新恢复。每个模块的持久化和回调串行执行，关闭不会与该模块回调并发。初始化失败会关闭所有已传入模块的资源，正常关闭每个资源一次。这里的确认表示回调完成，不替代 OpenD 等模块自己的运行健康检查。
 

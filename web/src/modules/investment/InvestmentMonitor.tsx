@@ -69,7 +69,7 @@ export function InvestmentMonitor() {
                 {data?.status !== "idle" && (
                   <Badge
                     tone={
-                      data?.status === "error" || data?.status === "stale" ? "danger" : data?.status === "monitoring" ? "success" : "neutral"
+                      data?.status === "error" || data?.status === "stale" ? "danger" : data?.status === "monitoring" ? "info" : "neutral"
                     }
                   >
                     {data ? states[data.status] : "状态未知"}
@@ -121,12 +121,7 @@ export function InvestmentMonitor() {
       )}
       <Card>
         <CardHeader title="监控规则" />
-        {monitor.isPending && (
-          <div className="space-y-3 p-5">
-            <Skeleton className="h-28" />
-            <Skeleton className="h-28" />
-          </div>
-        )}
+        {monitor.isPending && <Skeleton className="m-5 h-28" />}
         {data?.items.length === 0 && <EmptyState title="暂无监控规则" />}
         <div className="divide-y divide-[var(--hair)] hover-rows">
           {data?.items.map((rule) => (
@@ -140,26 +135,27 @@ export function InvestmentMonitor() {
                     </span>
                   </h3>
                   <div className="mt-1">
-                    <Badge tone={rule.enabled ? "success" : "neutral"}>{rule.enabled ? "已启用" : "已暂停"}</Badge>
+                    <Badge tone={rule.enabled ? "info" : "neutral"}>{rule.enabled ? "已启用" : "已暂停"}</Badge>
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-1">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    disabled={toggle.isPending}
-                    onClick={() =>
-                      toggle.mutate({
-                        id: rule.id,
-                        symbol: rule.symbol,
-                        direction: rule.direction,
-                        thresholdPercent: rule.thresholdPercent,
-                        enabled: !rule.enabled,
-                      })
-                    }
-                  >
-                    {rule.enabled ? "暂停" : "启用"}
-                  </Button>
+                  <label className="inline-switch">
+                    <Switch
+                      label={`启用 ${rule.symbol}`}
+                      checked={rule.enabled}
+                      disabled={toggle.isPending}
+                      onChange={(enabled) =>
+                        toggle.mutate({
+                          id: rule.id,
+                          symbol: rule.symbol,
+                          direction: rule.direction,
+                          thresholdPercent: rule.thresholdPercent,
+                          enabled,
+                        })
+                      }
+                    />
+                    <span aria-hidden="true">{rule.enabled ? "已启用" : "已暂停"}</span>
+                  </label>
                   <Button size="sm" variant="ghost" disabled={editing !== null} onClick={() => setEditing(rule)}>
                     编辑
                   </Button>
@@ -200,12 +196,7 @@ export function InvestmentMonitor() {
       </Card>
       <Card>
         <CardHeader title="触发记录" />
-        {history.isPending && (
-          <div className="space-y-3 p-5">
-            <Skeleton className="h-20" />
-            <Skeleton className="h-20" />
-          </div>
-        )}
+        {history.isPending && <Skeleton className="m-5 h-20" />}
         {history.isError && (
           <Notice className="m-5" tone="danger" title="触发记录读取失败">
             {history.error.message}
@@ -314,10 +305,10 @@ function RuleForm({ rule, onClose, onSaved }: { rule?: PriceRule; onClose: () =>
             />
           </Field>
         </div>
-        <div className="flex items-center gap-2 text-sm">
+        <label className="inline-switch">
           <Switch label="启用监控规则" checked={enabled} onChange={setEnabled} />
-          启用
-        </div>
+          <span aria-hidden="true">启用</span>
+        </label>
       </fieldset>
       <div className="form-actions">
         <Button type="button" variant="secondary" disabled={save.isPending} onClick={onClose}>

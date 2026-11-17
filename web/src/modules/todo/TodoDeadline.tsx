@@ -10,7 +10,23 @@ const HOURS = Array.from({ length: 24 }, (_, index) => ({ value: pad(index), lab
 const MINUTES = Array.from({ length: 60 }, (_, index) => ({ value: pad(index), label: pad(index) }));
 const dateKey = (date: Date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 
-export function TodoDeadline({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+type DeadlineProps = {
+  value: string;
+  onChange: (value: string) => void;
+  id?: string;
+  "aria-labelledby"?: string;
+  "aria-describedby"?: string;
+  "aria-invalid"?: boolean | "true" | "false";
+};
+
+export function TodoDeadline({
+  value,
+  onChange,
+  id,
+  "aria-labelledby": labelledBy,
+  "aria-describedby": describedBy,
+  "aria-invalid": invalid,
+}: DeadlineProps) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState(() => dateKey(new Date()));
   const [month, setMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
@@ -42,6 +58,14 @@ export function TodoDeadline({ value, onChange }: { value: string; onChange: (va
     setOpen(next);
   }
 
+  function applyPreset(days: number) {
+    const date = new Date();
+    date.setDate(date.getDate() + days);
+    date.setHours(9, 0, 0, 0);
+    onChange(`${dateKey(date)}T09:00`);
+    setOpen(false);
+  }
+
   function moveDay(day: number, offset: number) {
     const next = new Date(month.getFullYear(), month.getMonth(), day + offset);
     setMonth(new Date(next.getFullYear(), next.getMonth(), 1));
@@ -53,11 +77,14 @@ export function TodoDeadline({ value, onChange }: { value: string; onChange: (va
     <Dialog.Root open={open} onOpenChange={changeOpen}>
       <Dialog.Trigger asChild>
         <Button
+          id={id}
           type="button"
           variant="secondary"
           className="task-date"
-          aria-label="截止时间"
-          aria-describedby={value ? valueId : undefined}
+          aria-label={labelledBy ? undefined : "截止时间"}
+          aria-labelledby={labelledBy}
+          aria-describedby={[describedBy, value ? valueId : undefined].filter(Boolean).join(" ") || undefined}
+          aria-invalid={invalid}
           lang="zh-CN"
         >
           <CalendarClock size={17} aria-hidden="true" />
@@ -78,6 +105,11 @@ export function TodoDeadline({ value, onChange }: { value: string; onChange: (va
         >
           <Dialog.Title className="font-semibold">截止时间</Dialog.Title>
           <Dialog.Description className="sr-only">选择日期与时间</Dialog.Description>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button type="button" variant="secondary" size="sm" onClick={() => applyPreset(0)}>今天</Button>
+            <Button type="button" variant="secondary" size="sm" onClick={() => applyPreset(1)}>明天</Button>
+            <Button type="button" variant="secondary" size="sm" onClick={() => applyPreset(7)}>下周</Button>
+          </div>
           <div className="my-3 flex items-center justify-between">
             <Button
               type="button"

@@ -52,15 +52,21 @@
 | 文件 | 内容 |
 |---|---|
 | `module.go` | Module 构造、依赖、Manifest、迁移嵌入和资源注册 |
+| `agenda.go` | 今日待办与即将续费 |
 | `task.go` | Task 类型、创建/更新业务操作、数据库行与时间转换 |
 | `http.go` | 创建、修改、删除和概览 HTTP 处理 |
 | `pagination.go` | 列表接口、分页参数与游标 |
 | `jobs.go` | 到期扫描和通知生成 |
 | `tools.go` | AI 创建、查询、修改和完成待办的参数适配 |
 | `wallos.go`、`wallos_amount.go` | 联动配置、远端读取、同步、描述和金额转换 |
-| `migrations/`、`query/`、`sqlc/` | 本业务数据定义和查询 |
+| `migrations/`、`migrations-postgres/`、`query/`、`sqlc/` | 本业务数据定义和查询 |
 | 前端 `schema.ts`、`queries.ts` | Todo/Wallos 校验类型、接口调用、查询和缓存刷新 |
 | 前端 `taskActions.ts` | 创建请求快照、草稿合并、完成撤销状态与冲突读取分页 |
 | 前端 `todo.module.ts` | 页面、Widget、模块设置与图标注册 |
+| 前端 `TodoPage.tsx` | 待办页 |
+| 前端 `TaskCheck.tsx` | 待办勾选控件 |
+| 前端 `TodoTodayWidget.tsx` | 总览今日待办 |
+| 前端 `TodoDeadline.tsx` | 截止时间选择 |
+| 前端 `WallosSettings.tsx` | Wallos 联动设置 |
 
 前端回归运行 `node --test web/tests/todo-actions.test.mjs`，覆盖创建响应丢失后的手动重试、字段变更、完成后恢复的 revision、草稿合并和冲突读取。后端行为测试随模块保存；分页、Wallos 同步和设置交互可通过 [浏览器回归脚本](../../scripts/README.md) 验证。

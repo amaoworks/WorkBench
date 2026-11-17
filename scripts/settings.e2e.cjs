@@ -146,7 +146,8 @@ async function expectNoOverflow(page) {
         const investment = page.locator(".module-row").filter({ has: page.getByRole("heading", { name: "投资", exact: true }) });
         await investment.waitFor();
         assert.equal(await investment.getByRole("button", { name: "投资设置", exact: true }).count(), 0);
-        await investment.getByText(account.role === "admin" ? "在后台设置中启用。" : "联系管理员启用。", { exact: true }).waitFor();
+        if (account.role === "admin") await investment.getByRole("link", { name: "业务管理", exact: true }).waitFor();
+        else await investment.getByText("联系管理员启用。", { exact: true }).waitFor();
         await page.goto(`${baseURL}/investment`);
         await page.getByRole("heading", { name: "投资未启用", exact: true }).waitFor();
         if (account.role === "admin") await page.getByRole("link", { name: "业务管理", exact: true }).waitFor();

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Button } from "../../components/ui/Button";
+import { Button, ButtonLink } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { Notice } from "../../components/ui/Notice";
@@ -40,15 +40,18 @@ export default function PositionsPage() {
       <PageHeader
         title="持仓"
         action={
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={positions.isFetching}
-            title={positions.data?.updatedAt ? `更新于 ${formatDateTime(positions.data.updatedAt, { seconds: true })}` : undefined}
-            onClick={() => positions.refetch()}
-          >
-            刷新
-          </Button>
+          <>
+            <ButtonLink variant="secondary" size="sm" to="/investment/monitor">价格监控</ButtonLink>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={positions.isFetching}
+              title={positions.data?.updatedAt ? `更新于 ${formatDateTime(positions.data.updatedAt, { seconds: true })}` : undefined}
+              onClick={() => positions.refetch()}
+            >
+              刷新
+            </Button>
+          </>
         }
       />
       {positions.isPending ? <Skeleton className="h-64" /> : positions.isError ? (

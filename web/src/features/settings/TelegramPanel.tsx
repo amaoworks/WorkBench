@@ -51,7 +51,7 @@ function TelegramBotForm({ value }: { value: TelegramSettings }) {
           <span>启用共享服务</span>
           <Switch label="启用 Telegram 服务" checked={enabled} onChange={setEnabled} />
         </div>
-        <Field label="Bot Token" meta={<Badge>{value.hasBotToken && !clearBotToken ? "已保存" : "未设置"}</Badge>}>
+        <Field label="Bot Token" meta={<Badge tone="info">{value.hasBotToken && !clearBotToken ? "已保存" : "未设置"}</Badge>}>
           <input
             type="password" autoComplete="new-password" value={botToken} maxLength={512}
             onChange={(event) => { setBotToken(event.target.value); setClearBotToken(false); }}

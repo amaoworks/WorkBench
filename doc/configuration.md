@@ -2,6 +2,13 @@
 
 配置入口是 [cmd/workbench/main.go](../cmd/workbench/main.go)、[app/config.go](../internal/app/config.go) 和 [app/settings.go](../internal/app/settings.go)。应用仅监听 HTTP，HTTPS 由反向代理提供。二进制安装、Compose、systemd、代理配置和 Actions 发布见[部署与发布](deployment.md)。部署参数在启动时读取；业务开关、AI、外观和总览布局保存到当前工作空间。
 
+```bash
+set -a
+. ./workbench.env
+set +a
+./workbench -listen 127.0.0.1:8080
+```
+
 ## 构建和本地运行
 
 Go 版本以 [go.mod](../go.mod) 为准，当前为 1.27.1。前端使用 Node.js 24+、npm 11+，依赖版本由 `web/package-lock.json` 锁定。重新生成 SQL 查询使用 sqlc 1.31.x，生成代码已检入。
@@ -25,7 +32,7 @@ Go 版本以 [go.mod](../go.mod) 为准，当前为 1.27.1。前端使用 Node.j
 
 ## 启动参数和环境变量
 
-优先级为命令行参数 → 非空环境变量 → 默认值。程序不自动读取 `.env` 或配置文件；Compose 读取 `.env` 后传入容器，systemd 通过 `EnvironmentFile` 注入环境，开发脚本通过 `./scripts/dev.sh --config FILE` 加载同格式文件（见[开发脚本 - 配置文件](../scripts/README.md#配置文件)）。直接运行二进制时可用 `set -a; . ./workbench.env; set +a` 导入简单的 `KEY=VALUE` 文件。
+优先级为命令行参数 → 非空环境变量 → 默认值。程序不自动读取 `.env` 或配置文件；Compose 读取 `.env` 后传入容器，systemd 通过 `EnvironmentFile` 注入环境，开发脚本通过 `./scripts/dev.sh --config FILE` 加载同格式文件（见[开发脚本 - 配置文件](../scripts/README.md#配置文件)）。直接运行二进制时按文首命令导入简单的 `KEY=VALUE` 文件。
 
 | 参数 | 环境变量 | 默认值 / 行为 |
 |---|---|---|
@@ -59,7 +66,7 @@ Go 版本以 [go.mod](../go.mod) 为准，当前为 1.27.1。前端使用 Node.j
 | `-version` | — | 输出版本、提交号和构建时间后退出 |
 | `-healthcheck` | — | 按当前监听和 Host 配置检查运行中的 HTTP 服务；不打开数据库、不启动服务 |
 
-AI 默认值描述本项目配置，不代表模型选型建议。AI 保存后，数据库中的整套设置优先于上述环境变量。启动配置不覆盖工作空间里已经保存的业务设置。
+AI 保存后，数据库中的整套设置优先于上述环境变量。启动配置不覆盖工作空间里已经保存的业务设置。
 
 移动推送凭据在启动时从文件读取，不写入工作空间数据库。Compose 可将凭据放在宿主机 `secrets/`，取消对应只读挂载注释，并在 `.env` 中启用需要的服务商：
 

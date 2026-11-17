@@ -14,6 +14,7 @@ const RANGES = [{ id: "1m", label: "1 个月" }, { id: "3m", label: "3 个月" }
 export function NetWorthHistory() {
   const [range, setRange] = useState("1m");
   const [account, setAccount] = useState("");
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const history = useNetWorthHistory(range, account);
   const id = useId();
   const points = history.data?.points ?? [];
@@ -37,7 +38,10 @@ export function NetWorthHistory() {
           aria-label="净值账户" className="mb-3 w-48" value={account || "all"} onValueChange={(value) => setAccount(value === "all" ? "" : value)}
           options={[
             { value: "all", label: "全部账户" },
-            ...(history.data?.accounts ?? (account ? [account] : [])).map((hash) => ({ value: hash, label: "账户 " + hash.slice(0, 8) })),
+            ...(history.data?.accounts ?? (account ? [account] : [])).map((hash, index) => ({
+              value: hash,
+              label: history.data?.accountLabels[hash] || `账户 ${index + 1}`,
+            })),
           ]}
         />
       )}
@@ -64,18 +68,27 @@ export function NetWorthHistory() {
             <span>{points[0]?.day}</span><span>{formatUSD(chart.min)} — {formatUSD(chart.max)}</span><span>{points.at(-1)?.day}</span>
           </div>
           {coverageChanged && <p className="mt-2 text-xs text-[var(--muted)]">账户范围发生变化，曲线已分段。</p>}
-          <details className="mt-3 text-xs">
-            <summary className="focus-ring cursor-pointer text-[var(--muted)]">每日明细</summary>
-            <div className="data-table-scroll mt-2">
-              <table className="data-table">
-                <thead><tr><th scope="col">日期</th><th scope="col">账户数</th><th scope="col" className="num">净值 (USD)</th></tr></thead>
-                <tbody>{points.map((point) => (
-                  <tr key={point.day}><th scope="row">{point.day}</th><td>{point.accountHashes.length}</td>
-                    <td className="num">{point.netWorth === null ? "—" : formatUSD(point.netWorth)}</td></tr>
-                ))}</tbody>
-              </table>
-            </div>
-          </details>
+          <div className="mt-3 text-xs">
+            <button
+              type="button"
+              className="focus-ring cursor-pointer text-[var(--muted)]"
+              aria-expanded={detailsOpen}
+              onClick={() => setDetailsOpen((open) => !open)}
+            >
+              每日明细
+            </button>
+            {detailsOpen && (
+              <div className="data-table-scroll mt-2">
+                <table className="data-table">
+                  <thead><tr><th scope="col">日期</th><th scope="col">账户数</th><th scope="col" className="num">净值 (USD)</th></tr></thead>
+                  <tbody>{points.map((point) => (
+                    <tr key={point.day}><th scope="row">{point.day}</th><td>{point.accountHashes.length}</td>
+                      <td className="num">{point.netWorth === null ? "—" : formatUSD(point.netWorth)}</td></tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </>
       )}
     </section>

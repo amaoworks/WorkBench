@@ -16,6 +16,11 @@ export default {
     "investment.quotes": lazy(() => import("./InvestmentQuotesWidget")),
     "investment.alerts": lazy(() => import("./InvestmentAlertsWidget"))
   },
+  widgetMeta: {
+    "investment.snapshot": { icon: Wallet },
+    "investment.quotes": { icon: ChartNoAxesCombined },
+    "investment.alerts": { icon: BellRing },
+  },
   icons: { "investment.chart": ChartNoAxesCombined },
   menu: [
     { label: "图表", to: "/investment", icon: CandlestickChart },

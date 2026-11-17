@@ -15,9 +15,11 @@ export async function streamChat(
   onStarted: (conversationId: string, messageId: string, assistantMessageId?: string) => void,
   onDelta: (text: string) => void,
   onTool: (tool: ChatTool) => void,
+  signal?: AbortSignal,
 ): Promise<ChatResponse> {
   const response = await apiResponse("/api/chat/stream", {
     method: "POST",
+    signal,
     body: JSON.stringify({
       conversationId, message, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       ...(context ? { context } : {}),
@@ -37,7 +39,12 @@ export async function streamChat(
       if (line.startsWith("data:")) data += line.slice(5).trimStart();
     }
     if (!event || !data) return;
-    const payload: unknown = JSON.parse(data);
+    let payload: unknown;
+    try {
+      payload = JSON.parse(data);
+    } catch {
+      throw new Error("AI 响应无法解析");
+    }
     if (event === "chat.started") {
       const started = chatStartedSchema.parse(payload);
       onStarted(started.conversationId, started.messageId, started.assistantMessageId);

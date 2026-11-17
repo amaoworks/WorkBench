@@ -5,7 +5,7 @@ import { Settings2, X } from "lucide-react";
 import { Button } from "../../components/ui/Button";
 import { adminSettingsRegistry, settingsRegistry } from "../../modules/registry";
 import type { WorkbenchModule } from "../../shared/schema";
-import { ExternalSettingsFrame } from "../../app/ExternalPage";
+import { ExternalSettingsFrame } from "../../components/ExternalFrame";
 import { useSettings } from "./queries";
 import { Notice } from "../../components/ui/Notice";
 import { Skeleton } from "../../components/ui/States";
@@ -82,18 +82,14 @@ export function ModuleSettingsDialog({ module, scope = "personal" }: {
           </div>
           <div className="module-settings-body">
             {!module.enabled && module.kind === "external" && (
-              <Notice title="业务已停用" className="mb-4">
-                可修改配置和连接。
-              </Notice>
+              <Notice title="业务已停用" className="mb-4" />
             )}
             {module.kind === "external" && module.pending && (
-              <Notice title={module.enabled ? "正在启用" : "正在停用"} className="mb-4">
-                等待服务确认。
-              </Notice>
+              <Notice title={module.enabled ? "正在启用" : "正在停用"} className="mb-4" />
             )}
             {module.kind === "external" && module.health === "offline" && (
               <Notice tone="warning" title="服务不可达" className="mb-4">
-                修改连接后重试。
+                在列表行打开连接。
               </Notice>
             )}
             {module.kind === "external" && module.health === "incompatible" && (
@@ -116,7 +112,6 @@ export function ModuleSettingsDialog({ module, scope = "personal" }: {
           <ConfirmDialog
             open={confirmDiscard}
             title="放弃未保存的修改？"
-            description="关闭后，本次修改不会保存。"
             busy={false}
             confirmLabel="放弃修改"
             cancelLabel="继续编辑"

@@ -69,10 +69,10 @@ export function DeviceSessionsPanel() {
 
   const description =
     target?.kind === "all"
-      ? "确定注销全部设备吗？"
+      ? "当前和所有其他设备上的登录都会立即失效。"
       : target?.session.current
-        ? "确定注销当前设备吗？"
-        : `确定注销“${target?.session.deviceName ?? ""}”吗？`;
+        ? "当前设备将退出登录。"
+        : "该设备上的登录会立即失效。";
 
   return (
     <div className="studio-form">

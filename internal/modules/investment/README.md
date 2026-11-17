@@ -9,12 +9,19 @@
 | Schwab 配置与持久化 | `schwab.go` |
 | OAuth 页面与回调、令牌刷新、REST 代理 | `schwab_oauth.go`、`schwab_auth.go`、`schwab_proxy.go` |
 | Schwab 实时连接、凭据读取、浏览器入口 | `streamer.go`、`streamer_credentials.go`、`streamer_http.go` |
-| 后台价格采集、交易日历、规则与历史 API | `monitor.go`、`monitor_quotes.go`、`monitor_http.go` |
-| Futu 配置与地址校验、行情 HTTP 入口 | `futu.go`、`futu_http.go` |
+| 后台价格采集、监控行情源选择、交易日历、规则与历史 API | `monitor.go`、`monitor_provider.go`、`monitor_quotes.go`、`monitor_http.go` |
+| 主行情源选择 | `marketdata.go` |
+| 净值快照与历史 | `networth.go` |
+| 总览快照、行情与提醒 | `overview.go` |
+| 持仓与订单读取 | `portfolio.go` |
+| 图表与交易偏好 | `preferences.go` |
+| 行情会话 | `session.go` |
+| AI 工具 | `tools.go` |
+| Futu 配置与地址校验、主行情查询与 HTTP 入口 | `futu.go`、`futu_marketdata.go`、`futu_http.go` |
 | Futu 连接与推送、订阅租约、历史查询与缓存 | `futu_gateway.go`、`futu_subscriptions.go`、`futu_history.go` |
 | OpenD 传输协议、行情请求与解码 | `futu_opend.go`、`futu_quotes.go` |
 | OpenD 安装、进程与登录配置 | `futu_install.go`、`futu_service.go`、`futu_process_*.go`、`futu_login.go` |
-| 夜盘开关、终端资源与图表库代理 | `overnight.go`、`chart.go`、`chart_cache.go`、`chart_warm.go` |
+| 夜盘开关、终端资源构建入口与图表库代理 | `overnight.go`、`chart.go`、`chart_assets_dev.go`、`chart_assets_prod.go`、`chart_cache.go`、`chart_warm.go` |
 | 当前 TV 详情面板夜盘字段兼容修复 | `chart_compat.go`、`chart/tv-quotes-compat.json` |
 | 工作台自选表持久化、编辑版本检查 | `watchlists.go` |
 | 模块内共享的路径、时间及随机值辅助函数 | `helpers.go` |
@@ -52,8 +59,9 @@
 | `datafeed-realtime.js` | Schwab 字段转换与实时 K 线聚合 |
 | `datafeed-quotes.js` | TV 报价字段规范化、Schwab 优先与富途夜盘补充、时段报价口径 |
 | `broker.js`、`broker-models.js` | 账户和交易适配、订单与持仓模型 |
-| `schwab.js`、`stream.js`、`futu.js`、`websocket.js` | 请求客户端与行情连接 |
-| `index.html`、`loading.js`、`theme.js` | 终端装配、加载反馈与主题 |
+| `schwab.js`、`stream.js`、`futu.js`、`websocket.js`、`market-data.js` | 请求客户端、行情源选择与行情连接 |
+| `index.html`、`loading.js`、`theme.js`、`custom.css`、`identity.js`、`session-menu.js` | 终端装配、加载反馈、主题覆盖、身份校验与会话菜单 |
+| `chart-state.js`、`preferences.js` | 图表状态持久化与交易偏好同步 |
 | `watchlists.js` | 自选表恢复、自动保存、待提交草稿与重试 |
 
 行情转换函数接收明确的输入和缓存，连接代数校验由 `datafeed.js` 传入历史请求函数。新增终端 JS 放在 `chart/` 同层，可被当前嵌入规则、lint 和浏览器测试路由直接发现。

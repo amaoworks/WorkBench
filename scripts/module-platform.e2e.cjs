@@ -16,7 +16,7 @@ async function choose(page, trigger, option) {
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto(baseURL);
-    await page.getByRole("heading", { name: "今天，一目了然", exact: true }).waitFor();
+    await page.getByRole("heading", { name: "总览", exact: true }).waitFor();
     // Cards are named by their widget definitions; empty cards stay hidden, 资产快照 always renders.
     await page.getByRole("region", { name: "资产快照", exact: true }).waitFor();
     await page.getByRole("button", { name: "配置卡片", exact: true }).click();
@@ -85,7 +85,7 @@ async function choose(page, trigger, option) {
     assert.equal((await page.request.get(`${baseURL}/api/modules/investment/schwab`)).status(), 503);
     assert.equal((await page.request.get(`${baseURL}/investment/terminal`)).status(), 503);
     await page.goto(baseURL);
-    await page.getByRole("heading", { name: "今天，一目了然", exact: true }).waitFor();
+    await page.getByRole("heading", { name: "总览", exact: true }).waitFor();
     await page.waitForLoadState("networkidle");
     assert.equal(await page.getByRole("region", { name: "资产快照", exact: true }).count(), 0);
     await page.goto(`${baseURL}/admin/settings?tab=modules`);

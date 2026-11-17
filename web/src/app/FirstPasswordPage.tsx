@@ -7,6 +7,7 @@ import { Field } from "../components/ui/Field";
 import { Notice } from "../components/ui/Notice";
 import { apiValidated } from "../shared/api";
 import { reauthenticateSchema } from "../shared/schema";
+import { rememberPasswordNotice } from "../shared/passwordNotice";
 
 export function FirstPasswordPage() {
   const [currentPassword, setCurrentPassword] = useState("");
@@ -22,7 +23,10 @@ export function FirstPasswordPage() {
         method: "PUT",
         body: JSON.stringify({ currentPassword, newPassword }),
       }),
-    onSuccess: () => window.location.replace("/"),
+    onSuccess: () => {
+      rememberPasswordNotice("密码已更新，请使用新密码登录。");
+      window.location.replace("/");
+    },
   });
 
   function submit(event: FormEvent) {

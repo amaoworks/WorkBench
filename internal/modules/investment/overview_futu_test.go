@@ -112,6 +112,38 @@ func overviewFutuFixture(t *testing.T, m *Module, now time.Time) *overviewOpenD 
 	return fake
 }
 
+func TestOverviewFutuStartupTimeoutRetries(t *testing.T) {
+	module := openInvestmentModule(t)
+	now := time.Date(2026, 11, 7, 4, 35, 36, 0, time.UTC)
+	module.now = func() time.Time { return now }
+	stalled, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stalled.Close() })
+	module.deps.FutuOpenDAddress = stalled.Addr().String()
+	if err := module.storeFutu(testContext(context.Background()), futuRecord{Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	got := module.overviewFutu(testContext(context.Background()))
+	if time.Since(started) < time.Second || got.Connected || got.QotLogined || got.LastError != "正在连接 OpenD" {
+		t.Fatalf("startup probe: %+v after %s", got, time.Since(started))
+	}
+	now = now.Add(2 * time.Second)
+	cachedAt := time.Now()
+	cached := module.overviewFutu(testContext(context.Background()))
+	if time.Since(cachedAt) > 200*time.Millisecond || cached.LastError != "正在连接 OpenD" {
+		t.Fatalf("startup failure was not held briefly: %+v after %s", cached, time.Since(cachedAt))
+	}
+	now = now.Add(overviewFutuRetryTTL)
+	overviewFutuFixture(t, module, now)
+	ready := module.overviewFutu(testContext(context.Background()))
+	if !ready.Connected || !ready.QotLogined || ready.LastError != "" {
+		t.Fatalf("retry: %+v", ready)
+	}
+}
+
 func TestOverviewFutuQuotesWithoutPersonalSchwab(t *testing.T) {
 	for _, reauth := range []bool{false, true} {
 		t.Run(fmt.Sprintf("reauth=%t", reauth), func(t *testing.T) {

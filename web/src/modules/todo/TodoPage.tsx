@@ -19,6 +19,7 @@ import { Notice } from "../../components/ui/Notice";
 import { Badge } from "../../components/ui/Badge";
 import { useConfirmDelete } from "../../components/ui/useConfirmDelete";
 import { TodoDeadline } from "./TodoDeadline";
+import { TaskCheck } from "./TaskCheck";
 import { cn } from "../../shared/cn";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
@@ -110,6 +111,11 @@ export default function TodoPage() {
   const priorityFilter = (PRIORITIES.some((item) => item.value === params.get("priority")) ? params.get("priority") : "") as "" | TaskPriority;
   const categoryFilter = params.get("category")?.trim() ?? "";
   const [categoryDraft, setCategoryDraft] = useState(categoryFilter);
+  const [syncedCategory, setSyncedCategory] = useState(categoryFilter);
+  if (categoryFilter !== syncedCategory) {
+    setSyncedCategory(categoryFilter);
+    setCategoryDraft(categoryFilter);
+  }
   const titleInput = useRef<HTMLInputElement>(null);
   const editTrigger = useRef<HTMLElement | null>(null);
   const [editing, setEditing] = useState<Task | null>(null);
@@ -279,7 +285,7 @@ export default function TodoPage() {
             aria-label="待办标题"
             value={newTask.title}
             onChange={(event) => changeNewTask("title", event.target.value)}
-            placeholder="添加待办，回车保存"
+            placeholder="添加待办"
             className="composer-input"
           />
           <div className="composer-opts">
@@ -384,13 +390,11 @@ export default function TodoPage() {
 
 function CheckButton({ task, onToggle, className }: { task: Task; onToggle: () => void; className?: string }) {
   return (
-    <button
-      type="button"
-      onClick={onToggle}
-      role="checkbox"
-      aria-checked={!!task.completedAt}
-      aria-label={`${task.completedAt ? "标记为未完成" : "标记为完成"}：${task.title}`}
-      className={cn("ck focus-ring", task.completedAt && "done", className)}
+    <TaskCheck
+      checked={!!task.completedAt}
+      label={`${task.completedAt ? "标记为未完成" : "标记为完成"}：${task.title}`}
+      onChange={onToggle}
+      className={className}
     />
   );
 }
@@ -571,7 +575,7 @@ function EditTaskDialog({
             {latest.isError && <Notice tone="danger" title="读取失败">{latest.error.message}</Notice>}
             {latest.isSuccess && !needsLatest && (
               <Notice tone={conflicts.length ? "warning" : "info"} title={conflicts.length ? "存在冲突字段" : "最新内容已合并"}>
-                {conflicts.length ? "选择保留的内容后再次保存。" : "草稿已保留，可检查后再次保存。"}
+                {conflicts.length ? "选择保留的内容后再次保存。" : null}
               </Notice>
             )}
             <fieldset disabled={blocked} className="min-w-0 space-y-4">
@@ -587,12 +591,10 @@ function EditTaskDialog({
                 />
               </Field>
               <Field label="截止时间">
-                <div>
-                  <TodoDeadline
-                    value={draft.dueAt ?? ""}
-                    onChange={(value) => changeDraft("dueAt", value ? new Date(value).toISOString() : null)}
-                  />
-                </div>
+                <TodoDeadline
+                  value={draft.dueAt ?? ""}
+                  onChange={(value) => changeDraft("dueAt", value ? new Date(value).toISOString() : null)}
+                />
               </Field>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <Field label="优先级">

@@ -140,7 +140,7 @@ async function toggleTheme(page) {
     assert.equal(new URL(page.url()).searchParams.get('tab'), null);
     assert.equal(await page.getByRole('region', { name: '投资终端', exact: true }).count(), 0);
     await page.getByRole("link", { name: "Workbench 总览", exact: true }).click();
-    await page.getByRole("heading", { name: "今天，一目了然", exact: true }).waitFor();
+    await page.getByRole("heading", { name: "总览", exact: true }).waitFor();
     assert.notEqual(await page.evaluate(() => getComputedStyle(document.body).overflow), "hidden");
     assert.deepEqual(errors, []);
     console.log("PASS: repeated and system theme changes, chart-only layout without floating controls, mobile sizing, chart preservation and legacy monitor link redirect; no trades.");

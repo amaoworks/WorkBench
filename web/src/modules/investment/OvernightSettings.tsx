@@ -22,11 +22,11 @@ export function OvernightSection({
           {error}
         </Notice>
       )}
-      <div className="flex items-center gap-2 text-sm">
+      <label className="inline-switch">
         <Switch label="启用夜盘行情" checked={value} disabled={!providerEnabled} onChange={onChange} />
-        启用夜盘行情
-      </div>
-      {!providerEnabled && <Notice title="富途牛牛行情未启用">启用后可使用夜盘行情。</Notice>}
+        <span aria-hidden="true">启用夜盘行情</span>
+      </label>
+      {!providerEnabled && <Notice title="富途牛牛行情未启用" />}
     </section>
   );
 }

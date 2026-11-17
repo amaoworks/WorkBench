@@ -39,23 +39,37 @@ Manifest 声明 ID、显示名称、业务版本、契约版本、图标和导�
 
 通知内容为纯文本，`actionRoute` 为站内路径，`actionLabel` 为跳转文案，幂等键由业务提供并在收件人范围内唯一。通知使用 `RecipientID`，个人调用的收件人必须与可信身份一致。列表、状态操作、SSE 和外部推送均按收件人隔离。`External` 默认关闭，业务显式设置后进入外部投递；该标志持久化且不在用户通知 API 中暴露。`ExpiresAt` 控制投递截止期，未指定时 Telegram 与移动推送使用 15 分钟。APNs/FCM payload 携带 `notificationId` 与 `actionRoute`，原生客户端只把已知站内路径映射为页面，未知路径回到通知列表。SSE 发布 `core.notification.created`、`core.notification.updated` 和 `core.notification.archived`，客户端收到后刷新查询。连接有心跳，不实现基于 Last-Event-ID 的历史补发。
 
-Telegram 使用独立 dispatcher 和已有 `event_deliveries` 持久化投递。移动推送以 `core.notification.created` 事件消费者接入独立 dispatcher，并复用相同的投递重试记录。消费者可通过 `RetryAfterError` 请求更晚的重试时间，通过 `PermanentDeliveryError` 直接终止为 `dead`；详情及设置接口见 [Telegram 通知](notifications.md)。
+Telegram 使用独立 dispatcher 和已有 `event_deliveries` 持久化投递。移动推送以 `core.notification.created` 事件消费者接入独立 dispatcher，并复用相同的投递重试记录。消费者可通过 `RetryAfterError` 请求更晚的重试时间，通过 `PermanentDeliveryError` 直接终止为 `dead`；详情及设置接口见 [外部通知](notifications.md)。
 
 ## AI 和对话
 
-[TextGenerator](../internal/contracts/text.go) 是业务主动调用的文本生成接口，参数为 profile、instruction、input。它不向 Provider 提供业务工具，返回不可用时使用 `ErrAIUnavailable`；不启用 AI 也能构造依赖该接口的业务。
+- [TextGenerator](../internal/contracts/text.go) 参数为 profile、instruction、input。它不向 Provider 提供业务工具，不可用时返回 `ErrAIUnavailable`。不启用 AI 也能构造依赖该接口的业务。
+- [AIProvider 与 AITool](../internal/contracts/ai.go) 服务于平台 Gateway。Provider 提供普通与流式生成。Gateway 暴露当前启用模块的工具，最多执行四轮工具调用，再进行一次无工具的结果收尾。
+- Responses 请求使用 `store: false`。每轮按顺序重传原始消息、模型输出（含加密推理项）和工具结果，不使用 `previous_response_id`。工具参数在服务端校验，执行审计持久化。
+- 会话与工具审计归调用用户。工具继承可信身份，模型参数不能指定执行用户，幂等记录按用户隔离。
+- Tool 风险分为 `read_only`、`low_write`、`high_write`。写工具需要幂等键；`high_write` 还需要 `ConfirmedBy`。当前注册工具只含查询和低风险写入，没有券商交易或删除工具。
+- 已注册待办创建、查询、更新和完成，通知查询与标记已读，投资持仓、订单、监控查询与监控创建，以及资讯查询、详情和简报生成。资讯简报工具不提交外部推送。Gateway 不提供通用高风险确认交互。
+- 聊天请求可附带 `context: { route, label }`，后端校验后仅用于本轮导航上下文。`timeZone` 用于提供当前时间和解析相对日期，默认 UTC。原始用户消息独立保存。
+- 后台 AI 设置的 `models` 是同一端点允许使用的模型 ID 列表，`model` 为其中的默认模型。自动文本生成使用默认模型。对话请求可通过 `model` 逐轮选择已添加模型，未指定时沿用 `profile` 的默认行为。显式指定未添加或已移除的模型返回 HTTP 400，且不写入本轮用户消息。
 
-[AIProvider 与 AITool](../internal/contracts/ai.go) 服务于平台 Gateway。Provider 提供普通与流式生成；Gateway 暴露当前启用模块的工具，最多执行四轮工具调用，再进行一次无工具的结果收尾。Responses 请求使用 `store: false`，每轮按顺序重传原始消息、模型输出（含加密推理项）和工具结果，不使用 `previous_response_id`。工具参数在服务端校验，执行审计持久化。会话与工具审计归调用用户；工具继承可信身份，模型参数不能指定执行用户，幂等记录按用户隔离。
-
-Tool 风险分为 read_only、low_write、high_write。写工具需要幂等键；high_write 还需要 `ConfirmedBy`。当前注册工具只含查询和低风险写入，没有券商交易或删除工具。已注册待办创建、查询、更新和完成，通知查询与标记已读，投资持仓、订单、监控查询与监控创建，以及资讯查询、详情和简报生成；资讯简报工具不提交外部推送。Gateway 不提供通用高风险确认交互。聊天请求可附带 `context: { route, label }`，后端校验后仅用于本轮导航上下文；`timeZone` 用于提供当前时间和解析相对日期，默认 UTC。原始用户消息独立保存。后台 AI 设置的 `models` 是同一端点允许使用的模型 ID 列表，`model` 为其中的默认模型。自动文本生成使用默认模型；对话请求可通过 `model` 逐轮选择已添加模型，未指定时沿用 `profile` 的默认行为。显式指定未添加或已移除的模型返回 HTTP 400，且不写入本轮用户消息。
-
-对话请求包含 `conversationId`（可省略以新建）、`message`、`profile`（默认 default）及可选的 `model`。选择 `model` 时使用该模型处理整轮请求及工具续轮，并保留会话历史；响应包含对话 ID、消息 ID、文本、各轮合计用量和工具执行状态。流式 HTTP 事件为 `chat.started`、`chat.delta`、`chat.tool`、`chat.completed` 或 `chat.error`；每次工具执行后先保存工具状态与结果，再发送状态；断开连接仍保留已完成操作，取消后不再启动后续工具。工具摘要与最终回答使用同一条助手消息，正常完成时更新为最终回答。`GET /api/conversations` 默认每页 20 条，`GET /api/conversations/{id}/messages` 默认每页 50 条，二者支持 `limit=1..100` 和 opaque `cursor`；返回 `nextCursor` 时继续读取。`PATCH /api/conversations/{id}` 重命名，`DELETE` 归档。消息页包含稳定的消息 `id`，按时间正序返回；`chat.started` 提供用户消息 `messageId` 和预分配的 `assistantMessageId`，`chat.completed.messageId` 对应同一助手消息。客户端按消息 ID 合并流式内容与历史，恢复并展示历史后才允许续聊；重新打开面板或窗口重新聚焦时刷新当前会话。
+| 项 | 约定 |
+|---|---|
+| 请求 | `conversationId`（可省略以新建）、`message`、`profile`（默认 default）、可选 `model` |
+| 模型 | 指定后用于整轮及工具续轮，并保留会话历史 |
+| 响应 | 对话 ID、消息 ID、文本、各轮合计用量、工具执行状态 |
+| 流式事件 | `chat.started`、`chat.delta`、`chat.tool`、`chat.completed`、`chat.error` |
+| 工具 | 每次执行后先保存状态与结果，再发送状态；断开仍保留已完成操作，取消后不再启动后续工具 |
+| 助手消息 | 工具摘要与最终回答共用一条；正常完成时更新为最终回答 |
+| 列表 | `GET /api/conversations` 默认 20 条，消息默认 50 条；`limit=1..100`，opaque `cursor`，有 `nextCursor` 时继续 |
+| 修改 | `PATCH /api/conversations/{id}` 重命名，`DELETE` 归档 |
+| 消息 ID | 按时间正序；`chat.started` 给出 `messageId` 与预分配的 `assistantMessageId`，`chat.completed.messageId` 对应同一助手消息 |
+| 客户端 | 按消息 ID 合并流式内容与历史；展示历史后才允许续聊；重新打开面板或窗口聚焦时刷新当前会话 |
 
 ## 页面和 Widget
 
 [WidgetDefinition](../internal/contracts/widget.go) 声明 ID、模块、schemaVersion、标题、widgetKind、dataRoute、尺寸和默认顺序。尺寸为 small/medium/large。导航用 `pageKey` 关联页面。
 
-前端 [ModuleUI](../web/src/modules/registry.ts) 提供 pages、widgets，以及可选的 icons、settings（个人业务配置）、adminSettings（后台共享业务配置）、menu（顶部导航下拉项）和 subpages（子页面）。后端只能通过这些稳定标识选择本地编译的组件。Widget 接收 `{ widget }`，两类业务设置均接收 `{ enabled }`。`settings` 在 `/settings` 装配，`adminSettings` 仅在管理员路由 `/admin/settings` 装配；界面入口拆分不改变 API、配置归属或后端权限。
+前端 [ModuleUI](../web/src/modules/registry.ts) 提供 pages、widgets，以及可选的 `widgetMeta`（总览卡片图标和排序）、icons、settings（个人业务配置）、adminSettings（后台共享业务配置）、menu（顶部导航下拉项）和 subpages（子页面）。后端只能通过这些稳定标识选择本地编译的组件。Widget 接收 `{ widget }`，两类业务设置均接收 `{ enabled }`。`settings` 在 `/settings` 装配，`adminSettings` 仅在管理员路由 `/admin/settings` 装配；界面入口拆分不改变 API、配置归属或后端权限。
 
 Dashboard 保存完整的 Widget 配置集合，包含 ID、visible、size、order；目录查询保留停用业务以便编辑偏好，展示查询只返回启用且可见的卡片。
 
@@ -63,7 +77,7 @@ Dashboard 保存完整的 Widget 配置集合，包含 ID、visible、size、ord
 
 JSON 错误使用 `code`、`message`，并可含 `details`、`requestId`，定义见 [APIError](../internal/contracts/http.go)。共享 [httpapi](../internal/foundation/httpapi/json.go) 校验 JSON、限制请求体并拒绝未知字段。前端 [api](../web/src/shared/api.ts) 负责凭据、CSRF 和错误映射，未校验的 JSON 返回 `unknown`。消费响应字段时使用 `apiValidated(path, schema, init)` 或显式 `schema.parse`，响应类型由 Zod 推导。关键 HTTP 契约通过真实后端响应与生产前端 schema 的跨端测试验证，见 [web/tests/contracts.test.mjs](../web/tests/contracts.test.mjs)。原生接入流程见[移动端接入](mobile.md)，相关路径和字段见 [OpenAPI](mobile.openapi.yaml)。
 
-`POST /api/modules/external` 已移除，当前返回 404。下表中的外部管理、页面和代理入口仅用于已保存的外部模块记录。
+`POST /api/modules/external` 已移除，当前返回 404。历史协议见[外部模块第一阶段](archive/external-modules-phase-1.md)。下表仅用于已保存的外部模块记录。
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
@@ -109,6 +123,10 @@ JSON 错误使用 `code`、`message`，并可含 `details`、`requestId`，定�
 | POST | `/api/settings/ai/models` | 管理员以 `{ baseUrl, apiKey, clearApiKey? }` 获取端点模型列表，返回 `{ models }`，不保存 |
 | GET / PUT | `/api/settings/telegram` | 读取脱敏配置和状态 / 保存 Telegram 配置 |
 | POST | `/api/settings/telegram/test` | 发送一条测试消息，不保存候选配置 |
+| GET | `/api/settings/telegram/recipient` | 读取本人接收目标与开关 |
+| PUT | `/api/settings/telegram/recipient` | 保存本人接收目标 |
+| POST | `/api/settings/telegram/recipient/test` | 向本人目标发送测试消息 |
+| GET / PUT | `/api/settings/telegram/recipients/{userID}` | 管理员读取 / 分配指定用户的接收目标 |
 | PUT | `/api/settings/password` | 验证当前密码并修改 |
 | POST | `/api/modules/investment/schwab/oauth/start` | 创建移动 Schwab 授权 |
 | GET | `/api/modules/investment/schwab/oauth/status/{id}` | 查询移动 Schwab 授权结果 |

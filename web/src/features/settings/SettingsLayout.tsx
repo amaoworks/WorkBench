@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useIsFetching, useQueryClient } from "@tanstack/react-query";
+import { useIsFetching } from "@tanstack/react-query";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { cn } from "../../shared/cn";
 
@@ -23,20 +23,24 @@ export function SettingsLayout({ title, sections, children }: {
   const nav = useRef<HTMLElement>(null);
   const firstScroll = useRef(true);
   const positioned = useRef<string | null>(null);
-  const client = useQueryClient();
-  const fetching = useIsFetching();
+  const fetching = useIsFetching({
+    predicate: (query) =>
+      query.state.dataUpdatedAt === 0 &&
+      query.state.fetchStatus === "fetching" &&
+      !(Array.isArray(query.queryKey) && query.queryKey[0] === "modules"),
+  });
 
   useEffect(() => {
     // User lists and service panels change section heights while their first queries load.
-    // Position each deep link once after loading; polling must not pull the user back.
-    if (client.isFetching() || positioned.current === selected) return;
+    // Position each deep link once after loading; background polls must not pull the user back.
+    if (fetching > 0 || positioned.current === selected) return;
     const frame = requestAnimationFrame(() => {
       scrollToSection(selected, !firstScroll.current);
       positioned.current = selected;
       firstScroll.current = false;
     });
     return () => cancelAnimationFrame(frame);
-  }, [client, selected, fetching]);
+  }, [selected, fetching]);
 
   useEffect(() => {
     let frame = 0;

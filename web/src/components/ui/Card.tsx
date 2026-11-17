@@ -5,12 +5,11 @@ export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return <div className={cn("ui-card", className)} {...props} />;
 }
 
-export function CardHeader({ title, description, action }: { title: string; description?: string; action?: ReactNode }) {
+export function CardHeader({ title, action }: { title: string; action?: ReactNode }) {
   return (
     <div className="ui-card-header">
       <div>
         <h2>{title}</h2>
-        {description && <p>{description}</p>}
       </div>
       {action}
     </div>

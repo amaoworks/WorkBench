@@ -13,7 +13,7 @@ import { useReportDirty } from "../../shared/settingsDialog";
 
 export default function NewsSettings({ enabled }: { enabled: boolean }) {
   const settings = useNewsSettings(enabled);
-  if (!enabled) return <Notice title="资讯业务已停用">启用后可配置采集、AI 和简报。</Notice>;
+  if (!enabled) return <Notice title="资讯业务已停用" />;
   if (settings.isPending) return <Skeleton className="h-64" />;
   if (settings.isError)
     return (
@@ -52,10 +52,10 @@ function SettingsForm({ initial }: { initial: Settings }) {
     <form onSubmit={submit} className="space-y-5">
       <section className="space-y-3">
         <h3 className="font-medium">AI 处理</h3>
-        <div className="flex items-center gap-2 text-sm">
+        <label className="inline-switch">
           <Switch label="自动分析新资讯" checked={form.autoAI} onChange={(autoAI) => change({ autoAI })} />
-          自动分析新资讯
-        </div>
+          <span aria-hidden="true">自动分析新资讯</span>
+        </label>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="目标语言">
             <input
@@ -92,10 +92,10 @@ function SettingsForm({ initial }: { initial: Settings }) {
       </section>
       <section className="space-y-3">
         <h3 className="font-medium">定时简报</h3>
-        <div className="flex items-center gap-2 text-sm">
+        <label className="inline-switch">
           <Switch label="启用定时简报" checked={form.digestEnabled} onChange={(digestEnabled) => change({ digestEnabled })} />
-          启用定时简报
-        </div>
+          <span aria-hidden="true">启用定时简报</span>
+        </label>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
           <Field label="小时">
             <input
@@ -137,14 +137,14 @@ function SettingsForm({ initial }: { initial: Settings }) {
               onChange={(event) => change({ digestMaxItems: event.target.valueAsNumber })}
             />
           </Field>
-          <Field label="主题">
-            <input value={form.digestTopic} onChange={(event) => change({ digestTopic: event.target.value })} placeholder="全部主题" />
+          <Field label="话题">
+            <input value={form.digestTopic} onChange={(event) => change({ digestTopic: event.target.value })} placeholder="全部话题" />
           </Field>
         </div>
-        <div className="flex items-center gap-2 text-sm">
+        <label className="inline-switch">
           <Switch label="生成后提交推送" checked={form.pushEnabled} onChange={(pushEnabled) => change({ pushEnabled })} />
-          生成后提交推送
-        </div>
+          <span aria-hidden="true">生成后提交推送</span>
+        </label>
         <Link className="text-sm text-[var(--brand)] hover:underline" to="/settings?tab=notifications">
           通知推送
         </Link>

@@ -1,0 +1,1 @@
+import{r as e,yt as t}from"./Notice-CpXfW7WF.js";var n=t();function r({checked:t,label:r,disabled:i,onChange:a,className:o}){return(0,n.jsx)(`button`,{type:`button`,role:`checkbox`,"aria-checked":t,"aria-label":r,disabled:i,className:e(`ck focus-ring`,t&&`done`,o),onClick:a})}export{r as t};

@@ -15,6 +15,12 @@ func snapshotAccount(hash string, netWorth, cash, invested, dayPnl *float64) por
 	return portfolioAccount{Hash: hash, NetWorth: netWorth, Cash: cash, Invested: invested, DayPnl: dayPnl}
 }
 
+func labeledAccount(hash, label string, netWorth, cash, invested, dayPnl *float64) portfolioAccount {
+	account := snapshotAccount(hash, netWorth, cash, invested, dayPnl)
+	account.Label = label
+	return account
+}
+
 func TestStoreNetWorthSnapshotUpsertsAndCommitsCompleteAccounts(t *testing.T) {
 	m := openInvestmentModule(t)
 	ctx := testContext(context.Background())
@@ -66,21 +72,21 @@ func TestNetWorthHistoryAggregatesWithoutInventingMissingAccounts(t *testing.T) 
 	})
 	m.now = func() time.Time { return time.Date(2026, 3, 6, 16, 15, 0, 0, loc) }
 	if err := m.storeNetWorthSnapshot(ctx, authorizedAt.UnixMilli(), portfolioResponse{Accounts: []portfolioAccount{
-		snapshotAccount("hash-a", number(100), number(20), number(80), number(2)),
+		labeledAccount("hash-a", "经纪 ••1111", number(100), number(20), number(80), number(2)),
 	}}); err != nil {
 		t.Fatal(err)
 	}
 	m.now = func() time.Time { return time.Date(2026, 3, 9, 16, 15, 0, 0, loc) }
 	if err := m.storeNetWorthSnapshot(ctx, authorizedAt.UnixMilli(), portfolioResponse{Accounts: []portfolioAccount{
-		snapshotAccount("hash-a", number(110), number(25), number(85), number(3)),
-		snapshotAccount("hash-b", number(50), number(10), number(40), number(1)),
+		labeledAccount("hash-a", "经纪 ••1111", number(110), number(25), number(85), number(3)),
+		labeledAccount("hash-b", "经纪 ••2222", number(50), number(10), number(40), number(1)),
 	}}); err != nil {
 		t.Fatal(err)
 	}
 	m.now = func() time.Time { return time.Date(2026, 3, 10, 16, 15, 0, 0, loc) }
 	err := m.storeNetWorthSnapshot(ctx, authorizedAt.UnixMilli(), portfolioResponse{Accounts: []portfolioAccount{
-		snapshotAccount("hash-a", number(112), number(25), number(87), number(2)),
-		snapshotAccount("hash-b", number(51), nil, number(41), number(1)),
+		labeledAccount("hash-a", "经纪 ••1111", number(112), number(25), number(87), number(2)),
+		labeledAccount("hash-b", "经纪 ••2222", number(51), nil, number(41), number(1)),
 	}})
 	if err == nil {
 		t.Fatal("incomplete account was not reported")
@@ -92,6 +98,9 @@ func TestNetWorthHistoryAggregatesWithoutInventingMissingAccounts(t *testing.T) 
 	}
 	if len(history.Accounts) != 2 || len(history.Points) != 3 {
 		t.Fatalf("history=%+v", history)
+	}
+	if history.AccountLabels["hash-a"] != "经纪 ••1111" || history.AccountLabels["hash-b"] != "经纪 ••2222" {
+		t.Fatalf("labels=%v", history.AccountLabels)
 	}
 	if got := history.Points[0]; len(got.AccountHashes) != 1 || got.NetWorth == nil || *got.NetWorth != 100 {
 		t.Fatalf("first point=%+v", got)

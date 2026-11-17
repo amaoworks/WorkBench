@@ -232,7 +232,7 @@ async function expectFormControlStyles(page, reference, label) {
     await settingsDialog.getByLabel("分钟", { exact: true }).fill("30");
     await settingsDialog.getByLabel("时区", { exact: true }).fill("UTC");
     await settingsDialog.getByLabel("最多条数", { exact: true }).fill("12");
-    await settingsDialog.getByLabel("主题", { exact: true }).fill("重点");
+    await settingsDialog.getByLabel("话题", { exact: true }).fill("重点");
     await settingsDialog.getByRole("switch", { name: "生成后提交推送", exact: true }).click();
     await settingsDialog.getByRole("button", { name: "保存", exact: true }).click();
     await page.getByText("资讯设置已保存", { exact: true }).waitFor();
@@ -248,7 +248,7 @@ async function expectFormControlStyles(page, reference, label) {
     assert.equal(await settingsDialog.getByLabel("分钟", { exact: true }).inputValue(), "30");
     assert.equal(await settingsDialog.getByLabel("时区", { exact: true }).inputValue(), "UTC");
     assert.equal(await settingsDialog.getByLabel("最多条数", { exact: true }).inputValue(), "12");
-    assert.equal(await settingsDialog.getByLabel("主题", { exact: true }).inputValue(), "重点");
+    assert.equal(await settingsDialog.getByLabel("话题", { exact: true }).inputValue(), "重点");
     assert.equal(await settingsDialog.getByRole("switch", { name: "生成后提交推送", exact: true }).getAttribute("aria-checked"), "true");
     await settingsDialog.getByRole("switch", { name: "启用定时简报", exact: true }).click();
     await settingsDialog.getByRole("button", { name: "保存", exact: true }).click();
@@ -266,7 +266,7 @@ async function expectFormControlStyles(page, reference, label) {
       await page.getByLabel("名称", { exact: true }).fill(source.name);
       await choose(page, page.getByLabel("类型", { exact: true }), "RSS");
       await page.getByLabel("订阅地址", { exact: true }).fill(source.url);
-      await page.getByLabel("主题", { exact: true }).fill(source.topic);
+      await page.getByLabel("话题", { exact: true }).fill(source.topic);
       await page.getByLabel("刷新间隔（分钟）", { exact: true }).fill("1440");
       await page.getByRole("switch", { name: "启用订阅源", exact: true }).click();
       const saved = page.waitForResponse((response) => response.url().endsWith("/api/modules/news/sources") && response.request().method() === "POST");
@@ -278,7 +278,7 @@ async function expectFormControlStyles(page, reference, label) {
     await page.getByRole("button", { name: "关注规则", exact: true }).click();
     await page.getByRole("button", { name: "添加规则", exact: true }).click();
     await page.getByLabel("名称", { exact: true }).fill("量子关注");
-    await page.getByLabel("主题", { exact: true }).fill("重点");
+    await page.getByLabel("话题", { exact: true }).fill("重点");
     await page.getByLabel("包含关键词", { exact: true }).fill("Quantum, 量子");
     await page.getByLabel("排除关键词", { exact: true }).fill("广告");
     await page.getByLabel("浏览器 RSS", { exact: true }).check();
@@ -368,7 +368,7 @@ async function expectFormControlStyles(page, reference, label) {
     assert.equal(aiRequests, beforeAnalyze + 1, "second analysis should use the cached result");
 
     await page.getByRole("button", { name: "简报", exact: true }).click();
-    await page.getByLabel("主题", { exact: true }).fill("重点");
+    await page.getByLabel("话题", { exact: true }).fill("重点");
     await choose(page, page.getByLabel("时间范围", { exact: true }), "最近 24 小时");
     await page.getByLabel("最多条数", { exact: true }).fill("10");
     await page.getByRole("switch", { name: "提交推送", exact: true }).click();
@@ -419,7 +419,7 @@ async function expectFormControlStyles(page, reference, label) {
         await expectFormControlStyles(page, page.getByLabel("名称", { exact: true }), `${label} rule`);
         await page.getByRole("button", { name: "取消", exact: true }).click();
         await page.getByRole("button", { name: "简报", exact: true }).click();
-        await expectFormControlStyles(page, page.getByLabel("主题", { exact: true }), `${label} digest`);
+        await expectFormControlStyles(page, page.getByLabel("话题", { exact: true }), `${label} digest`);
         await page.getByRole("button", { name: "文章", exact: true }).click();
       }
       await search.fill("");
@@ -441,7 +441,7 @@ async function expectFormControlStyles(page, reference, label) {
     assert.equal(await page.getByRole("link", { name: "资讯", exact: true }).count(), 0);
     assert.equal((await page.request.get(`${baseURL}/api/modules/news/settings`)).status(), 503);
     await page.goto(`${baseURL}/settings?tab=modules`);
-    await page.getByText("在后台设置中启用。", { exact: true }).waitFor();
+    await page.getByRole("link", { name: "业务管理", exact: true }).waitFor();
     assert.equal(await page.getByRole("button", { name: "资讯设置", exact: true }).count(), 0);
 
     assert.deepEqual(fixtureErrors, []);

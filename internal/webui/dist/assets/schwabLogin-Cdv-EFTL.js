@@ -1,0 +1,1 @@
+var e=`/api/modules/investment/schwab/oauth/login`;export{e as t};

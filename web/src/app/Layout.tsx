@@ -9,7 +9,7 @@ import { useCurrentUser, useIsAdmin, userStorageKey } from "../shared/auth";
 import { Button, ButtonLink } from "../components/ui/Button";
 import { Notice } from "../components/ui/Notice";
 import { Skeleton } from "../components/ui/States";
-import { useModules } from "./queries";
+import { useModules } from "../shared/modules";
 import { AIPanel } from "../features/ai/AIPanel";
 import { useNotificationStream } from "../features/notifications/useNotificationStream";
 import { useSettings } from "../features/settings/queries";
@@ -230,7 +230,7 @@ function RouteFallback({ modules }: { modules: ReturnType<typeof useModules> }) 
   if (owner && !owner.enabled)
     return (
       <Notice title={`${owner.name}未启用`} action={settingsLink}>
-        {isAdmin ? "在后台设置中启用。" : "联系管理员启用。"}
+        {isAdmin ? null : "联系管理员启用。"}
       </Notice>
     );
   if (owner?.lastError)
@@ -249,13 +249,12 @@ function RouteFallback({ modules }: { modules: ReturnType<typeof useModules> }) 
   if (owner)
     return (
       <Notice tone="warning" title="页面暂不可用" action={settingsLink}>
-        当前版本的界面不包含此页面，请刷新或更新后再试。
+        刷新或更新后重试。
       </Notice>
     );
   return (
     <div className="py-20 text-center">
       <h1 className="text-xl font-semibold">页面不存在</h1>
-      <p className="mt-2 text-[var(--muted)]">地址可能已变更。</p>
       <ButtonLink className="mt-6" variant="secondary" to="/">
         返回总览
       </ButtonLink>

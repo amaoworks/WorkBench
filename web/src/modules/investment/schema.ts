@@ -143,5 +143,6 @@ export const netWorthPointSchema = z.object({
 export type NetWorthPoint = z.infer<typeof netWorthPointSchema>;
 export const netWorthHistorySchema = z.object({
   status: portfolioStatus, message: z.string().optional(), currency: z.literal("USD"), range: z.enum(["1m", "3m", "1y", "all"]),
-  account: z.string().optional(), accounts: z.array(z.string()), points: z.array(netWorthPointSchema), updatedAt: z.string().optional(),
+  account: z.string().optional(), accounts: z.array(z.string()), accountLabels: z.record(z.string(), z.string()),
+  points: z.array(netWorthPointSchema), updatedAt: z.string().optional(),
 });

@@ -123,7 +123,7 @@ test("AI panel keeps history enabled after local sends", () => {
   assert.match(panel, /useConversationMessages\(conversationId, open\)/);
   assert.match(panel, /mergeConversationMessages\(history.data \?\? \[\], messages, activeMessageIds\)/);
   assert.match(panel, /messages\.filter\(\(message\) => message\.active\)/);
-  assert.match(panel, /active: false, content: `\$\{prefix\}请求失败/);
+  assert.match(panel, /active: false, content: `\$\{prefix\}\$\{message\}`/);
   assert.match(panel, /invalidateQueries\(\{ queryKey: \["ai", "conversation"\] \}\)/);
 });
 

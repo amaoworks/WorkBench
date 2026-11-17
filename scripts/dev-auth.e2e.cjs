@@ -189,7 +189,7 @@ async function verifyInvestmentChart(page) {
     await page.getByLabel("新密码", { exact: true }).fill(changedPassword);
     await page.getByLabel("确认新密码", { exact: true }).fill(changedPassword);
     await page.getByRole("button", { name: "更新密码", exact: true }).click();
-    await page.getByRole("heading", { name: "欢迎回来", exact: true }).waitFor();
+    await page.getByRole("heading", { name: "登录", exact: true }).waitFor();
     assert.equal((await login(page, changedPassword)).status(), 200);
     await page.getByRole("link", { name: "资讯", exact: true }).click();
     await page.getByRole("heading", { name: "资讯", exact: true }).waitFor();
