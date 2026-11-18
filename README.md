@@ -94,7 +94,7 @@ git push origin v0.1.1
 - [前端界面规范](doc/frontend-guidelines.md)
 - [Todo](doc/modules/todo.md)、[Wallos 联动](doc/modules/todo-wallos.md)、[Investment](doc/modules/investment.md)、[资讯](doc/modules/news.md)
 - [外部通知](doc/notifications.md)
-- [移动端接入](doc/mobile.md)、[移动端 OpenAPI](doc/mobile.openapi.yaml)
+- [移动客户端开发路线](client/README.md)、[移动端接入](doc/mobile.md)、[移动端 OpenAPI](doc/mobile.openapi.yaml)
 - [AI 协作指南](AGENTS.md)：面向 AI 编程助手的架构红线与开发工作流
 
 
@@ -110,6 +110,7 @@ internal/modules/       业务应用层：todo、investment、news
 internal/webui/         内嵌前端资源和 HTTP Handler
 web/src/modules/        对应业务的页面、Widget、设置、查询和类型
 web/src/                应用外壳、平台功能、共享组件和工具
+client/                 iOS 和 Android 客户端
 deploy/                 systemd、反向代理和容器网络配置示例
 scripts/                构建、发布、测试和浏览器回归
 doc/                    当前设计与开发运行说明
