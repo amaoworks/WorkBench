@@ -19,7 +19,7 @@ Linux x86_64 原生部署由管理员在「后台设置 → 业务管理 → 投
 使用当前版本工作台镜像和本目录的配套镜像：
 
 ```bash
-docker compose -f compose.yaml -f futu-opend/compose.workbench.yaml --env-file .env up --build -d
+docker compose -f compose.yaml -f futu-opend/compose.workbench.yaml up -d --build
 ```
 
 根目录 `.env` 配置工作台版本、HTTPS 地址等，参见根目录 `.env.example`；此模式无需填写 `FUTU_ACCOUNT_ID`、`FUTU_ACCOUNT_PWD_MD5`。
@@ -49,7 +49,7 @@ docker compose -f compose.yaml -f futu-opend/compose.workbench.yaml --env-file .
 ```bash
 cp .env.example .env
 # 填写 FUTU_ACCOUNT_ID 和 FUTU_ACCOUNT_PWD_MD5
-docker compose --env-file .env up --build
+docker compose up -d --build
 ```
 
 独立模式仍在 OpenD 配置登录信息；工作台的连接地址由部署配置指定。工作台新保存的账号密码需要配套登录管理脚本才能用于 OpenD 登录。首次构建下载官方 Ubuntu 包；程序和登录态保存在原有命名卷中。

@@ -44,10 +44,10 @@ def main():
                    "--file", str(repo / "compose.image.yaml")]
         if args.image:
             image, tag = args.image.rsplit(":", 1)
-            env.update(WORKBENCH_IMAGE=image, WORKBENCH_VERSION=tag, WORKBENCH_PORT=str(port), WORKBENCH_HTTP_PORT="8080")
+            env.update(WORKBENCH_IMAGE=image, WORKBENCH_VERSION=tag, WORKBENCH_HOST_PORT=str(port))
             runtime = work / "compose.runtime.yaml"
             runtime_environment = {
-                "WORKBENCH_LISTEN": "0.0.0.0:8080", "WORKBENCH_HTTP_PORT": "8080",
+                "WORKBENCH_LISTEN": "0.0.0.0:8080",
                 "WORKBENCH_DATA": "/data/data.db", "WORKBENCH_DB_DRIVER": args.database,
                 "WORKBENCH_AUTH": "password", "WORKBENCH_PUBLIC_URL": origin,
                 "WORKBENCH_PASSWORD": "${WORKBENCH_PASSWORD:-}", "WORKBENCH_LOG_LEVEL": "${WORKBENCH_LOG_LEVEL:-info}"
@@ -55,9 +55,12 @@ def main():
             dependencies = "    depends_on: !reset {}\n"
             if args.database == "postgres":
                 env.update(POSTGRES_DB="workbench", POSTGRES_USER="workbench",
-                           POSTGRES_PASSWORD=password, POSTGRES_PORT="5432")
+                           POSTGRES_PASSWORD=password)
                 runtime_environment["WORKBENCH_DATABASE_URL"] = "postgresql://workbench:${POSTGRES_PASSWORD}@postgres:5432/workbench?sslmode=disable"
                 dependencies = ""  # Keep the published stack's PostgreSQL health dependency.
+            else:
+                env["POSTGRES_PASSWORD"] = "unused-for-sqlite"
+                runtime_environment["WORKBENCH_DATABASE_URL"] = ""
             runtime.write_text("services:\n  workbench:\n    env_file: !reset []\n" + dependencies +
                                "    environment: " + json.dumps(runtime_environment) + "\n")
             compose.extend(["--file", str(runtime)])

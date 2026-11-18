@@ -29,7 +29,7 @@ docker compose up -d --build
 docker compose logs workbench
 ```
 
-应用只提供 HTTP，Compose 默认将端口发布到宿主机 `127.0.0.1:8080`。首次启动自动生成管理员初始密码并写入 `workbench` 容器日志；使用用户名 `admin` 和该密码登录后设置新密码，再在「后台设置 → 用户管理」创建用户。`.env.example` 默认使用内置 PostgreSQL，开发环境应先替换其中的数据库密码。切换 SQLite 只需把 `WORKBENCH_DB_DRIVER` 改为 `sqlite`，PostgreSQL 容器仍会启动。
+应用只提供 HTTP，Compose 默认将端口发布到宿主机 `127.0.0.1:8080`（可通过 `WORKBENCH_HOST_PORT` 调整，容器内固定为 `8080`）。首次启动自动生成管理员初始密码并写入 `workbench` 容器日志；使用用户名 `admin` 和该密码登录后设置新密码，再在「后台设置 → 用户管理」创建用户。Compose 默认使用内置 PostgreSQL，启动前必须在 `.env` 中设置 `POSTGRES_PASSWORD`。切换 SQLite 需同时设置 `WORKBENCH_DB_DRIVER=sqlite` 和空的 `WORKBENCH_DATABASE_URL=`，PostgreSQL 容器仍会启动。
 
 PostgreSQL 数据保存在 `postgres_data` 卷。应用的 `/data` 卷仍保存图表缓存和 OpenD 运行内容；SQLite 模式也把数据库及备份保存在该卷。`docker compose down` 保留两个数据卷，`docker compose down --volumes` 会删除它们。
 

@@ -1,5 +1,5 @@
-# Standalone OpenD. Move this directory to its own repo later.
-#   docker compose --env-file .env up --build
+# Standalone OpenD. Run from this directory:
+#   docker compose up -d --build
 services:
   futu-opend:
     build: .
@@ -8,23 +8,17 @@ services:
       FUTU_ACCOUNT_ID: ${FUTU_ACCOUNT_ID:?Set FUTU_ACCOUNT_ID}
       FUTU_ACCOUNT_PWD_MD5: ${FUTU_ACCOUNT_PWD_MD5:?Set FUTU_ACCOUNT_PWD_MD5}
       FUTU_OPEND_VER: ${FUTU_OPEND_VER:-10.9.6908}
-      FUTU_OPEND_IP: ${FUTU_OPEND_IP:-0.0.0.0}
-      FUTU_OPEND_PORT: ${FUTU_OPEND_PORT:-11111}
-      FUTU_OPEND_TELNET_PORT: ${FUTU_OPEND_TELNET_PORT:-22222}
+      FUTU_OPEND_IP: 0.0.0.0
+      FUTU_OPEND_PORT: 11111
+      FUTU_OPEND_TELNET_PORT: 22222
       FUTU_LANG: ${FUTU_LANG:-chs}
       FUTU_LOG_LEVEL: ${FUTU_LOG_LEVEL:-info}
     ports:
-      - "127.0.0.1:${FUTU_OPEND_PORT:-11111}:11111"
-      - "127.0.0.1:${FUTU_OPEND_TELNET_PORT:-22222}:22222"
+      - "127.0.0.1:${FUTU_OPEND_HOST_PORT:-11111}:11111"
+      - "127.0.0.1:${FUTU_OPEND_TELNET_HOST_PORT:-22222}:22222"
     volumes:
       - futu_opend_bin:/opt/FutuOpenD
       - futu_opend_data:/home/futu/.com.futunn.FutuOpenD
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c 'echo >/dev/tcp/127.0.0.1/11111'"]
-      interval: 30s
-      timeout: 5s
-      start_period: 90s
-      retries: 5
 
 volumes:
   futu_opend_bin:

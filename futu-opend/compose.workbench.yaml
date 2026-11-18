@@ -1,8 +1,8 @@
 # Overlay onto the workbench compose file so OpenD and workbench share a network.
 # From the workbench repo root:
-#   docker compose -f compose.yaml -f futu-opend/compose.workbench.yaml --env-file .env up --build
+#   docker compose -f compose.yaml -f futu-opend/compose.workbench.yaml up -d --build
 #
-# Configure Futu login and overnight in 设置 → 业务模块 → 投资设置.
+# Configure Futu login and overnight in 后台设置 → 业务管理 → 投资.
 services:
   workbench:
     environment:
@@ -24,17 +24,11 @@ services:
       FUTU_LANG: ${FUTU_LANG:-chs}
       FUTU_LOG_LEVEL: ${FUTU_LOG_LEVEL:-info}
     ports:
-      - "127.0.0.1:22222:22222"
+      - "127.0.0.1:${FUTU_OPEND_TELNET_HOST_PORT:-22222}:22222"
     volumes:
       - futu_opend_bin:/opt/FutuOpenD
       - futu_opend_data:/home/futu/.com.futunn.FutuOpenD
       - futu_login:/run/workbench-futu:ro
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c 'echo >/dev/tcp/127.0.0.1/11111'"]
-      interval: 30s
-      timeout: 5s
-      start_period: 90s
-      retries: 5
 
 volumes:
   futu_opend_bin:

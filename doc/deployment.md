@@ -107,18 +107,18 @@ docker compose logs workbench
 
 首次启动会自动生成初始密码并写入 `workbench` 容器日志。使用该密码登录后必须立即设置新密码。后续启动沿用数据库中的凭据，不再生成新密码。
 
-`.env.example` 默认监听宿主机 `127.0.0.1:8080`，使用内置 PostgreSQL，并以 `workbench-local` 作为开发数据库密码。运行前应替换 `POSTGRES_PASSWORD`；`WORKBENCH_DATABASE_URL` 默认使用 Compose 变量插值同步账号、密码、端口和数据库名。`.env` 已被 Git 和 Docker 构建上下文排除。
+`.env.example` 默认将宿主机端口映射为 `127.0.0.1:8080`（可通过 `WORKBENCH_HOST_PORT` 修改，容器内固定监听 `8080`），并默认启用内置 PostgreSQL。`POSTGRES_PASSWORD` 为必填项且不提供默认值，启动前必须设置；Compose 自动使用变量插值生成 `WORKBENCH_DATABASE_URL` 和 `WORKBENCH_ALLOWED_HOSTS`，并固定 `WORKBENCH_DATA=/data/data.db` 与 `WORKBENCH_ALLOW_INSECURE_HTTP=true`。`.env` 已被 Git 和 Docker 构建上下文排除。
 
 `POSTGRES_PASSWORD` 始终填写原始密码。密码包含 `@`、`:`、`/`、`?`、`#`、`%` 等 URI 保留字符时，手动覆盖 `WORKBENCH_DATABASE_URL`，仅对连接串中的密码进行 URL 编码，不再引用 `${POSTGRES_PASSWORD}`。例如，原始密码为 `p/q` 时：
 
 ```dotenv
 POSTGRES_PASSWORD='p/q'
-WORKBENCH_DATABASE_URL=postgresql://${POSTGRES_USER}:p%2Fq@postgres:${POSTGRES_PORT}/${POSTGRES_DB}?sslmode=disable
+WORKBENCH_DATABASE_URL=postgresql://workbench:p%2Fq@postgres:5432/workbench?sslmode=disable
 ```
 
-本机同源访问保持 `WORKBENCH_PUBLIC_URL` 和 `WORKBENCH_CORS_ALLOW_ORIGIN` 为空。跨源前端调用时，后者填写以逗号分隔的完整来源白名单。通过反向代理公开时填写 `WORKBENCH_PUBLIC_URL=https://实际域名`，并相应调整 `WORKBENCH_ALLOWED_HOSTS`。默认的 `WORKBENCH_ALLOW_INSECURE_HTTP=true` 明确允许本机 HTTP 入口。
+本机同源访问保持 `WORKBENCH_PUBLIC_URL` 和 `WORKBENCH_CORS_ALLOW_ORIGIN` 留空或注释。跨源前端调用时，后者填写以逗号分隔的完整来源白名单。通过反向代理公开时填写 `WORKBENCH_PUBLIC_URL=https://实际域名`，其 Host 会自动加入允许列表；如需额外允许其他 Host，可设置 `WORKBENCH_ALLOWED_HOSTS`。
 
-切换 SQLite 只需设置 `WORKBENCH_DB_DRIVER=sqlite`；`WORKBENCH_DATA=/data/data.db` 已指向持久化卷。默认 Compose 仍会启动 PostgreSQL 服务。复用已经构建的 `workbench:local` 镜像时执行：
+切换 SQLite 需设置 `WORKBENCH_DB_DRIVER=sqlite` 并将 `WORKBENCH_DATABASE_URL=` 置空；`WORKBENCH_DATA=/data/data.db` 已指向持久化卷。默认 Compose 仍会启动 PostgreSQL 服务（`POSTGRES_PASSWORD` 仍须保持非空）。复用已经构建的 `workbench:local` 镜像时执行：
 
 ```bash
 docker compose up -d --no-build
@@ -130,9 +130,9 @@ docker compose up -d --no-build
 
 ```bash
 # 当前目录须有源码仓库的 compose.yaml、futu-opend/ 和已配置的根目录 .env
-docker compose -f compose.yaml -f futu-opend/compose.workbench.yaml --env-file .env up -d --build
+docker compose -f compose.yaml -f futu-opend/compose.workbench.yaml up -d --build
 # 发布镜像部署包使用 compose.image.yaml
-docker compose -f compose.image.yaml -f futu-opend/compose.workbench.yaml --env-file .env up -d --build
+docker compose -f compose.image.yaml -f futu-opend/compose.workbench.yaml up -d --build
 ```
 
 管理员在「后台设置 → 业务管理 → 投资」（`/admin/settings?tab=modules&module=investment`）填写 Futu 账号和登录密码，保存并启用 Futu；需要夜盘时另行启用夜盘开关。主机、端口和非本机许可已由配套 Compose 配置；独立部署使用 `WORKBENCH_FUTU_OPEND_ADDRESS`、`WORKBENCH_FUTU_ALLOW_NON_LOCAL`。需要使用支持共享登录配置的当前工作台镜像和配套 OpenD 镜像。首次登录若要求验证码，telnet `127.0.0.1:22222`。独立 OpenD 与账号保留规则见源码中的 `futu-opend/README.md`；在线说明见 [OpenD 部署说明](https://github.com/amaoworks/WorkBench/blob/main/futu-opend/README.md)。
@@ -142,6 +142,8 @@ Futu 可为未绑定 Schwab 或授权失效的已登录用户提供美股/ETF �
 配置宿主机反向代理后，通过 `.env` 中的 HTTPS 地址访问。Workbench 容器以 UID/GID `65532:65532` 运行，`/data` 挂载持久化卷，`/tmp` 使用容器文件系统。日志输出到 stderr，并由 Compose 配置滚动保存。命名卷首次创建时继承镜像中 `/data` 的权限。
 
 日常使用 `docker compose stop` 或 `docker compose down` 停止服务并保留 `workbench_data` 与 `postgres_data`。`docker compose down --volumes` 会同时删除应用运行文件和内置 PostgreSQL 数据，不用于升级或常规停机。
+
+Compose 固定声明 `name: workbench`，更换目录解压新版发布包后仍使用同一组命名卷。如果此前在非 `workbench` 目录下使用不含 `name:` 的旧版 Compose，升级前在 `.env` 设置 `COMPOSE_PROJECT_NAME=<原目录名>` 以继续挂载旧卷。
 
 ### 使用发布镜像
 
@@ -236,7 +238,7 @@ docker compose exec -T workbench /workbench -version
 ## 升级、备份与恢复
 
 1. SQLite 在「后台设置 → 数据与运行」创建全库在线备份，并把备份保存到工作空间以外的位置。PostgreSQL 使用数据库服务备份或 `pg_dump`，应用不内置该工具。备份包含业务数据和凭据，应限制读取权限。
-2. 停止服务。二进制部署更换可执行文件；源码 Compose 更新源码后执行 `docker compose up -d --build`；发布镜像 Compose 修改 `.env` 的版本后使用 `compose.image.yaml` 执行 `pull` 和 `up -d`。保留原数据卷及 Compose 项目名。
+2. 停止服务。二进制部署更换可执行文件；源码 Compose 更新源码后执行 `docker compose up -d --build`；发布镜像 Compose 修改 `.env` 的版本后使用 `compose.image.yaml` 执行 `pull` 和 `up -d`。保留原数据卷及 Compose 项目名（旧版在非 `workbench` 目录启动时须在 `.env` 保留 `COMPOSE_PROJECT_NAME=<原目录名>`）。
 3. 检查版本、健康状态和日志，登录确认数据。首次启动会执行所需数据库迁移。
 
 SQLite 命名卷中的备份可复制到宿主机，例如将返回的文件名代入：
