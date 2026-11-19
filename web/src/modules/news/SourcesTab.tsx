@@ -1,20 +1,21 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "../../components/ui/Button";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { EmptyState } from "../../components/ui/EmptyState";
-import { cn } from "../../shared/cn";
 import { Field } from "../../components/ui/Field";
 import { Notice } from "../../components/ui/Notice";
+import { Select } from "../../components/ui/Select";
 import { Skeleton } from "../../components/ui/States";
 import { Switch } from "../../components/ui/Switch";
 import { useConfirmDelete } from "../../components/ui/useConfirmDelete";
+import { cn } from "../../shared/cn";
+import { formatDateTime } from "../../shared/format";
+import { NewsDialog } from "./NewsDialog";
 import { deleteSource, refreshAllSources, refreshSource, saveSource, useRefreshNews, useSources } from "./queries";
 import type { Source, SourceInput } from "./schema";
-import { formatDateTime } from "../../shared/format";
-import { Select } from "../../components/ui/Select";
 
 const SOURCE_KINDS = [
   { value: "rss", label: "RSS" },
@@ -27,11 +28,20 @@ const SOURCE_LABEL: Record<string, string> = Object.fromEntries(SOURCE_KINDS.map
 
 const blank: SourceInput = { name: "", kind: "rss", url: "", query: "", topic: "", enabled: true, intervalMinutes: 60 };
 
-export default function SourcesTab({ startAdding = false }: { startAdding?: boolean }) {
+export default function SourcesTab({
+  nav,
+  notices,
+  startAdding = false,
+}: {
+  nav: ReactNode;
+  notices: ReactNode;
+  startAdding?: boolean;
+}) {
   const sources = useSources();
   const refresh = useRefreshNews();
   const [editing, setEditing] = useState<Source | "new" | null>(startAdding ? "new" : null);
   const addButton = useRef<HTMLButtonElement>(null);
+
   const save = useMutation({
     mutationFn: saveSource,
     onSuccess: async () => {
@@ -78,101 +88,123 @@ export default function SourcesTab({ startAdding = false }: { startAdding?: bool
     },
     onError: (error) => toast.error(error.message),
   });
+
   const items = sources.data?.items ?? [];
 
   return (
-    <section className="sec news-sources" aria-labelledby="news-sources-title">
-      <h2 id="news-sources-title" className="sec-title">
-        订阅源
-        {sources.data && <span className="sec-count">{items.length}</span>}
-        <span className="sec-action">
-          <Button size="sm" variant="secondary" disabled={allRefresh.isPending} onClick={() => allRefresh.mutate()}>
+    <>
+      <div className="toolbar news-toolbar">
+        {nav}
+        <div className="news-toolbar-actions">
+          <Button size="sm" variant="secondary" disabled={allRefresh.isPending || items.length === 0} onClick={() => allRefresh.mutate()}>
             <RefreshCw size={15} />
             {allRefresh.isPending ? "刷新中…" : "全部刷新"}
           </Button>
-        </span>
-      </h2>
-      {editing && (
-        <SourceForm
-          key={editing === "new" ? "new" : editing.id}
-          initial={editing === "new" ? blank : editing}
-          id={editing === "new" ? undefined : editing.id}
-          busy={save.isPending}
-          onCancel={() => setEditing(null)}
-          onSave={(input) => save.mutate(input)}
-        />
-      )}
-      {sources.isError && (
-        <Notice className="mb-4" tone="danger" title="订阅源读取失败">
-          {sources.error.message}
-        </Notice>
-      )}
-      <div className="feeds">
-        {sources.isPending && (
-          <>
-            <Skeleton className="h-[84px] rounded-2xl" />
-            <Skeleton className="h-[84px] rounded-2xl" />
-          </>
-        )}
-        {sources.data && items.length === 0 && <EmptyState title="暂无订阅源" />}
-        {items.map((source) => (
-          <div key={source.id} className={cn("feed news-source", !source.enabled && "is-off")}>
-            <span className="ic-circ" aria-hidden="true">{source.name.trim().slice(0, 1).toUpperCase() || "#"}</span>
-            <div className="fd-t">
-              <b>{source.name}</b>
-              <span>
-                {[source.topic || "未分类", `${source.itemCount} 条`, `每 ${source.intervalMinutes} 分钟`, SOURCE_LABEL[source.kind] ?? source.kind].join(" · ")}
-              </span>
-              {source.lastError ? (
-                <span className="fd-error" title={source.lastError}>刷新失败：{source.lastError}</span>
-              ) : (
-                source.lastFetchedAt && <span>最近刷新 {formatDateTime(source.lastFetchedAt, { seconds: false })}</span>
-              )}
-            </div>
-            <div className="feed-actions">
-              <label className="inline-switch">
-                <Switch
-                  label={`启用 ${source.name}`}
-                  checked={source.enabled}
-                  disabled={save.isPending}
-                  onChange={(enabled) => save.mutate({ ...pickInput(source), enabled, id: source.id })}
-                />
-                <span className="sr-only">启用 {source.name}</span>
-              </label>
-              <div className="feed-tools">
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  aria-label={`刷新 ${source.name}`}
-                  disabled={singleRefresh.isPending}
-                  onClick={() => singleRefresh.mutate(source.id)}
-                >
-                  <RefreshCw size={15} />
-                </Button>
-                <Button size="icon" variant="ghost" aria-label={`编辑 ${source.name}`} onClick={() => setEditing(source)}>
-                  <Pencil size={15} />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  aria-label={`删除 ${source.name}`}
-                  onClick={(event) => deletion.request(source, event.currentTarget)}
-                >
-                  <Trash2 size={15} />
-                </Button>
-              </div>
-            </div>
-          </div>
-        ))}
-        <button ref={addButton} type="button" className="feed feed-add focus-ring" onClick={() => setEditing("new")}>
-          <Plus size={20} aria-hidden="true" />
-          <span className="fd-t">
-            <b>添加订阅源</b>
-          </span>
-        </button>
+          <Button ref={addButton} size="sm" onClick={() => setEditing("new")}>
+            <Plus size={15} />
+            添加订阅源
+          </Button>
+        </div>
       </div>
-      <ConfirmDialog {...deletion.dialogProps} />
-    </section>
+      {notices}
+      <section className="sec news-sources" aria-labelledby="news-sources-title">
+        <h2 id="news-sources-title" className="sr-only">订阅源</h2>
+        {sources.isError && (
+          <Notice className="mb-4" tone="danger" title="订阅源读取失败">
+            {sources.error.message}
+          </Notice>
+        )}
+        {sources.isPending && (
+          <div className="feeds">
+            <Skeleton className="h-[88px] rounded-2xl" />
+            <Skeleton className="h-[88px] rounded-2xl" />
+          </div>
+        )}
+        {sources.data && items.length === 0 && (
+          <EmptyState
+            title="暂无订阅源"
+            action={
+              <Button onClick={() => setEditing("new")}>
+                <Plus size={15} />
+                添加订阅源
+              </Button>
+            }
+          />
+        )}
+        {items.length > 0 && (
+          <div className="feeds">
+            {items.map((source) => (
+              <div key={source.id} className={cn("feed news-source", !source.enabled && "is-off")}>
+                <span className="ic-circ" aria-hidden="true">{source.name.trim().slice(0, 1).toUpperCase() || "#"}</span>
+                <div className="fd-t">
+                  <b>{source.name}</b>
+                  <span>
+                    {[source.topic || "未分类", `${source.itemCount} 条`, `每 ${source.intervalMinutes} 分钟`, SOURCE_LABEL[source.kind] ?? source.kind].join(" · ")}
+                  </span>
+                  {source.lastError ? (
+                    <span className="fd-error" title={source.lastError}>刷新失败：{source.lastError}</span>
+                  ) : (
+                    source.lastFetchedAt && <span>最近刷新 {formatDateTime(source.lastFetchedAt, { seconds: false })}</span>
+                  )}
+                </div>
+                <div className="feed-actions">
+                  <label className="inline-switch">
+                    <Switch
+                      label={`启用 ${source.name}`}
+                      checked={source.enabled}
+                      disabled={save.isPending}
+                      onChange={(enabled) => save.mutate({ ...pickInput(source), enabled, id: source.id })}
+                    />
+                    <span className="sr-only">启用 {source.name}</span>
+                  </label>
+                  <div className="feed-tools">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      aria-label={`刷新 ${source.name}`}
+                      disabled={singleRefresh.isPending}
+                      onClick={() => singleRefresh.mutate(source.id)}
+                    >
+                      <RefreshCw size={15} />
+                    </Button>
+                    <Button size="icon" variant="ghost" aria-label={`编辑 ${source.name}`} onClick={() => setEditing(source)}>
+                      <Pencil size={15} />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      aria-label={`删除 ${source.name}`}
+                      onClick={(event) => deletion.request(source, event.currentTarget)}
+                    >
+                      <Trash2 size={15} />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <NewsDialog
+          open={editing !== null}
+          title={editing === "new" ? "添加订阅源" : "编辑订阅源"}
+          onOpenChange={(open) => {
+            if (!open && !save.isPending) setEditing(null);
+          }}
+        >
+          {editing && (
+            <SourceForm
+              key={editing === "new" ? "new" : editing.id}
+              initial={editing === "new" ? blank : editing}
+              id={editing === "new" ? undefined : editing.id}
+              busy={save.isPending}
+              onCancel={() => setEditing(null)}
+              onSave={(input) => save.mutate(input)}
+            />
+          )}
+        </NewsDialog>
+        <ConfirmDialog {...deletion.dialogProps} />
+      </section>
+    </>
   );
 }
 
@@ -205,48 +237,54 @@ function SourceForm({
     });
   }
   return (
-    <form onSubmit={submit} className="inline-form news-source-form">
-      <Field label="名称">
-        <input autoFocus required value={form.name} onChange={(event) => change({ name: event.target.value })} placeholder="例如：路透社" />
-      </Field>
-      <Field label="类型">
-        <Select value={form.kind} onValueChange={(kind) => change({ kind: kind as SourceInput["kind"] })} options={SOURCE_KINDS} />
-      </Field>
-      {needsURL && (
-        <Field label="订阅地址" className="form-wide">
-          <input
-            type="url"
-            required
-            value={form.url}
-            onChange={(event) => change({ url: event.target.value })}
-            placeholder="https://example.com/feed.xml"
-          />
-        </Field>
-      )}
-      {needsQuery && (
-        <Field label="查询词" className="form-wide">
-          <input required value={form.query} onChange={(event) => change({ query: event.target.value })} placeholder="新闻关键词" />
-        </Field>
-      )}
-      <Field label="话题">
-        <input value={form.topic} onChange={(event) => change({ topic: event.target.value })} placeholder="例如：科技" />
-      </Field>
-      <Field label="刷新间隔（分钟）">
-        <input
-          type="number"
-          min={5}
-          max={10080}
-          required
-          value={form.intervalMinutes}
-          onChange={(event) => change({ intervalMinutes: event.target.valueAsNumber })}
-        />
-      </Field>
-      <div className="inline-form-actions">
+    <form onSubmit={submit}>
+      <fieldset className="form-fields" disabled={busy}>
+        <div className="field-pair">
+          <Field label="名称">
+            <input autoFocus required value={form.name} onChange={(event) => change({ name: event.target.value })} placeholder="例如：路透社" />
+          </Field>
+          <Field label="类型">
+            <Select value={form.kind} onValueChange={(kind) => change({ kind: kind as SourceInput["kind"] })} options={SOURCE_KINDS} />
+          </Field>
+        </div>
+        {needsURL && (
+          <Field label="订阅地址">
+            <input
+              type="url"
+              required
+              value={form.url}
+              onChange={(event) => change({ url: event.target.value })}
+              placeholder="https://example.com/feed.xml"
+            />
+          </Field>
+        )}
+        {needsQuery && (
+          <Field label="查询词">
+            <input required value={form.query} onChange={(event) => change({ query: event.target.value })} placeholder="新闻关键词" />
+          </Field>
+        )}
+        <div className="field-pair">
+          <Field label="话题">
+            <input value={form.topic} onChange={(event) => change({ topic: event.target.value })} placeholder="例如：科技" />
+          </Field>
+          <Field label="刷新间隔（分钟）">
+            <input
+              type="number"
+              min={5}
+              max={10080}
+              required
+              value={form.intervalMinutes}
+              onChange={(event) => change({ intervalMinutes: event.target.valueAsNumber })}
+            />
+          </Field>
+        </div>
         <label className="inline-switch">
           <Switch label="启用订阅源" checked={form.enabled} onChange={(enabled) => change({ enabled })} />
           <span aria-hidden="true">启用</span>
         </label>
-        <Button type="button" variant="secondary" onClick={onCancel}>
+      </fieldset>
+      <div className="settings-dialog-footer">
+        <Button type="button" variant="secondary" disabled={busy} onClick={onCancel}>
           取消
         </Button>
         <Button disabled={busy}>{busy ? "保存中…" : "保存"}</Button>

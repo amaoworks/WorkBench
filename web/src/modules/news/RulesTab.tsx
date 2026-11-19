@@ -1,9 +1,9 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Pencil, Plus, Target, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { cn } from "../../shared/cn";
 import { Button } from "../../components/ui/Button";
+import { Checkbox } from "../../components/ui/Checkbox";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { Field } from "../../components/ui/Field";
@@ -11,18 +11,20 @@ import { Notice } from "../../components/ui/Notice";
 import { Skeleton } from "../../components/ui/States";
 import { Switch } from "../../components/ui/Switch";
 import { useConfirmDelete } from "../../components/ui/useConfirmDelete";
+import { cn } from "../../shared/cn";
+import { NewsDialog } from "./NewsDialog";
 import { deleteRule, saveRule, useRefreshNews, useRules, useSources } from "./queries";
 import type { Rule, RuleInput } from "./schema";
-import { Checkbox } from "../../components/ui/Checkbox";
 
 const blank: RuleInput = { name: "", includeKeywords: [], excludeKeywords: [], sourceIds: [], topic: "", enabled: true };
 
-export default function RulesTab() {
+export default function RulesTab({ nav, notices }: { nav: ReactNode; notices: ReactNode }) {
   const rules = useRules();
   const sources = useSources();
   const refresh = useRefreshNews();
   const [editing, setEditing] = useState<Rule | "new" | null>(null);
   const addButton = useRef<HTMLButtonElement>(null);
+
   const save = useMutation({
     mutationFn: saveRule,
     onSuccess: async () => {
@@ -46,99 +48,122 @@ export default function RulesTab() {
     onConfirm: (target) => remove.mutateAsync(target.id),
     fallbackFocus: () => addButton.current,
   });
-  const items = rules.data?.items ?? [];
 
+  const items = rules.data?.items ?? [];
   const sourceNames = new Map((sources.data?.items ?? []).map((source) => [source.id, source.name]));
 
   return (
-    <section className="sec news-rules" aria-labelledby="news-rules-title">
-      <h2 id="news-rules-title" className="sec-title">
-        关注规则
-        {rules.data && <span className="sec-count">{items.length}</span>}
-        <span className="sec-action">
+    <>
+      <div className="toolbar news-toolbar">
+        {nav}
+        <div className="news-toolbar-actions">
           <Button ref={addButton} size="sm" onClick={() => setEditing("new")}>
             <Plus size={15} />
             添加规则
           </Button>
-        </span>
-      </h2>
-      {editing && (
-        <RuleForm
-          key={editing === "new" ? "new" : editing.id}
-          initial={editing === "new" ? blank : editing}
-          id={editing === "new" ? undefined : editing.id}
-          sources={sources.data?.items ?? []}
-          busy={save.isPending}
-          onCancel={() => setEditing(null)}
-          onSave={(input) => save.mutate(input)}
-        />
-      )}
-      {rules.isPending && (
-        <div className="space-y-2">
-          <Skeleton className="h-16" />
-          <Skeleton className="h-16" />
         </div>
-      )}
-      {rules.isError && (
-        <Notice className="mb-4" tone="danger" title="关注规则读取失败">
-          {rules.error.message}
-        </Notice>
-      )}
-      {sources.isError && (
-        <Notice className="mb-4" tone="danger" title="订阅源读取失败">
-          {sources.error.message}
-        </Notice>
-      )}
-      {rules.data && items.length === 0 && !editing && <EmptyState title="暂无关注规则" />}
-      <div className="news-rule-list">
-        {items.map((rule) => {
-          const scope = rule.sourceIds.length
-            ? rule.sourceIds.map((sourceId) => sourceNames.get(sourceId) ?? "已删除的订阅源").join("、")
-            : "全部订阅源";
-          return (
-            <div key={rule.id} className={cn("trow news-rule", !rule.enabled && "is-off")}>
-              <span className="ic-circ" aria-hidden="true">
-                <Target size={18} strokeWidth={1.75} />
-              </span>
-              <div className="nm">
-                <b>{rule.name}</b>
-                <small>
-                  {[
-                    `关键词：${rule.includeKeywords.join("、") || "不限"}`,
-                    rule.excludeKeywords.length ? `排除：${rule.excludeKeywords.join("、")}` : "",
-                    `话题：${rule.topic || "全部"}`,
-                    scope,
-                  ].filter(Boolean).join(" · ")}
-                </small>
-              </div>
-              <div className="rt">
-                <Button size="icon" variant="ghost" aria-label={`编辑 ${rule.name}`} onClick={() => setEditing(rule)}>
-                  <Pencil size={15} />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  aria-label={`删除 ${rule.name}`}
-                  onClick={(event) => deletion.request(rule, event.currentTarget)}
-                >
-                  <Trash2 size={15} />
-                </Button>
-                <label className="inline-switch">
-                  <Switch
-                    label={`启用 ${rule.name}`}
-                    checked={rule.enabled}
-                    disabled={save.isPending}
-                    onChange={(enabled) => save.mutate({ ...pickInput(rule), enabled, id: rule.id })}
-                  />
-                  <span className="sr-only">启用 {rule.name}</span>
-                </label>
-              </div>
-            </div>
-          );
-        })}
       </div>
-      <ConfirmDialog {...deletion.dialogProps} />
-    </section>
+      {notices}
+      <section className="sec news-rules" aria-labelledby="news-rules-title">
+        <h2 id="news-rules-title" className="sr-only">关注规则</h2>
+        {rules.isPending && (
+          <div className="space-y-2">
+            <Skeleton className="h-16 rounded-xl" />
+            <Skeleton className="h-16 rounded-xl" />
+          </div>
+        )}
+        {rules.isError && (
+          <Notice className="mb-4" tone="danger" title="关注规则读取失败">
+            {rules.error.message}
+          </Notice>
+        )}
+        {sources.isError && (
+          <Notice className="mb-4" tone="danger" title="订阅源读取失败">
+            {sources.error.message}
+          </Notice>
+        )}
+        {rules.data && items.length === 0 && (
+          <EmptyState
+            title="暂无关注规则"
+            action={
+              <Button onClick={() => setEditing("new")}>
+                <Plus size={15} />
+                添加规则
+              </Button>
+            }
+          />
+        )}
+        {items.length > 0 && (
+          <div className="ui-card news-rule-list">
+            {items.map((rule) => {
+              const scope = rule.sourceIds.length
+                ? rule.sourceIds.map((sourceId) => sourceNames.get(sourceId) ?? "已删除的订阅源").join("、")
+                : "全部订阅源";
+              return (
+                <div key={rule.id} className={cn("trow news-rule", !rule.enabled && "is-off")}>
+                  <span className="ic-circ" aria-hidden="true">
+                    <Target size={18} strokeWidth={1.75} />
+                  </span>
+                  <div className="nm">
+                    <b>{rule.name}</b>
+                    <small>
+                      {[
+                        `关键词：${rule.includeKeywords.join("、") || "不限"}`,
+                        rule.excludeKeywords.length ? `排除：${rule.excludeKeywords.join("、")}` : "",
+                        `话题：${rule.topic || "全部"}`,
+                        scope,
+                      ].filter(Boolean).join(" · ")}
+                    </small>
+                  </div>
+                  <div className="rt">
+                    <Button size="icon" variant="ghost" aria-label={`编辑 ${rule.name}`} onClick={() => setEditing(rule)}>
+                      <Pencil size={15} />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      aria-label={`删除 ${rule.name}`}
+                      onClick={(event) => deletion.request(rule, event.currentTarget)}
+                    >
+                      <Trash2 size={15} />
+                    </Button>
+                    <label className="inline-switch">
+                      <Switch
+                        label={`启用 ${rule.name}`}
+                        checked={rule.enabled}
+                        disabled={save.isPending}
+                        onChange={(enabled) => save.mutate({ ...pickInput(rule), enabled, id: rule.id })}
+                      />
+                      <span className="sr-only">启用 {rule.name}</span>
+                    </label>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <NewsDialog
+          open={editing !== null}
+          title={editing === "new" ? "添加关注规则" : "编辑关注规则"}
+          onOpenChange={(open) => {
+            if (!open && !save.isPending) setEditing(null);
+          }}
+        >
+          {editing && (
+            <RuleForm
+              key={editing === "new" ? "new" : editing.id}
+              initial={editing === "new" ? blank : editing}
+              id={editing === "new" ? undefined : editing.id}
+              sources={sources.data?.items ?? []}
+              busy={save.isPending}
+              onCancel={() => setEditing(null)}
+              onSave={(input) => save.mutate(input)}
+            />
+          )}
+        </NewsDialog>
+        <ConfirmDialog {...deletion.dialogProps} />
+      </section>
+    </>
   );
 }
 
@@ -176,51 +201,53 @@ function RuleForm({
     });
   }
   return (
-    <form onSubmit={submit} className="inline-form news-rule-form">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="名称">
-          <input autoFocus required value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：AI 行业" />
-        </Field>
-        <Field label="话题">
-          <input value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="全部话题" />
-        </Field>
+    <form onSubmit={submit}>
+      <fieldset className="form-fields" disabled={busy}>
+        <div className="field-pair">
+          <Field label="名称">
+            <input autoFocus required value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：AI 行业" />
+          </Field>
+          <Field label="话题">
+            <input value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="全部话题" />
+          </Field>
+        </div>
         <Field label="包含关键词">
-          <textarea value={includes} onChange={(event) => setIncludes(event.target.value)} placeholder="逗号或换行分隔，如：AI, 芯片" rows={3} />
+          <textarea value={includes} onChange={(event) => setIncludes(event.target.value)} placeholder="逗号或换行分隔，如：AI, 芯片" rows={2} />
         </Field>
         <Field label="排除关键词">
-          <textarea value={excludes} onChange={(event) => setExcludes(event.target.value)} placeholder="广告, 招聘" rows={3} />
+          <textarea value={excludes} onChange={(event) => setExcludes(event.target.value)} placeholder="广告, 招聘" rows={2} />
         </Field>
-      </div>
-      <fieldset>
-        <legend className="text-sm">订阅源</legend>
-        <div className="mt-2 flex max-h-36 flex-wrap gap-x-4 gap-y-2 overflow-y-auto rounded-lg border border-[var(--border)] p-3">
-          <Checkbox
-            checked={sourceIds.length === 0}
-            onChange={(checked) => {
-              if (checked) setSourceIds([]);
-            }}
-          >
-            全部订阅源
-          </Checkbox>
-          {sources.map((source) => (
+        <fieldset>
+          <legend className="text-sm font-medium text-[var(--heading)]">订阅源</legend>
+          <div className="mt-2 flex max-h-36 flex-wrap gap-x-4 gap-y-2 overflow-y-auto rounded-lg border border-[var(--border)] p-3">
             <Checkbox
-              key={source.id}
-              checked={sourceIds.includes(source.id)}
-              onChange={(checked) =>
-                setSourceIds((current) => (checked ? [...current, source.id] : current.filter((sourceId) => sourceId !== source.id)))
-              }
+              checked={sourceIds.length === 0}
+              onChange={(checked) => {
+                if (checked) setSourceIds([]);
+              }}
             >
-              {source.name}
+              全部订阅源
             </Checkbox>
-          ))}
-        </div>
+            {sources.map((source) => (
+              <Checkbox
+                key={source.id}
+                checked={sourceIds.includes(source.id)}
+                onChange={(checked) =>
+                  setSourceIds((current) => (checked ? [...current, source.id] : current.filter((sourceId) => sourceId !== source.id)))
+                }
+              >
+                {source.name}
+              </Checkbox>
+            ))}
+          </div>
+        </fieldset>
+        <label className="inline-switch">
+          <Switch label="启用关注规则" checked={enabled} onChange={setEnabled} />
+          <span aria-hidden="true">启用</span>
+        </label>
       </fieldset>
-      <label className="inline-switch">
-        <Switch label="启用关注规则" checked={enabled} onChange={setEnabled} />
-        <span aria-hidden="true">启用</span>
-      </label>
-      <div className="flex justify-end gap-2">
-        <Button type="button" variant="secondary" onClick={onCancel}>
+      <div className="settings-dialog-footer">
+        <Button type="button" variant="secondary" disabled={busy} onClick={onCancel}>
           取消
         </Button>
         <Button disabled={busy}>{busy ? "保存中…" : "保存"}</Button>
@@ -239,6 +266,7 @@ function splitKeywords(value: string) {
     ),
   ];
 }
+
 function pickInput(rule: Rule): RuleInput {
   return {
     name: rule.name,

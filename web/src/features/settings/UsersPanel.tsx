@@ -10,6 +10,7 @@ import { Skeleton } from "../../components/ui/States";
 import { useAuth, useCurrentUser } from "../../shared/auth";
 import { useCreateUser, useManagedUsers, useResetUserPassword, useUpdateUser } from "./queries";
 import type { ManagedUser } from "./schema";
+import { SettingsRow } from "./SettingsLayout";
 import { TelegramRecipientMapping } from "./TelegramRecipientPanel";
 
 type PasswordResult = { username: string; password: string };
@@ -39,11 +40,18 @@ export function UsersPanel() {
           <UserPlus size={16} />创建用户
         </Button>
       </div>
-      {creating && <CreateUserForm onCancel={() => { setCreating(false); createButton.current?.focus(); }} onCreated={(result) => {
-        setPassword(result);
-        setCreating(false);
-        createButton.current?.focus();
-      }} />}
+      {creating && (
+        <div className="settings-subpanel">
+          <CreateUserForm
+            onCancel={() => { setCreating(false); createButton.current?.focus(); }}
+            onCreated={(result) => {
+              setPassword(result);
+              setCreating(false);
+              createButton.current?.focus();
+            }}
+          />
+        </div>
+      )}
       {password && (
         <Notice title={`${password.username} · 初始密码`}>
           <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -75,14 +83,16 @@ function RolePicker({ value, onChange, disabled = false }: {
   value: ManagedUser["role"]; onChange: (value: ManagedUser["role"]) => void; disabled?: boolean;
 }) {
   return (
-    <div className="settings-segment" role="group" aria-label="用户角色">
-      {([{ id: "user", label: "普通用户" }, { id: "admin", label: "管理员" }] as const).map((role) => (
-        <button
-          key={role.id} type="button" className="focus-ring" aria-pressed={role.id === value}
-          disabled={disabled} onClick={() => onChange(role.id)}
-        >{role.label}</button>
-      ))}
-    </div>
+    <SettingsRow label="用户角色">
+      <div className="settings-segment" role="group" aria-label="用户角色">
+        {([{ id: "user", label: "普通用户" }, { id: "admin", label: "管理员" }] as const).map((role) => (
+          <button
+            key={role.id} type="button" className="focus-ring" aria-pressed={role.id === value}
+            disabled={disabled} onClick={() => onChange(role.id)}
+          >{role.label}</button>
+        ))}
+      </div>
+    </SettingsRow>
   );
 }
 
@@ -219,7 +229,11 @@ function UserEditor({ user, self, lastAdmin, onPassword }: {
         }}
       />
     </form>
-    {mappingOpen && user.status === "active" && <TelegramRecipientMapping userId={user.id} />}
+    {mappingOpen && user.status === "active" && (
+      <div className="settings-subpanel">
+        <TelegramRecipientMapping userId={user.id} />
+      </div>
+    )}
     </div>
   );
 }

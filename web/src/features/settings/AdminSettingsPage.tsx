@@ -163,21 +163,19 @@ function AIForm({ value }: { value: AISettings }) {
             }} />
           </div>
         )}
-        <div className="flex flex-wrap items-center gap-2">
+        <SettingsRow label="模型列表">
+          {discoveryComplete && candidates.length === 0 && <span role="status" className="text-sm text-[var(--muted)]">暂无模型</span>}
           <Button type="button" variant="secondary" disabled={!baseUrl.trim() || discovery.isPending} onClick={() => discovery.mutate()}>
             {discovery.isPending ? "获取中…" : "获取模型"}
           </Button>
-          {discoveryComplete && candidates.length === 0 && (
-            <span role="status">暂无模型</span>
-          )}
-        </div>
-        {discovery.isError && <Notice tone="danger" title="获取模型失败">{discovery.error.message}</Notice>}
+        </SettingsRow>
+        {discovery.isError && <Notice tone="danger" title="获取模型失败" className="my-3">{discovery.error.message}</Notice>}
         {availableCandidates.length > 0 && (
           <Field label="候选模型">
             <div className="flex min-w-0 flex-wrap gap-2">
               <Select className="min-w-0 flex-1" aria-label="候选模型" value={candidate} onValueChange={setCandidate}
                 options={[{ value: "", label: "选择待添加模型" }, ...availableCandidates.map((id) => ({ value: id, label: id }))]} />
-              <Button type="button" variant="secondary" disabled={!candidate || models.length >= 50}
+              <Button type="button" variant="secondary" className="shrink-0 whitespace-nowrap" disabled={!candidate || models.length >= 50}
                 onClick={() => { addModel(candidate); setCandidate(""); }}>添加模型</Button>
             </div>
           </Field>
@@ -186,7 +184,7 @@ function AIForm({ value }: { value: AISettings }) {
           <div className="flex min-w-0 flex-wrap gap-2">
             <input className="min-w-0 flex-1" aria-label="手动添加模型 ID" value={manualModel} maxLength={200} placeholder="模型 ID"
               onChange={(event) => setManualModel(event.target.value)} />
-            <Button type="button" variant="secondary"
+            <Button type="button" variant="secondary" className="shrink-0 whitespace-nowrap"
               disabled={!manualModel.trim() || models.includes(manualModel.trim()) || models.length >= 50}
               onClick={() => addModel(manualModel)}>添加模型</Button>
           </div>
@@ -196,7 +194,7 @@ function AIForm({ value }: { value: AISettings }) {
             {models.map((id) => (
               <li key={id} className="flex min-w-0 items-center justify-between gap-2">
                 <span className="min-w-0 break-all">{id}</span>
-                <Button type="button" variant="ghost" size="sm" aria-label={`移除模型 ${id}`} onClick={() => {
+                <Button type="button" variant="ghost" size="sm" className="shrink-0 whitespace-nowrap" aria-label={`移除模型 ${id}`} onClick={() => {
                   const next = models.filter((item) => item !== id);
                   setModels(next);
                   if (model === id) setModel(next[0] ?? "");

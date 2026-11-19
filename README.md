@@ -1,51 +1,42 @@
 # Workbench
 
-Workbench 是本地优先、支持多用户的个人工作台，采用 Go 模块化单体、React 前端和共享数据库工作空间。个人业务数据按用户隔离，管理员管理系统与共享服务配置。二进制默认使用 SQLite，Docker Compose 默认配套 PostgreSQL。前端资源嵌入可执行文件，平台统一提供鉴权、事件、调度、AI、通知、总览和设置。
+Workbench 是本地优先、支持多用户的个人工作台，采用 Go 模块化单体、内嵌 React SPA 与共享数据库工作空间。前端静态产物嵌入单一二进制文件，平台统一提供鉴权、事件总线、定时调度、AI、通知、总览与设置；个人业务数据按用户隔离，管理员管理平台与共享服务配置。二进制默认使用 SQLite，Docker Compose 默认配套 PostgreSQL。
 
-当前业务包括待办及 Wallos 订阅提醒、投资（Schwab / 富途行情、个人券商账户和 TradingView 终端）、资讯（RSS、翻译摘要和简报推送）。管理员可在后台设置中启停业务，数据和总览布局偏好会保留。新增业务按模块扩展，前后端使用对应的模块目录。
+## 核心功能
 
-## 核心特性
+| 领域 | 功能说明 |
+|---|---|
+| **总览看板** | 汇总待办、通知、行情与资讯卡片，支持卡片显隐、排序、尺寸调整与恢复默认 |
+| **个人待办** | 按 已逾期 / 今天 / 本周 / 以后 / 已完成 分组，支持优先级、分类、到期提醒，以及与 [Wallos](doc/modules/todo-wallos.md) 订阅账期自动同步 |
+| **投资终端** | 集成 TradingView 图表及只读持仓、订单与资产净值快照；未绑定 Schwab 时可通过共享富途服务只读看盘，个人 Schwab 授权有效时以 Schwab 为主、富途补充夜盘，下单/改单/撤单使用本人 Schwab 授权 |
+| **监控规则** | 使用本人 Schwab 授权执行美股/ETF 分钟级价格监控，触发后生成站内通知并可推送至 Telegram 或移动设备 |
+| **资讯与简报** | 支持 RSS/Atom、Google News 和 Yahoo Finance 订阅源、关注规则、AI 翻译摘要、定时简报生成及外部推送 |
+| **AI 助手** | 内置多模型对话面板（`Ctrl+J` / `⌘J`），可调用已注册业务工具查询或创建待办、监控规则与资讯简报，刷新后保留会话上下文 |
+| **多用户与移动端** | 管理员在「后台设置」管理用户、业务开关及共享凭据；每位用户在「个人设置」管理外观（宝蓝/陶橙、浅色/深色/跟随系统）、个人授权与通知接收；提供 iOS / Android 客户端接入与 APNs / FCM 推送 |
 
-- **用户与权限**：管理员创建和禁用用户，个人数据、登录设备、通知及 AI 对话独立；富途共享行情，Schwab 各自授权和交易。
-- **个人待办**：支持待办管理、到期提醒，以及与 Wallos 订阅账期的自动联动。
-- **投资终端**：集成 TradingView 图表；未绑定 Schwab 时使用共享富途行情，个人授权有效时以 Schwab 为主、富途补夜盘。持仓、订单和交易使用本人的 Schwab 授权。
-- **监控规则**：使用本人的 Schwab 授权执行美股/ETF 分钟级价格监控，支持站内通知与 Telegram 自动推送。
-- **资讯**：RSS/Atom、Google News 和 Yahoo Finance 来源模板、关注规则、AI 翻译摘要、定时简报及 Telegram 推送。
-- **AI 助手**：内置对话面板，可查询待办、通知、持仓、订单和资讯，创建或更新待办、创建价格监控及生成简报；逐项显示执行结果，刷新后可继续已有对话。
-- **总览看板**：可定制卡片显隐、排序、尺寸与布局偏好。
-- **独立可控**：单可执行文件内嵌前端，可使用本地 SQLite 或 PostgreSQL，支持单机运行或容器部署。
+## 快速部署
 
-## Docker Compose 部署
+### Docker Compose（默认 PostgreSQL）
 
-仓库根目录的 Compose 从当前源码构建 Workbench，并启动 PostgreSQL 17 Alpine。复制环境示例后直接启动：
+仓库根目录的 [`compose.yaml`](compose.yaml) 从源码构建 Workbench 并启动 PostgreSQL 17 Alpine：
 
 ```bash
 cp .env.example .env
 chmod 600 .env
-```
-
-```bash
+# 编辑 .env，设置 POSTGRES_PASSWORD
 docker compose up -d --build
 docker compose logs workbench
 ```
 
-应用只提供 HTTP，Compose 默认将端口发布到宿主机 `127.0.0.1:8080`（可通过 `WORKBENCH_HOST_PORT` 调整，容器内固定为 `8080`）。首次启动自动生成管理员初始密码并写入 `workbench` 容器日志；使用用户名 `admin` 和该密码登录后设置新密码，再在「后台设置 → 用户管理」创建用户。Compose 默认使用内置 PostgreSQL，启动前必须在 `.env` 中设置 `POSTGRES_PASSWORD`。切换 SQLite 需同时设置 `WORKBENCH_DB_DRIVER=sqlite` 和空的 `WORKBENCH_DATABASE_URL=`，PostgreSQL 容器仍会启动。
+- **登录与初始化**：服务默认发布到宿主机 `127.0.0.1:8080`（可通过 `WORKBENCH_HOST_PORT` 修改，容器内固定为 `8080`）。首次启动自动生成管理员初始密码并输出到 `workbench` 容器日志，使用 `admin` 登录后须立即修改密码。
+- **数据与持久化**：PostgreSQL 数据保存在 `postgres_data` 卷，应用运行文件（图表缓存、SQLite 数据库与备份）保存在 `workbench_data` 卷。切换 SQLite 需在 `.env` 设置 `WORKBENCH_DB_DRIVER=sqlite` 并将 `WORKBENCH_DATABASE_URL=` 置空。
+- **反向代理与 HTTPS**：应用仅提供 HTTP。由宿主机 Nginx / Caddy 反代时设置 `WORKBENCH_PUBLIC_URL=https://实际域名`，模板见 [`deploy/nginx.conf.example`](deploy/nginx.conf.example)、[`deploy/Caddyfile.example`](deploy/Caddyfile.example)；反代同样运行在容器中时叠加 [`deploy/compose.proxy.yaml`](deploy/compose.proxy.yaml)，上游地址为 `http://workbench:8080`。
+- **富途行情配套容器**：需要容器化 OpenD 时叠加 [`futu-opend/compose.workbench.yaml`](futu-opend/compose.workbench.yaml)，说明见 [`futu-opend/README.md`](futu-opend/README.md)。
+- **发布镜像部署**：从 [Releases](https://github.com/amaoworks/WorkBench/releases) 下载 `workbench_<版本>_deployment.tar.gz`，在 `.env` 设置 `POSTGRES_PASSWORD` 与 `WORKBENCH_VERSION` 后执行 `docker compose -f compose.image.yaml up -d`。完整步骤见[部署与发布](doc/deployment.md)。
 
-PostgreSQL 数据保存在 `postgres_data` 卷。应用的 `/data` 卷仍保存图表缓存和 OpenD 运行内容；SQLite 模式也把数据库及备份保存在该卷。`docker compose down` 保留两个数据卷，`docker compose down --volumes` 会删除它们。
+### 二进制部署（默认 SQLite）
 
-由 Nginx/Caddy 提供 HTTPS 时设置 `WORKBENCH_PUBLIC_URL`，代理需要保留原始 Host、支持 WebSocket 和 SSE；模板见 [Nginx](deploy/nginx.conf.example)、[Caddy](deploy/Caddyfile.example)。已有反代也运行在容器内时，使用[容器网络覆盖配置](deploy/compose.proxy.yaml)，同一网络的上游地址为 `http://workbench:8080`。
-
-复用已经构建的本地镜像时跳过构建：
-
-```bash
-docker compose up -d --no-build
-```
-
-Release 部署包使用独立的 `compose.image.yaml` 拉取 GHCR 镜像。完整的源码部署、发布镜像、外部 PostgreSQL、权限及恢复步骤见[部署与发布](doc/deployment.md)。
-
-## 二进制部署
-
-从 [Releases](https://github.com/amaoworks/WorkBench/releases) 下载对应架构的二进制包和 `SHA256SUMS`。例如 amd64：
+从 [Releases](https://github.com/amaoworks/WorkBench/releases) 下载对应架构压缩包与 `SHA256SUMS`（以 `amd64` 为例）：
 
 ```bash
 sha256sum --check --ignore-missing SHA256SUMS
@@ -55,109 +46,59 @@ cd workbench_v0.1.1_linux_amd64
 ./workbench
 ```
 
-默认访问 `http://127.0.0.1:8080`，SQLite 数据保存在 `~/.workbench/data.db`。前端、迁移和时区数据已嵌入；默认部署无需安装 Go、Node.js 或数据库服务。服务器反代部署使用 `-auth password -public-url https://实际域名`，首次启动生成的初始密码会写入日志；长期运行可使用 [systemd 示例](deploy/workbench.service)。PostgreSQL 新部署的准备和启动命令见[部署与发布](doc/deployment.md#postgresql-新部署)。
+默认监听 `http://127.0.0.1:8080`（单用户 `local` 模式），数据保存在 `~/.workbench/data.db`。服务器反代部署使用 `-auth password -public-url https://实际域名`，长期运行可使用 [`deploy/workbench.service`](deploy/workbench.service)。外部 PostgreSQL 与 systemd 配置见[部署与发布](doc/deployment.md)。
 
-## 日志与排障
+## 本地开发与验证
 
-日志等级表和字段见[运行日志](doc/configuration.md#运行日志)。页面保存的等级立即生效，并优先于启动参数。
+构建与开发需 Go 1.27.1（以 [`go.mod`](go.mod) 为准）、Node.js 24+、npm 11+；修改 SQL 查询需 sqlc 1.31.x。首次运行前先执行 `npm ci --prefix web`。
 
-## GitHub Actions 编译与发布
+| 命令 | 用途 |
+|---|---|
+| `./scripts/dev.sh -auth password -listen 127.0.0.1:9090` | 启动 Go 后端与 Vite 开发服务器（前端默认 `http://127.0.0.1:5173`，支持热更新） |
+| `./scripts/db-manage.sh init` | 在 Docker 中初始化本地开发用 PostgreSQL 并生成 `.env.dev-pg`（配合 `./scripts/dev.sh --config .env.dev-pg`） |
+| `./scripts/test.sh` | 仓库基准检查：sqlc 漂移、Go 测试、前端/终端 lint、前后端契约测试与前端生产构建 |
+| `./scripts/build.sh` | 构建前端生产产物并编译根目录 `./workbench` 静态二进制文件 |
+| `sqlc generate` | 修改 `migrations/` 或 `query/*.sql` 后重新生成 SQL 代码 |
 
-项目通过 GitHub Actions 自动化构建多架构（Linux amd64/arm64）二进制与 Docker 镜像：
+通过外部域名调试开发模式时，反向代理上游须指向 **Vite 前端端口** 并开启 WebSocket 支持，同时传入 `-public-url` 与 `-allowed-host`。完整参数、配置文件与浏览器 E2E 回归说明见[开发脚本](scripts/README.md)与[配置与运行](doc/configuration.md)。
 
-- **开发构建**：推送 `main` 或在 [CI and Build](.github/workflows/ci.yml) 手动触发分支构建，通过验证后可在运行结果的 **Artifacts** 中下载 14 天有效的预构建二进制与 Docker 镜像包。
-- **PR 验证**：提交 PR 时运行检查、双架构镜像构建与部署验证，不上传可下载的构建包。
-- **正式版本发布**：推送 `v*` 版本标签触发 [Release](.github/workflows/release.yml) 工作流，通过多架构交叉编译与运行验证后，自动发布 GitHub Release 并推送 GHCR 镜像。发布标签必须基于 `main` 分支提交：
+## CI 与版本发布
+
+GitHub Actions 自动构建并验证 Linux `amd64` / `arm64` 双架构二进制与 Docker 镜像：
+
+- **PR 验证**：运行静态检查、测试、双架构镜像构建及 SQLite / PostgreSQL Compose 冒烟验证。
+- **开发构建**：推送 `main` 或手动触发 [`ci.yml`](.github/workflows/ci.yml)，在运行结果 **Artifacts** 中生成保留 14 天的二进制与镜像包。
+- **正式发布**：基于 `main` 分支提交推送 `v*` 标签触发 [`release.yml`](.github/workflows/release.yml)，自动发布 GitHub Release 与 GHCR 多架构镜像：
 
 ```bash
-git checkout main
-git pull origin main
-git tag v0.1.1
+git checkout main && git pull --ff-only origin main
+git tag -a v0.1.1 -m "Release v0.1.1"
 git push origin v0.1.1
 ```
 
-流水线矩阵、镜像导入验证及分支约束细节见[部署与发布 - GitHub Actions](doc/deployment.md#github-actions-编译与发布)。
-
-## 文档
-
-[文档入口](doc/README.md)汇总当前实现的设计和使用说明：
-
-- [架构与目录](doc/architecture.md)
-- [业务开发指南](doc/business-development.md)
-- [接口与契约](doc/contracts.md)
-- [数据设计](doc/data-model.md)
-- [部署与发布](doc/deployment.md)：二进制、Docker Compose、反向代理与 GitHub Actions
-- [配置与运行](doc/configuration.md)
-- [安全边界](doc/security.md)
-- [用户与权限](doc/multi-user.md)：个人数据、管理员配置与旧工作空间升级
-- [文案与文档规范](doc/copywriting-guidelines.md)
-- [前端界面规范](doc/frontend-guidelines.md)
-- [Todo](doc/modules/todo.md)、[Wallos 联动](doc/modules/todo-wallos.md)、[Investment](doc/modules/investment.md)、[资讯](doc/modules/news.md)
-- [外部通知](doc/notifications.md)
-- [移动客户端开发路线](client/README.md)、[移动端接入](doc/mobile.md)、[移动端 OpenAPI](doc/mobile.openapi.yaml)
-- [AI 协作指南](AGENTS.md)：面向 AI 编程助手的架构红线与开发工作流
-
-
-## 目录
+## 目录结构
 
 ```text
-cmd/workbench/          可执行入口、参数和信号
-internal/app/           平台装配、设置、启动与退出
-internal/contracts/     跨层接口和描述类型
-internal/foundation/    基础设施层
-internal/capabilities/  通用能力层
-internal/modules/       业务应用层：todo、investment、news
-internal/webui/         内嵌前端资源和 HTTP Handler
-web/src/modules/        对应业务的页面、Widget、设置、查询和类型
-web/src/                应用外壳、平台功能、共享组件和工具
-client/                 iOS 和 Android 客户端
-deploy/                 systemd、反向代理和容器网络配置示例
-scripts/                构建、发布、测试和浏览器回归
-doc/                    当前设计与开发运行说明
+cmd/workbench/          可执行入口、命令行参数、健康探针与信号处理
+internal/app/           平台装配、设置管理、启动与优雅退出
+internal/contracts/     跨层接口与契约类型定义
+internal/foundation/    基础设施层：数据库、认证、事件总线、日志
+internal/capabilities/  通用能力层：AI、定时调度、通知、总览
+internal/modules/       业务后端实现：todo、investment、news
+internal/webui/         内嵌前端静态产物与 HTTP Handler
+web/src/modules/        业务前端页面、Widget、设置、查询与 Schema
+web/src/                应用外壳、平台页面、共享组件与工具
+client/                 iOS 与 Android 原生客户端工程
+futu-opend/             配套富途 OpenD 容器镜像与登录配置管理
+deploy/                 systemd、Nginx/Caddy 反代与容器网络覆盖示例
+scripts/                开发联调、构建发布、契约检查与浏览器回归脚本
+doc/                    架构设计、业务开发、部署配置与接口文档
 ```
 
-## 从源码构建与运行
+## 文档导航
 
-日常修改前端可使用开发模式。首次安装前端依赖后，一条命令启动 Go 后端和 Vite：
+完整索引见[文档入口](doc/README.md)：
 
-```bash
-npm ci --prefix web
-./scripts/dev.sh -auth password -listen 127.0.0.1:9090 -allowed-host w.vm2.de5.net
-```
-
-浏览器访问启动摘要中的前端地址（默认 `http://127.0.0.1:5173`）。React 和 CSS 保存后热更新，投资终端 HTML/JS 保存后自动刷新。Go 仅在启动脚本时编译；修改 Go 后，按 Ctrl+C 完整退出，再执行同一条命令。现有后端参数和环境变量继续有效。开发模式使用指定的 `-data` 工作空间，未指定时仍使用默认数据库。
-
-通过域名调试时，反向代理的上游须指向 **Vite 前端端口**，并支持 WebSocket；`-allowed-host` 本身不会更改反向代理。开发参数、HTTPS 示例和退出机制见[开发脚本](scripts/README.md#开发模式)。
-
-使用 Go 1.27.1、Node.js 24+、npm 11+；Go 要求以 `go.mod` 为准，前端依赖以锁文件为准。检查 SQL 生成结果还需要 sqlc 1.31.x。
-
-```bash
-./scripts/build.sh
-./workbench
-```
-
-默认访问 `http://127.0.0.1:8080`，SQLite 数据库保存在 `~/.workbench/data.db`。可通过 `-listen` 和 `-data` 修改地址和工作空间；PostgreSQL 通过 `WORKBENCH_DB_DRIVER` 和 `WORKBENCH_DATABASE_URL` 选择。
-
-默认 local 模式仅允许本机监听和原始管理员单用户；多用户使用密码模式。反向代理部署使用 `-auth password -public-url https://实际域名`；密码模式首次启动会在日志中生成初始密码，首次登录后必须修改。应用自动允许外部地址的 Host，并为浏览器启用 Secure Cookie。监听、数据路径、认证与外部地址均支持环境变量。详细参数和前端开发方式见[配置与运行](doc/configuration.md)。
-
-## 日常使用
-
-- 界面使用顶部导航；只有投资带下拉菜单（图表、价格监控、持仓、订单），其他入口是普通链接；窄屏时收进抽屉。「个人设置」和管理员专属的「后台设置」从右上角头像菜单进入。投资页只显示全屏图表。默认配色为「宝蓝」，可在「个人设置 → 外观」切换为「陶橙」，主题默认跟随系统。
-- 总览汇总待办、通知和资讯，支持卡片显隐、排序、尺寸和恢复默认。
-- 待办按 已逾期/今天/本周/以后/已完成 分组，支持优先级、分类、服务端筛选计数、分页和到期提醒；Wallos 在「个人设置 → 业务 → 待办」中连接，续费任务带「续费」标记。
-- 登录工作台后，未绑定 Schwab 或授权已失效的用户可通过可用的富途服务只读看盘；授权有效时，常规及扩展行情使用本人的 Schwab，富途只补夜盘。富途主行情不依赖夜盘开关，支持美股和 ETF，实际行情权限、标的和历史额度取决于共享富途账号及 OpenD 状态。部署方需确认多用户使用的行情许可；不会借用管理员的 Schwab 令牌。
-- 读取持仓和订单及执行下单、改单、撤单须完成本人 Schwab 授权；另有只读的「持仓」`/investment/positions` 和「订单」`/investment/orders` 页面。总览行情卡可显示本人的自选富途行情及数据源，资产快照和净值历史仍要求本人授权。
-- 资产快照提供按账户查看的净值历史，支持 1 个月、3 个月、1 年和全部记录；启动及每个工作日美东时间 16:15 采集。
-- 投资价格监控仍使用本人的 Schwab 授权，每分钟检查美股/ETF 常规时段涨跌阈值，保存站内提醒，可通过 Telegram 推送；富途不参与价格监控，关闭网页仍由服务器执行。
-- 点击右上角「问 AI」或按 `Ctrl+J`（macOS 上是 `⌘J`）打开 AI 面板，面板提供对话和已注册的业务工具；未启用 AI 不影响普通业务操作。
-- 通知按 今天/昨天/更早 分组，支持全部/未读和按来源筛选。
-- 个人设置包括外观、业务、通知推送和账户安全，管理员也在此管理本人的 Schwab 授权与通知接收。后台设置仅管理员可访问，包括用户管理、业务管理、AI 服务、通知服务、数据与运行。业务启停及 Schwab 应用、富途和夜盘共享配置归后台管理。推送配置见[外部通知](doc/notifications.md)。
-- 管理员在「后台设置 → 数据与运行」创建的 SQLite 全库备份保存到工作空间的 `backups/` 目录；PostgreSQL 备份由数据库服务管理。备份包含业务内容与保存的凭据。
-
-## 验证
-
-```bash
-./scripts/test.sh
-```
-
-脚本检查 sqlc 生成漂移、Go 测试、前端 lint、响应契约和生产构建。工具路径覆盖、浏览器回归和临时工作空间运行说明见 [scripts/README](scripts/README.md)。
+- **架构与开发**：[架构与目录](doc/architecture.md) · [业务开发指南](doc/business-development.md) · [接口与契约](doc/contracts.md) · [数据设计](doc/data-model.md) · [前端界面规范](doc/frontend-guidelines.md) · [文案与文档规范](doc/copywriting-guidelines.md) · [AI 协作指南](AGENTS.md)
+- **运维与安全**：[部署与发布](doc/deployment.md) · [配置与运行](doc/configuration.md) · [安全边界](doc/security.md) · [用户与权限](doc/multi-user.md)
+- **业务与客户端**：[Todo](doc/modules/todo.md) · [Wallos 联动](doc/modules/todo-wallos.md) · [Investment](doc/modules/investment.md) · [资讯](doc/modules/news.md) · [外部通知](doc/notifications.md) · [移动端接入](doc/mobile.md)（[OpenAPI](doc/mobile.openapi.yaml) · [客户端路线](client/README.md)）

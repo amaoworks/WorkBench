@@ -141,13 +141,15 @@ function SettingsForm({ initial }: { initial: Settings }) {
             <input value={form.digestTopic} onChange={(event) => change({ digestTopic: event.target.value })} placeholder="全部话题" />
           </Field>
         </div>
-        <label className="inline-switch">
-          <Switch label="生成后提交推送" checked={form.pushEnabled} onChange={(pushEnabled) => change({ pushEnabled })} />
-          <span aria-hidden="true">生成后提交推送</span>
-        </label>
-        <Link className="text-sm text-[var(--brand)] hover:underline" to="/settings?tab=notifications">
-          通知推送
-        </Link>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <label className="inline-switch">
+            <Switch label="生成后提交推送" checked={form.pushEnabled} onChange={(pushEnabled) => change({ pushEnabled })} />
+            <span aria-hidden="true">生成后提交推送</span>
+          </label>
+          <Link className="text-sm text-[var(--brand)] hover:underline" to="/settings?tab=notifications">
+            通知推送
+          </Link>
+        </div>
       </section>
       <Button disabled={save.isPending}>{save.isPending ? "保存中…" : "保存"}</Button>
     </form>

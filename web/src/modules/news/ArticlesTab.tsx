@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, ExternalLink, Plus, RefreshCw, Search, Sparkles, Star } from "lucide-react";
@@ -7,6 +7,7 @@ import { Button, ButtonAnchor } from "../../components/ui/Button";
 import { Badge } from "../../components/ui/Badge";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { Notice } from "../../components/ui/Notice";
+import { Select } from "../../components/ui/Select";
 import { Skeleton } from "../../components/ui/States";
 import {
   analyzeArticle,
@@ -16,6 +17,7 @@ import {
   useArticles,
   useDigests,
   useRefreshNews,
+  useRules,
   useSources,
   type ArticleFilters,
 } from "./queries";
@@ -24,7 +26,6 @@ import { cn } from "../../shared/cn";
 import { formatDateTime, formatRelative } from "../../shared/format";
 import { safeExternalURL } from "../../shared/url";
 import { DigestLinks } from "./DigestLinks";
-import { Select } from "../../components/ui/Select";
 
 const emptyFilters: ArticleFilters = { q: "", sourceId: "", topic: "", unread: false, starred: false, matched: false };
 
@@ -57,29 +58,48 @@ function writeFilters(current: URLSearchParams, filters: ArticleFilters) {
   return next;
 }
 
-export default function ArticlesTab({ onAddSource }: { onAddSource: () => void }) {
+export default function ArticlesTab({
+  nav,
+  notices,
+  onAddSource,
+  onOpenDigests,
+}: {
+  nav: ReactNode;
+  notices: ReactNode;
+  onAddSource: () => void;
+  onOpenDigests: () => void;
+}) {
   const [params, setParams] = useSearchParams();
   const filters = useMemo(() => filtersFromParams(params), [params]);
   const [draftQ, setDraftQ] = useState(filters.q);
-  const [draftTopic, setDraftTopic] = useState(filters.topic);
   const [syncedQ, setSyncedQ] = useState(filters.q);
-  const [syncedTopic, setSyncedTopic] = useState(filters.topic);
   if (filters.q !== syncedQ) {
     setSyncedQ(filters.q);
     setDraftQ(filters.q);
   }
-  if (filters.topic !== syncedTopic) {
-    setSyncedTopic(filters.topic);
-    setDraftTopic(filters.topic);
-  }
   const [expanded, setExpanded] = useState<string | null>(null);
   const articles = useArticles(filters);
   const sources = useSources();
+  const rules = useRules();
   const filtered = filtersActive(filters);
   const items = articles.data?.pages.flatMap((page) => page.items) ?? [];
-  const sourceOptions = [{ value: "", label: "全部订阅源" }, ...(sources.data?.items.map((source) => ({ value: source.id, label: source.name })) ?? [])];
-  // Topic chips come from what is loaded; the active topic stays even when the page no longer contains it.
-  const topics = [...new Set([filters.topic, ...items.map((article) => article.topic)].filter(Boolean))].slice(0, 8);
+
+  const sourceOptions = [
+    { value: "", label: "全部订阅源" },
+    ...(sources.data?.items.map((source) => ({ value: source.id, label: source.name })) ?? []),
+  ];
+  const topicValues = [
+    ...new Set(
+      [
+        filters.topic,
+        ...(sources.data?.items.map((source) => source.topic) ?? []),
+        ...(rules.data?.items.map((rule) => rule.topic) ?? []),
+        ...items.map((article) => article.topic),
+      ].filter(Boolean),
+    ),
+  ];
+  const topicOptions = [{ value: "", label: "全部话题" }, ...topicValues.map((topic) => ({ value: topic, label: topic }))];
+
   const refreshNews = useRefreshNews();
   const refreshAll = useMutation({
     mutationFn: refreshAllSources,
@@ -93,123 +113,88 @@ export default function ArticlesTab({ onAddSource }: { onAddSource: () => void }
     },
     onError: (error) => toast.error(error.message),
   });
+
   function commit(next: ArticleFilters) {
     setParams((current) => writeFilters(current, next), { replace: true });
   }
   function clearFilters() {
     setDraftQ("");
-    setDraftTopic("");
     commit(emptyFilters);
   }
   function updateImmediate(patch: Partial<ArticleFilters>) {
-    if (patch.topic !== undefined) setDraftTopic(patch.topic);
     commit({ ...filters, ...patch });
   }
   function submit(event: FormEvent) {
     event.preventDefault();
-    commit({ ...filters, q: draftQ.trim(), topic: draftTopic.trim() });
+    commit({ ...filters, q: draftQ.trim() });
   }
+
+  const allStatus = !filters.unread && !filters.starred && !filters.matched;
 
   return (
     <>
-      {!filtered && <LatestBrief />}
-      {!filtered && items.length >= 4 && (
-        <section className="sec" aria-labelledby="news-latest">
-          <h2 id="news-latest" className="sec-title">最新文章</h2>
-          <ul className="news-grid">
-            {items.slice(0, 8).map((article) => (
-              <li key={article.id}>
-                <button
-                  type="button"
-                  className="news-card focus-ring"
-                  onClick={() => {
-                    setExpanded(article.id);
-                    document.getElementById(`article-${article.id}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
-                  }}
-                >
-                  <span className="news-card-meta">
-                    <SourceMark name={article.sourceName} />
-                    <span className="truncate">{article.sourceName}</span>
-                    <span aria-hidden="true">·</span>
-                    <span className="shrink-0">{formatRelative(article.publishedAt)}</span>
-                  </span>
-                  <span className={cn("news-card-title", !article.read && "is-unread")}>{article.translatedTitle || article.title}</span>
-                  {article.topic && <span className="news-tag">{article.topic}</span>}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-      <section className="sec" aria-labelledby="news-all">
-        <h2 id="news-all" className="sec-title">
-          全部文章
-          <span className="sec-action">
-            <Button type="button" size="sm" variant="secondary" disabled={refreshAll.isPending} onClick={() => refreshAll.mutate()}>
-              <RefreshCw size={15} />
-              {refreshAll.isPending ? "刷新中…" : "刷新"}
-            </Button>
-          </span>
-        </h2>
-        <form onSubmit={submit} className="news-filters">
-          <label className="news-search">
-            <span className="sr-only">搜索资讯</span>
-            <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" size={17} />
-            <input
-              value={draftQ}
-              onChange={(event) => setDraftQ(event.target.value)}
-              placeholder="搜索标题或内容"
-              className="ui-input w-full pl-9!"
+      <div className="toolbar news-toolbar">
+        {nav}
+        <div className="news-toolbar-actions">
+          <Button type="button" size="sm" variant="secondary" disabled={refreshAll.isPending} onClick={() => refreshAll.mutate()}>
+            <RefreshCw size={15} />
+            {refreshAll.isPending ? "刷新中…" : "刷新"}
+          </Button>
+        </div>
+      </div>
+      {notices}
+      {!filtered && <LatestBriefStrip onOpenDigests={onOpenDigests} />}
+      <section className="sec" aria-labelledby="news-articles-heading">
+        <h2 id="news-articles-heading" className="sr-only">全部文章</h2>
+        <div className="news-controls">
+          <form onSubmit={submit} className="news-filter-bar">
+            <label className="news-search">
+              <span className="sr-only">搜索资讯</span>
+              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" size={16} />
+              <input
+                value={draftQ}
+                onChange={(event) => setDraftQ(event.target.value)}
+                placeholder="搜索标题或内容"
+                className="ui-input w-full pl-9!"
+              />
+            </label>
+            <Select
+              aria-label="订阅源"
+              className="news-filter-select"
+              value={filters.sourceId}
+              onValueChange={(sourceId) => updateImmediate({ sourceId })}
+              options={sourceOptions}
             />
-          </label>
-          <Select
-            aria-label="订阅源"
-            className="news-source-select"
-            value={filters.sourceId}
-            onValueChange={(sourceId) => updateImmediate({ sourceId })}
-            options={sourceOptions}
-          />
-          <label className="news-topic-input">
-            <span className="sr-only">文章话题</span>
-            <input
-              value={draftTopic}
-              onChange={(event) => setDraftTopic(event.target.value)}
-              placeholder="全部话题"
-              className="ui-input w-full"
+            <Select
+              aria-label="话题"
+              className="news-filter-select"
+              value={filters.topic}
+              onValueChange={(topic) => updateImmediate({ topic })}
+              options={topicOptions}
             />
-          </label>
-          <Button variant="secondary">搜索</Button>
-        </form>
-        <div className="chip-row news-chips" role="group" aria-label="筛选文章">
-          <button
-            type="button"
-            className={cn("chip focus-ring", !filters.topic && "is-active")}
-            aria-pressed={!filters.topic}
-            onClick={() => updateImmediate({ topic: "" })}
-          >
-            全部话题
-          </button>
-          {topics.map((topic) => (
-            <button
-              key={topic}
-              type="button"
-              className={cn("chip focus-ring", filters.topic === topic && "is-active")}
-              aria-pressed={filters.topic === topic}
-              onClick={() => updateImmediate({ topic: filters.topic === topic ? "" : topic })}
-            >
-              {topic}
-            </button>
-          ))}
-          <span className="grow" aria-hidden="true" />
-          <FilterChip label="只看未读" pressed={filters.unread} onChange={(unread) => updateImmediate({ unread })} />
-          <FilterChip label="收藏" pressed={filters.starred} onChange={(starred) => updateImmediate({ starred })} />
-          <FilterChip label="已匹配" pressed={filters.matched} onChange={(matched) => updateImmediate({ matched })} />
+            <Button size="sm" variant="secondary">搜索</Button>
+          </form>
+          <div className="chip-row news-status-row" role="group" aria-label="筛选文章">
+            <FilterChip
+              label="全部"
+              pressed={allStatus}
+              onChange={() => updateImmediate({ unread: false, starred: false, matched: false })}
+            />
+            <FilterChip label="未读" pressed={filters.unread} onChange={(unread) => updateImmediate({ unread })} />
+            <FilterChip label="收藏" pressed={filters.starred} onChange={(starred) => updateImmediate({ starred })} />
+            <FilterChip label="已匹配" pressed={filters.matched} onChange={(matched) => updateImmediate({ matched })} />
+            {filtered && (
+              <Button type="button" size="sm" variant="ghost" className="ml-auto" onClick={clearFilters}>
+                清除筛选
+              </Button>
+            )}
+          </div>
         </div>
         {articles.isPending && (
           <div className="space-y-2">
-            <Skeleton className="h-12" />
-            <Skeleton className="h-12" />
-            <Skeleton className="h-12" />
+            <Skeleton className="h-16 rounded-xl" />
+            <Skeleton className="h-16 rounded-xl" />
+            <Skeleton className="h-16 rounded-xl" />
           </div>
         )}
         {articles.isError && (
@@ -228,14 +213,7 @@ export default function ArticlesTab({ onAddSource }: { onAddSource: () => void }
           />
         )}
         {items.length > 0 && (
-          <div className="news-table">
-            <div className="news-head" aria-hidden="true">
-              <span>时间</span>
-              <span className="news-col-src">来源</span>
-              <span>标题</span>
-              <span className="news-col-tag">话题</span>
-              <span />
-            </div>
+          <div className="ui-card news-list">
             {items.map((article) => (
               <ArticleRow
                 key={article.id}
@@ -258,32 +236,42 @@ export default function ArticlesTab({ onAddSource }: { onAddSource: () => void }
   );
 }
 
-/** The newest digest, shown like the prototype's AI 简报 card; nothing when none exists yet. */
-function LatestBrief() {
+/** Compact collapsible bar for the newest digest; keeps the article stream immediately visible. */
+function LatestBriefStrip({ onOpenDigests }: { onOpenDigests: () => void }) {
   const digests = useDigests();
+  const [open, setOpen] = useState(false);
   const digest = digests.data?.pages[0]?.items[0];
   if (!digest) return null;
   return (
-    <section className="sec" aria-labelledby="news-brief">
-      <h2 id="news-brief" className="sec-title">简报</h2>
-      <div className="news-brief">
-        <div className="news-brief-head">
-          <span className="news-brief-mark" aria-hidden="true">
-            <Sparkles size={16} />
+    <section className="ui-card news-brief-strip" aria-label="最新简报">
+      <div className="news-brief-strip-head">
+        <span className="news-brief-mark" aria-hidden="true">
+          <Sparkles size={15} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <b className="block truncate text-sm font-semibold text-[var(--heading)]">{digest.title}</b>
+          <span className="block truncate text-xs text-[var(--muted)]">
+            {digest.aiUsed ? "AI 摘要" : "按规则整理"} · {digest.items.length} 篇 · {formatRelative(digest.createdAt)}
           </span>
-          <div className="min-w-0 flex-1">
-            <b className="block truncate">{digest.title}</b>
-            <span>
-              {digest.aiUsed ? "AI 摘要" : "按规则整理"} · {digest.items.length} 篇 · {formatRelative(digest.createdAt)}
-            </span>
-          </div>
         </div>
-        {digest.items.length > 0 ? (
-          <DigestLinks items={digest.items.slice(0, 6)} />
-        ) : (
-          <p className="news-brief-text">{digest.content}</p>
-        )}
+        <div className="flex shrink-0 items-center gap-1">
+          <Button type="button" size="sm" variant="ghost" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+            {open ? "收起" : "展开"}
+          </Button>
+          <Button type="button" size="sm" variant="ghost" onClick={onOpenDigests}>
+            全部简报
+          </Button>
+        </div>
       </div>
+      {open && (
+        <div className="news-brief-strip-body">
+          {digest.items.length > 0 ? (
+            <DigestLinks items={digest.items.slice(0, 6)} />
+          ) : (
+            <p className="news-brief-text">{digest.content}</p>
+          )}
+        </div>
+      )}
     </section>
   );
 }
@@ -381,126 +369,142 @@ function ArticleRow({ article, expanded, onToggle }: { article: Article; expande
   });
   const shown = detail.data ?? article;
   const externalURL = safeExternalURL(shown.url);
+  const hasAIContent = Boolean(shown.summary || shown.translatedContent);
+
   return (
     <article id={`article-${article.id}`} className={cn("news-row", !article.read && "is-unread", expanded && "is-open")}>
       <div className="news-row-main">
-        <button className="news-row-toggle focus-ring" onClick={onToggle} aria-expanded={expanded}>
-          <span className="news-col-time">{formatRelative(article.publishedAt)}</span>
-          <span className="news-col-src">
+        <button type="button" className="news-row-toggle focus-ring" onClick={onToggle} aria-expanded={expanded}>
+          <span className="news-title-line">
+            {!article.read && <span className="unread-dot news-unread-dot" aria-hidden="true" />}
+            <span className={cn("news-title", expanded && "is-expanded")} title={article.translatedTitle || article.title}>
+              {article.translatedTitle || article.title}
+            </span>
+            {article.matched && <Badge tone="info" className="shrink-0">匹配</Badge>}
+          </span>
+          <span className="news-meta-line">
             <SourceMark name={article.sourceName} />
             <span className="truncate">{article.sourceName}</span>
-          </span>
-          <span className="news-col-title">
-            <span className="news-title-line">
-              <span className="news-title" title={article.translatedTitle || article.title}>{article.translatedTitle || article.title}</span>
-              {article.matched && <Badge className="shrink-0">匹配</Badge>}
-            </span>
-            {article.translatedTitle && article.translatedTitle !== article.title && (
-              <span className="news-subtitle">{article.title}</span>
+            {article.topic && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="news-tag">{article.topic}</span>
+              </>
             )}
+            <span aria-hidden="true">·</span>
+            <time className="shrink-0" dateTime={article.publishedAt}>
+              {formatRelative(article.publishedAt)}
+            </time>
           </span>
-          <span className="news-col-tag">{article.topic ? <span className="news-tag">{article.topic}</span> : null}</span>
         </button>
         <div className="news-row-actions">
           <Button
             size="icon"
             variant="ghost"
+            className={article.starred ? "text-[var(--heading)]" : "text-[var(--muted)]"}
             aria-label={article.starred ? "取消收藏" : "收藏"}
             disabled={update.isPending}
             onClick={() => update.mutate({ starred: !article.starred })}
           >
-            <Star size={17} fill={article.starred ? "currentColor" : "none"} />
+            <Star size={16} fill={article.starred ? "currentColor" : "none"} />
           </Button>
-          <Button size="icon" variant="ghost" aria-label={expanded ? "收起" : "展开"} onClick={onToggle}>
-            {expanded ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
+          <Button size="icon" variant="ghost" className="text-[var(--muted)]" aria-label={expanded ? "收起" : "展开"} onClick={onToggle}>
+            {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
           </Button>
         </div>
       </div>
       {expanded && (
         <div className="news-detail">
-          <p className="news-note">
-            {article.sourceName} · {article.topic || "未分类"} · {formatDateTime(article.publishedAt, { seconds: false })}
-          </p>
-          {detail.isPending && <Skeleton className="h-28" />}
-          {detail.isError && (
-            <Notice tone="danger" title="资讯详情读取失败">
-              {detail.error.message}
-            </Notice>
-          )}
-          {!detail.isPending && (
-            <>
-              {shown.summary && (
-                <section>
-                  <h3 className="text-sm font-medium">摘要</h3>
-                  <p className="mt-1 whitespace-pre-wrap break-words text-sm">{shown.summary}</p>
-                </section>
+          <div className="news-detail-inner">
+            <div className="space-y-1">
+              {article.translatedTitle && article.translatedTitle !== article.title && (
+                <p className="break-words text-sm text-[var(--muted)]">{article.title}</p>
               )}
-              {shown.translatedContent && (
-                <section>
-                  <h3 className="text-sm font-medium">翻译</h3>
-                  <p className="mt-1 whitespace-pre-wrap break-words text-sm text-[var(--muted)]">{shown.translatedContent}</p>
-                </section>
-              )}
-              {shown.content && (
-                <section>
-                  <h3 className="text-sm font-medium">原文</h3>
-                  <p className="mt-1 whitespace-pre-wrap break-words text-sm text-[var(--muted)]">{shown.content}</p>
-                </section>
-              )}
-              {shown.origins.length > 0 && (
-                <section>
-                  <h3 className="text-sm font-medium">文章来源</h3>
-                  <ul className="mt-1 space-y-1 text-sm">
+              <p className="news-note">
+                {article.sourceName} · {article.topic || "未分类"} · {formatDateTime(article.publishedAt, { seconds: false })}
+              </p>
+            </div>
+            {detail.isPending && <Skeleton className="h-24" />}
+            {detail.isError && (
+              <Notice tone="danger" title="资讯详情读取失败">
+                {detail.error.message}
+              </Notice>
+            )}
+            {!detail.isPending && (
+              <>
+                {shown.summary && (
+                  <section className="news-summary">
+                    <h3 className="text-xs font-semibold text-[var(--muted)]">摘要</h3>
+                    <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-[var(--heading)]">{shown.summary}</p>
+                  </section>
+                )}
+                {shown.translatedContent && (
+                  <section>
+                    <h3 className="text-xs font-semibold text-[var(--muted)]">译文</h3>
+                    <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-[var(--ink)]">{shown.translatedContent}</p>
+                  </section>
+                )}
+                {shown.content && (
+                  hasAIContent ? (
+                    <details className="news-original">
+                      <summary className="focus-ring">展开原文</summary>
+                      <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-[var(--muted)]">{shown.content}</p>
+                    </details>
+                  ) : (
+                    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-[var(--ink)]">{shown.content}</p>
+                  )
+                )}
+                {shown.origins.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--muted)]">
+                    <span>来源</span>
                     {shown.origins.map((origin, index) => {
                       const href = safeExternalURL(origin.url);
                       return (
-                        <li key={`${origin.sourceId}-${index}`} className="break-all">
+                        <span key={`${origin.sourceId}-${index}`} className="break-all">
                           {href ? (
                             <a className="text-[var(--brand)] hover:underline" href={href} target="_blank" rel="noopener noreferrer">
                               {origin.sourceName}
-                              <ExternalLink className="ml-1 inline" size={13} />
+                              <ExternalLink className="ml-0.5 inline" size={12} aria-hidden="true" />
                             </a>
                           ) : (
                             origin.sourceName
                           )}
-                        </li>
+                        </span>
                       );
                     })}
-                  </ul>
-                </section>
-              )}
-              {shown.aiStatus === "running" && <Badge>AI 分析中…</Badge>}
-              {shown.aiStatus === "error" && (
-                <Notice tone="danger" title="AI 分析失败">
-                  {shown.aiError}
-                </Notice>
-              )}
-              <div className="flex flex-wrap gap-2">
-                <Button size="sm" variant="secondary" disabled={update.isPending} onClick={() => update.mutate({ read: !article.read })}>
-                  {article.read ? "标为未读" : "标为已读"}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={analyze.isPending || shown.aiStatus === "running"}
-                  onClick={() => analyze.mutate()}
-                >
-                  <Sparkles size={15} />
-                  {analyze.isPending ? "分析中…" : shown.aiStatus === "error" ? "重试分析" : "AI 分析"}
-                </Button>
-                {externalURL && (
-                  <ButtonAnchor variant="secondary" size="sm" href={externalURL} target="_blank" rel="noopener noreferrer">
-                    查看原文
-                    <ExternalLink size={14} />
-                  </ButtonAnchor>
+                  </div>
                 )}
-              </div>
-            </>
-          )}
+                {shown.aiStatus === "running" && <Badge>AI 分析中…</Badge>}
+                {shown.aiStatus === "error" && (
+                  <Notice tone="danger" title="AI 分析失败">
+                    {shown.aiError}
+                  </Notice>
+                )}
+                <div className="news-detail-actions">
+                  <Button size="sm" variant="secondary" disabled={update.isPending} onClick={() => update.mutate({ read: !article.read })}>
+                    {article.read ? "标为未读" : "标为已读"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={analyze.isPending || shown.aiStatus === "running"}
+                    onClick={() => analyze.mutate()}
+                  >
+                    <Sparkles size={14} />
+                    {analyze.isPending ? "分析中…" : shown.aiStatus === "error" ? "重试分析" : "AI 分析"}
+                  </Button>
+                  {externalURL && (
+                    <ButtonAnchor className="ml-auto" variant="secondary" size="sm" href={externalURL} target="_blank" rel="noopener noreferrer">
+                      查看原文
+                      <ExternalLink size={14} />
+                    </ButtonAnchor>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
     </article>
   );
 }
-
-

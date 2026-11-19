@@ -308,25 +308,19 @@ async function expectFormControlStyles(page, reference, label) {
     assert.equal(stats.articles, 37, "repeat refresh must not duplicate articles");
 
     await page.getByRole("button", { name: "文章", exact: true }).click();
-    // The latest grid and brief repeat headlines; scope list assertions to article rows.
     const rows = page.locator("article");
     await rows.getByText("Quantum Browser Story", { exact: true }).waitFor();
     await page.waitForFunction(() => document.querySelectorAll("article").length === 30);
-    const filterChips = page.getByRole("group", { name: "筛选文章" });
-    assert.equal(await filterChips.getByRole("button", { name: "市场", exact: true }).count(), 0,
-      "the older topic must be absent from the first page's shortcut chips");
-    const topic = page.getByLabel("文章话题", { exact: true });
-    await topic.fill(" 市场 ");
+    const topicSelect = page.getByLabel("话题", { exact: true });
     const topicFiltered = page.waitForResponse((response) => {
       const url = new URL(response.url());
       return url.pathname === "/api/modules/news/articles" && url.searchParams.get("topic") === "市场";
     });
-    await page.getByRole("button", { name: "搜索", exact: true }).click();
+    await choose(page, topicSelect, "市场");
     assert.equal((await topicFiltered).status(), 200);
     await rows.getByText("Browser Atom Science", { exact: true }).waitFor();
-    assert.equal(await rows.count(), 2, "typed topics must filter articles beyond the loaded page");
-    await topic.fill("");
-    await page.getByRole("button", { name: "搜索", exact: true }).click();
+    assert.equal(await rows.count(), 2, "topic select must filter articles beyond the loaded page");
+    await choose(page, topicSelect, "全部话题");
     await rows.getByText("Quantum Browser Story", { exact: true }).waitFor();
     await page.getByRole("button", { name: "加载更多", exact: true }).click();
     await rows.getByText("Browser Atom Science", { exact: true }).waitFor();
@@ -368,12 +362,14 @@ async function expectFormControlStyles(page, reference, label) {
     assert.equal(aiRequests, beforeAnalyze + 1, "second analysis should use the cached result");
 
     await page.getByRole("button", { name: "简报", exact: true }).click();
-    await page.getByLabel("话题", { exact: true }).fill("重点");
-    await choose(page, page.getByLabel("时间范围", { exact: true }), "最近 24 小时");
-    await page.getByLabel("最多条数", { exact: true }).fill("10");
-    await page.getByRole("switch", { name: "提交推送", exact: true }).click();
-    const createdDigest = page.waitForResponse((response) => response.url().endsWith("/api/modules/news/digests") && response.request().method() === "POST");
     await page.getByRole("button", { name: "生成简报", exact: true }).click();
+    const digestDialog = page.getByRole("dialog", { name: "生成简报", exact: true });
+    await digestDialog.getByLabel("话题", { exact: true }).fill("重点");
+    await choose(page, digestDialog.getByLabel("时间范围", { exact: true }), "最近 24 小时");
+    await digestDialog.getByLabel("最多条数", { exact: true }).fill("10");
+    await digestDialog.getByRole("switch", { name: "提交推送", exact: true }).click();
+    const createdDigest = page.waitForResponse((response) => response.url().endsWith("/api/modules/news/digests") && response.request().method() === "POST");
+    await digestDialog.getByRole("button", { name: "生成简报", exact: true }).click();
     assert.equal((await createdDigest).status(), 201);
     await page.getByText("推送已提交", { exact: true }).first().waitFor();
     assert(await page.locator(`a[href="${fixtureURL}/articles/rss-01"]`).count() > 0, "digest should retain the article URL");
@@ -419,7 +415,9 @@ async function expectFormControlStyles(page, reference, label) {
         await expectFormControlStyles(page, page.getByLabel("名称", { exact: true }), `${label} rule`);
         await page.getByRole("button", { name: "取消", exact: true }).click();
         await page.getByRole("button", { name: "简报", exact: true }).click();
-        await expectFormControlStyles(page, page.getByLabel("话题", { exact: true }), `${label} digest`);
+        await page.getByRole("button", { name: "生成简报", exact: true }).click();
+        await expectFormControlStyles(page, page.getByRole("dialog", { name: "生成简报", exact: true }).getByLabel("话题", { exact: true }), `${label} digest`);
+        await page.getByRole("button", { name: "取消", exact: true }).click();
         await page.getByRole("button", { name: "文章", exact: true }).click();
       }
       await search.fill("");
